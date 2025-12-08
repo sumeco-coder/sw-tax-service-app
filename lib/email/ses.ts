@@ -7,15 +7,15 @@ import {
   type SendEmailCommandInput,
 } from "@aws-sdk/client-sesv2";
 
-const region = process.env.AWS_REGION;
-const fromAddress = process.env.AWS_SES_FROM_ADDRESS;
+const region = process.env.S3_REGION;
+const fromAddress = process.env.SES_FROM_ADDRESS;
 
 if (!region) {
-  throw new Error("AWS_REGION is not set");
+  throw new Error("S3_REGION is not set");
 }
 
 if (!fromAddress) {
-  throw new Error("AWS_SES_FROM_ADDRESS is not set");
+  throw new Error("SES_FROM_ADDRESS is not set");
 }
 
 // Reuse one client for the whole app

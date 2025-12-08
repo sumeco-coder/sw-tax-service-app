@@ -1,8 +1,8 @@
 // lib/sms/sns.ts
 import { SNSClient, PublishCommand } from "@aws-sdk/client-sns";
 
-const region = process.env.AWS_REGION || "us-west-1";
-const smsEnabled = process.env.AWS_SNS_SMS_ENABLED === "true";
+const region = process.env.S3_REGION || "us-west-1";
+const smsEnabled = process.env.SNS_SMS_ENABLED === "true";
 
 const snsClient = new SNSClient({ region });
 

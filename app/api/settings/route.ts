@@ -2,7 +2,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUser } from "aws-amplify/auth";
 import { db } from "@/drizzle/db";
-
 import { users, userSettings } from "@/drizzle/schema";
 import { eq } from "drizzle-orm";
 

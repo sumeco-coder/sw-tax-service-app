@@ -1,11 +1,11 @@
 // lib/s3/s3.ts
 import { S3Client, PutObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
 
-const region = process.env.AWS_REGION!;
-const bucket = process.env.AWS_S3_BUCKET_NAME!;
+const region = process.env.S3_REGION!;
+const bucket = process.env.S3_BUCKET_NAME!;
 
 if (!region || !bucket) {
-  throw new Error("Missing AWS_REGION or AWS_S3_BUCKET_NAME env vars");
+  throw new Error("Missing S3_REGION or S3_BUCKET_NAME env vars");
 }
 
 export const s3 = new S3Client({
