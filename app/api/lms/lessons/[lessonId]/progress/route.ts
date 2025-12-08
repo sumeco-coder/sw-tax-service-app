@@ -11,19 +11,16 @@ const ProgressSchema = z.object({
   enrollmentId: z.string().uuid(), // which enrollment is marking progress
 });
 
-type RouteContext = {
-  params: {
-    lessonId: string;
-  };
-};
-
-export async function POST(req: NextRequest, { params }: RouteContext) {
+export async function POST(
+  request: NextRequest,
+  context: { params: Promise<{ lessonId: string }> }
+) {
   const user = await getLmsUser();
   if (!user) {
     return new NextResponse("Unauthorized", { status: 401 });
   }
 
-  const { lessonId } = params;
+  const { lessonId } = await context.params;
 
   // 1️⃣ Ensure lesson exists
   const [lesson] = await db
@@ -37,7 +34,7 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
   }
 
   // 2️⃣ Parse body for enrollmentId
-  const body = await req.json();
+  const body = await request.json();
   const parsed = ProgressSchema.safeParse(body);
 
   if (!parsed.success) {
@@ -52,7 +49,7 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
     .values({
       enrollmentId,
       lessonId,
-      status: "COMPLETED",                // or "IN_PROGRESS" depending on your UI
+      status: "COMPLETED", // or "IN_PROGRESS" depending on your UI
       lastViewedAt: new Date(),
       completedAt: new Date(),
     })
