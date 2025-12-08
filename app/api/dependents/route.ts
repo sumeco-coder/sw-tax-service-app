@@ -22,7 +22,11 @@ export async function GET() {
 
   const rows = await db.select().from(dependents).where(eq(dependents.userId, u.id));
   // serialize date -> yyyy-mm-dd
-  const data = rows.map(r => ({ ...r, dob: r.dob ? r.dob.toISOString().slice(0,10) : "" }));
+  const data = rows.map((r) => ({
+  ...r,
+  dob: r.dob ? String(r.dob).slice(0, 10) : "",
+}));
+
   return NextResponse.json(data);
 }
 
@@ -50,7 +54,7 @@ export async function POST(req: Request) {
     userId: u.id,
     firstName,
     lastName,
-    dob: new Date(dobStr), // Postgres date accepts Date; driver stores date only
+    dob: dobStr, // Postgres date accepts Date; driver stores date only
     relationship,
     ssnLast4,
     monthsInHome,
