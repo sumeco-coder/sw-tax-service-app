@@ -13,13 +13,11 @@ const LessonSchema = z.object({
   videoUrl: z.string().optional(),
 });
 
-type RouteContext = {
-  params: {
-    moduleId: string;
-  };
-};
-
-export async function POST(req: NextRequest, { params }: RouteContext) {
+// POST /api/lms/modules/[moduleId]/lessons
+export async function POST(
+  request: NextRequest,
+  context: { params: Promise<{ moduleId: string }> }
+) {
   const user = await getLmsUser();
 
   // must have a logged-in LMS user with firmId
@@ -27,10 +25,9 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
     return new NextResponse("Unauthorized", { status: 401 });
   }
 
-  const { moduleId } = params;
+  const { moduleId } = await context.params;
 
   // 1️⃣ Verify the module exists and belongs to this user's firm
-  //    We select just what we need to avoid weird nested types
   const [mod] = await db
     .select({
       moduleId: modules.id,
@@ -39,9 +36,7 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
     })
     .from(modules)
     .innerJoin(courses, eq(courses.id, modules.courseId))
-    .where(
-      and(eq(modules.id, moduleId), eq(courses.firmId, user.firmId))
-    )
+    .where(and(eq(modules.id, moduleId), eq(courses.firmId, user.firmId)))
     .limit(1);
 
   if (!mod) {
@@ -49,7 +44,7 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
   }
 
   // 2️⃣ Validate body
-  const body = await req.json();
+  const body = await request.json();
   const parsed = LessonSchema.safeParse(body);
 
   if (!parsed.success) {
@@ -72,7 +67,7 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
   const [created] = await db
     .insert(lessons)
     .values({
-      courseId: mod.courseId,          // 🔥 required by schema
+      courseId: mod.courseId, // required by schema
       moduleId: mod.moduleId,
       title: parsed.data.title,
       content: parsed.data.content ?? null,
