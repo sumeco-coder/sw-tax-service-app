@@ -1,5 +1,6 @@
-// app/(site)/waitlist/page.tsx
+// app/(home)/site/waitlist/page.tsx
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import WaitlistForm from "./waitlist-form";
 
 export const metadata: Metadata = {
@@ -16,12 +17,13 @@ export const metadata: Metadata = {
   },
 };
 
+export const dynamic = "force-dynamic";
+
 export default function WaitlistPage() {
   return (
     <main className="min-h-screen bg-gradient-to-b from-blue-50 via-white to-white">
       {/* Hero */}
       <section className="relative isolate overflow-hidden px-6 pt-24 pb-12 text-center sm:px-8">
-        {/* decorative glow */}
         <div
           className="pointer-events-none absolute -top-40 left-1/2 h-[28rem] w-[72rem] -translate-x-1/2 rounded-full bg-gradient-to-tr from-blue-300 to-indigo-200 opacity-30 blur-3xl"
           aria-hidden="true"
@@ -41,7 +43,6 @@ export default function WaitlistPage() {
             Be first when new appointments open. Quick form, no spam, cancel anytime.
           </p>
 
-          {/* trust row */}
           <div className="mt-6 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-xs text-gray-500">
             <span>Bank-level encryption</span>
             <span className="hidden sm:inline">•</span>
@@ -55,20 +56,20 @@ export default function WaitlistPage() {
       {/* Form Card */}
       <section className="mx-auto max-w-3xl px-6 pb-24">
         <div className="relative overflow-hidden rounded-2xl border border-gray-200 bg-white/80 p-6 shadow-xl backdrop-blur sm:p-8">
-          {/* subtle corner accents */}
           <div className="pointer-events-none absolute -top-10 -right-10 h-40 w-40 rounded-full bg-indigo-200/30 blur-2xl" />
           <div className="pointer-events-none absolute -bottom-10 -left-10 h-48 w-48 rounded-full bg-blue-200/30 blur-2xl" />
 
-          <WaitlistForm />
+          <Suspense fallback={null}>
+            <WaitlistForm />
+          </Suspense>
 
           <p className="mt-4 text-center text-xs text-gray-500">
-            By joining, you agree to receive messages about booking openings and tax prep updates.
-            You can opt out anytime.
+            By joining, you agree to receive messages about booking openings and tax prep
+            updates. You can opt out anytime.
           </p>
         </div>
       </section>
 
-      {/* Footer */}
       <footer className="border-t py-8 text-center text-sm text-gray-500">
         © {new Date().getFullYear()} SW Tax Service. All rights reserved.
       </footer>
