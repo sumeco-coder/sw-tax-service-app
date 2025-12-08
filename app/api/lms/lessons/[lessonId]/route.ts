@@ -6,12 +6,6 @@ import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { getLmsUser } from "@/lib/lms/getUser";
 
-type RouteContext = {
-  params: {
-    lessonId: string;
-  };
-};
-
 const UpdateLessonSchema = z.object({
   title: z.string().min(3).optional(),
   description: z.string().optional(),
@@ -22,13 +16,17 @@ const UpdateLessonSchema = z.object({
   status: z.enum(["DRAFT", "PUBLISHED"]).optional(),
 });
 
-export async function GET(_req: NextRequest, { params }: RouteContext) {
+// GET /api/lms/lessons/[lessonId]
+export async function GET(
+  _request: NextRequest,
+  context: { params: Promise<{ lessonId: string }> }
+) {
   const user = await getLmsUser();
   if (!user || !user.firmId) {
     return new NextResponse("Unauthorized", { status: 401 });
   }
 
-  const { lessonId } = params;
+  const { lessonId } = await context.params;
 
   const [row] = await db
     .select({
@@ -53,13 +51,17 @@ export async function GET(_req: NextRequest, { params }: RouteContext) {
   });
 }
 
-export async function PATCH(req: NextRequest, { params }: RouteContext) {
+// POST /api/lms/lessons/[lessonId]
+export async function POST(
+  request: NextRequest,
+  context: { params: Promise<{ lessonId: string }> }
+) {
   const user = await getLmsUser();
   if (!user || !user.firmId) {
     return new NextResponse("Unauthorized", { status: 401 });
   }
 
-  const { lessonId } = params;
+  const { lessonId } = await context.params;
 
   // 1️⃣ Make sure this lesson belongs to a course in user's firm
   const [row] = await db
@@ -78,7 +80,7 @@ export async function PATCH(req: NextRequest, { params }: RouteContext) {
   }
 
   // 2️⃣ Parse body
-  const body = await req.json();
+  const body = await request.json();
   const parsed = UpdateLessonSchema.safeParse(body);
 
   if (!parsed.success) {
