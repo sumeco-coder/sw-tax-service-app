@@ -8,6 +8,10 @@ import {
 import { desc } from "drizzle-orm";
 import { sendEmail } from "@/lib/email/sendEmail"; 
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
+
 type WaitlistRow = typeof waitlist.$inferSelect;
 
 // Server action wrapper for form submit (Approve)
