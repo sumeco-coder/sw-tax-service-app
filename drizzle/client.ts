@@ -4,10 +4,9 @@ import { Pool } from "pg";
 import * as schema from "./schema";
 import fs from "fs";
 import path from "path";
+import { DATABASE_URL } from "@/env.server";
 
-if (!process.env.DATABASE_URL) {
-  throw new Error("DATABASE_URL is not set");
-}
+
 
 // Read the AWS RDS CA bundle
 const ca = fs.readFileSync(
@@ -16,7 +15,7 @@ const ca = fs.readFileSync(
 );
 
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
+  connectionString: DATABASE_URL,
   ssl: {
     ca,
     rejectUnauthorized: true, // extra safety for pg
