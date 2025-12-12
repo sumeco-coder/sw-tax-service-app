@@ -1,25 +1,34 @@
 // lib/s3/s3.ts
 import { S3Client, PutObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
 
-const region = process.env.S3_REGION!;
-const bucket = process.env.S3_BUCKET_NAME!;
-
-if (!region || !bucket) {
-  throw new Error("Missing S3_REGION or S3_BUCKET_NAME env vars");
+function required(name: string): string {
+  const v = process.env[name];
+  if (!v) throw new Error(`${name} is not set`);
+  return v;
 }
 
-export const s3 = new S3Client({
-  region,
-  credentials:
+function getS3() {
+  const region = required("S3_REGION");
+
+  const credentials =
     process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY
       ? {
           accessKeyId: process.env.AWS_ACCESS_KEY_ID,
           secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
         }
-      : undefined, // in prod you can rely on IAM role
-});
+      : undefined;
+
+  return { s3: new S3Client({ region, credentials }), region };
+}
+
+function getBucket() {
+  return required("S3_BUCKET_NAME");
+}
 
 export async function uploadToS3(file: File, key: string) {
+  const { s3, region } = getS3();
+  const bucket = getBucket();
+
   const arrayBuffer = await file.arrayBuffer();
   const body = Buffer.from(arrayBuffer);
 
@@ -33,11 +42,13 @@ export async function uploadToS3(file: File, key: string) {
   await s3.send(putCommand);
 
   const url = `https://${bucket}.s3.${region}.amazonaws.com/${key}`;
-
   return { key, url };
 }
 
 export async function deleteFromS3(key: string) {
+  const { s3 } = getS3();
+  const bucket = getBucket();
+
   const deleteCommand = new DeleteObjectCommand({
     Bucket: bucket,
     Key: key,
