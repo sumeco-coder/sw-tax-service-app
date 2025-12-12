@@ -4,18 +4,25 @@ import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { randomUUID } from "crypto";
 
-const s3 = new S3Client({
-  region: process.env.S3_REGION!,
-  credentials: {
-    accessKeyId: process.env.AWS_ACCESS_KEY_ID!,
-    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY!,
-  },
-});
-
-const BUCKET = process.env.S3_BUCKET_NAME!;
+function required(name: string): string {
+  const v = process.env[name];
+  if (!v) throw new Error(`${name} is not set`);
+  return v;
+}
 
 export async function POST(req: NextRequest) {
   try {
+    // Read env ONLY when the route is actually called
+    const region = required("S3_REGION");
+    const bucket = required("S3_BUCKET_NAME");
+    const accessKeyId = required("AWS_ACCESS_KEY_ID");
+    const secretAccessKey = required("AWS_SECRET_ACCESS_KEY");
+
+    const s3 = new S3Client({
+      region,
+      credentials: { accessKeyId, secretAccessKey },
+    });
+
     const { searchParams } = new URL(req.url);
     const year = searchParams.get("year") || new Date().getFullYear().toString();
 
@@ -24,19 +31,15 @@ export async function POST(req: NextRequest) {
     const contentType: string = body.contentType || "application/octet-stream";
 
     if (!fileName) {
-      return NextResponse.json(
-        { error: "Missing fileName" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Missing fileName" }, { status: 400 });
     }
 
-    // e.g. users/<userId>/YYYY/<uuid>-filename
     // TODO: pull real user id from session / JWT
     const userId = "TODO-user-id";
     const fileKey = `users/${userId}/${year}/${randomUUID()}-${fileName}`;
 
     const command = new PutObjectCommand({
-      Bucket: BUCKET,
+      Bucket: bucket,
       Key: fileKey,
       ContentType: contentType,
     });
@@ -44,10 +47,12 @@ export async function POST(req: NextRequest) {
     const uploadUrl = await getSignedUrl(s3, command, { expiresIn: 60 * 5 });
 
     return NextResponse.json({ uploadUrl, fileKey });
-  } catch (err) {
+  } catch (err: any) {
     console.error(err);
+
+    // If env is missing, return a clear 500 instead of crashing the whole app
     return NextResponse.json(
-      { error: "Failed to create presigned URL" },
+      { error: err?.message || "Failed to create presigned URL" },
       { status: 500 }
     );
   }
