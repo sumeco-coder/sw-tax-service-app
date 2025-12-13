@@ -1,6 +1,5 @@
 // next.config.js (CommonJS)
 
-cat > next.config.js <<'EOF'
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   outputFileTracingIncludes: {
@@ -9,4 +8,3 @@ const nextConfig = {
 };
 
 module.exports = nextConfig;
-EOF
