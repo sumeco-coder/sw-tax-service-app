@@ -1,3 +1,4 @@
+// app/(home)/site/waitlist/actions.ts
 "use server";
 
 import { db } from "@/drizzle/db";
