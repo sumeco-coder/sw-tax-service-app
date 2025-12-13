@@ -15,14 +15,26 @@ const isAws =
   !!process.env.AWS_EXECUTION_ENV ||
   !!process.env.AWS_LAMBDA_FUNCTION_NAME;
 
-const pemPath = path.join(process.cwd(), "certs", "global-bundle.pem");
+// ✅ Use the regional CA bundle matching your DB region + CA
+const pemPath = path.join(process.cwd(), "certs", "us-west-1-bundle.pem");
 
+// Build SSL only in AWS runtime
 const ssl = isAws
   ? {
       ca: fs.readFileSync(pemPath, "utf8"),
       rejectUnauthorized: true,
     }
   : undefined;
+
+// ✅ Temporary debug (remove after confirmed)
+if (isAws) {
+  console.log("DB SSL debug", {
+    pemPath,
+    pemExists: fs.existsSync(pemPath),
+    pemBytes: fs.existsSync(pemPath) ? fs.statSync(pemPath).size : 0,
+    sslEnabled: !!ssl,
+  });
+}
 
 const pool = new Pool({
   connectionString: DATABASE_URL,
