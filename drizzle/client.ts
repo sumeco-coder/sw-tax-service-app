@@ -8,12 +8,15 @@ import path from "path";
 const DATABASE_URL = process.env.DATABASE_URL;
 if (!DATABASE_URL) throw new Error("DATABASE_URL is not set");
 
-const isAws = !!process.env.AWS_REGION; 
+const isAws = !!process.env.AWS_REGION;
 
 // Only load the CA bundle when needed (RDS/Aurora SSL)
 const ssl = isAws
   ? {
-      ca: fs.readFileSync(path.join(process.cwd(), "certs", "rds-ca.pem"), "utf8"),
+      ca: fs.readFileSync(
+        path.join(process.cwd(), "certs", "global-bundle.pem"),
+        "utf8"
+      ),
       rejectUnauthorized: true,
     }
   : undefined;

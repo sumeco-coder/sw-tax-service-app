@@ -1,7 +1,9 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  outputFileTracingIncludes: {
+    "/*": ["certs/global-bundle.pem"],
+  },
 };
 
 export default nextConfig;
