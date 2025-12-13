@@ -25,7 +25,7 @@
 
 # Ignore PEM files except the RDS CA cert
 *.pem
-!certs/rds-ca.pem
+
 
 # Allow AWS RDS CA bundle (needed for SSL in Amplify)
 !certs/global-bundle.pem
