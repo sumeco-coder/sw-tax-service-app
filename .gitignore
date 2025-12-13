@@ -28,15 +28,10 @@
 # Ignore everything inside the certs directory by default
 certs/*
 
-# But DO include the specific global bundle file needed for AWS RDS
+# Allow the specific CA bundles we need
 !certs/global-bundle.pem
-
-# Optional: Add general ignore for .pem files outside of the certs directory if necessary
-# If you have other .pem files you want ignored in the root, add a general ignore here, 
-# but ensure you only use the 'certs/*' pattern for the specific directory.
-
-# ... (rest of your .gitignore file)
-
+!certs/us-west-1-bundle.pem
+!certs/rds-ca.pem
 
 
 # debug
