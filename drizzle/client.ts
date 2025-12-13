@@ -11,8 +11,7 @@ const isProd = process.env.NODE_ENV === "production";
 
 const candidates = [
   path.join(process.cwd(), "certs", "global-bundle.pem"),
-  path.join(process.cwd(), "certs", "us-west-1-bundle.pem"),
-  path.join(process.cwd(), "certs", "rds-ca.pem"),
+ 
 ];
 
 const caPath = candidates.find((p) => fs.existsSync(p));
