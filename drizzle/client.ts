@@ -1,4 +1,3 @@
-// drizzle/client.ts
 import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import * as schema from "./schema";
@@ -10,24 +9,25 @@ if (!DATABASE_URL) throw new Error("DATABASE_URL is not set");
 
 const isProd = process.env.NODE_ENV === "production";
 
-// Remove sslmode from the URL if present (we control SSL via the `ssl` option)
-let connectionString = DATABASE_URL;
-try {
-  const u = new URL(DATABASE_URL);
-  u.searchParams.delete("sslmode");
-  connectionString = u.toString();
-} catch {
-  // ignore if DATABASE_URL isn't a standard URL
-}
+const candidates = [
+  path.join(process.cwd(), "certs", "global-bundle.pem"),
+  path.join(process.cwd(), "certs", "us-west-1-bundle.pem"),
+  path.join(process.cwd(), "certs", "rds-ca.pem"),
+];
 
-const pemPath = path.join(process.cwd(), "certs", "us-west-1-bundle.pem");
+const caPath = candidates.find((p) => fs.existsSync(p));
+if (isProd && !caPath) throw new Error("No RDS CA bundle found in /certs");
 
 const ssl = isProd
-  ? {
-      ca: fs.readFileSync(pemPath, "utf8"),
-      rejectUnauthorized: true,
-    }
+  ? { ca: fs.readFileSync(caPath!, "utf8"), rejectUnauthorized: true }
   : undefined;
 
-const pool = new Pool({ connectionString, ssl });
+console.log("DB_SSL_DEBUG", {
+  nodeEnv: process.env.NODE_ENV,
+  cwd: process.cwd(),
+  caPath,
+  caBytes: caPath ? fs.statSync(caPath).size : 0,
+});
+
+const pool = new Pool({ connectionString: DATABASE_URL, ssl });
 export const db = drizzle(pool, { schema });
