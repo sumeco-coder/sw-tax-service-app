@@ -1,0 +1,27 @@
+version: 1
+backend:
+  phases:
+    build:
+      commands:
+        - npm ci --cache .npm --prefer-offline
+        - npx ampx pipeline-deploy --branch $AWS_BRANCH --app-id $AWS_APP_ID
+         
+frontend:
+  phases:
+    build:
+      commands:
+        # Assuming you set the DATABASE_URL environment variable in the Amplify Console
+        - echo "DATABASE_URL=$DATABASE_URL" >> .env.production
+        - npm run build
+        # This line copies the certs folder to the final build output directory
+        - cp -R certs .next/certs 
+
+  artifacts:
+    baseDirectory: .next
+    files:
+      - '**/*'
+
+  cache:
+    paths:
+      - .next/cache/**/*
+      - .npm/**/*
