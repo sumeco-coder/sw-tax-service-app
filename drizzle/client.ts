@@ -8,15 +8,18 @@ import path from "path";
 const DATABASE_URL = process.env.DATABASE_URL;
 if (!DATABASE_URL) throw new Error("DATABASE_URL is not set");
 
-const isAws = !!process.env.AWS_REGION;
+// AWS runtime detection (Amplify/Lambda)
+const isAws =
+  !!process.env.AWS_REGION ||
+  !!process.env.AWS_DEFAULT_REGION ||
+  !!process.env.AWS_EXECUTION_ENV ||
+  !!process.env.AWS_LAMBDA_FUNCTION_NAME;
 
-// Only load the CA bundle when needed (RDS/Aurora SSL)
+const pemPath = path.join(process.cwd(), "certs", "global-bundle.pem");
+
 const ssl = isAws
   ? {
-      ca: fs.readFileSync(
-        path.join(process.cwd(), "certs", "global-bundle.pem"),
-        "utf8"
-      ),
+      ca: fs.readFileSync(pemPath, "utf8"),
       rejectUnauthorized: true,
     }
   : undefined;
