@@ -2,8 +2,11 @@
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  outputFileTracingIncludes: {
-    "/*": ["certs/global-bundle.pem"],
+  output: "standalone",
+  experimental: {
+    outputFileTracingIncludes: {
+      "/*": ["./certs/*.pem"],
+    },
   },
 };
 
