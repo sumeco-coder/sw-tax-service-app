@@ -7,6 +7,7 @@ import { revalidatePath } from "next/cache";
 import { eq } from "drizzle-orm";
 import { db } from "@/drizzle/db";
 import { waitlist, invites } from "@/drizzle/schema";
+import { headers } from "next/headers";
 
 /**
  * Approve a waitlist entry, create a taxpayer invite,
@@ -58,7 +59,15 @@ export async function approveWaitlistAndCreateInvite(
   });
 
   // 5. Build URL for the taxpayer onboarding sign-up
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+
+  async function getBaseUrl() {
+  const h = await headers();
+  const host = h.get("x-forwarded-host") ?? h.get("host");
+  const proto = h.get("x-forwarded-proto") ?? "https";
+  if (!host) return "http://localhost:3000";
+  return `${proto}://${host}`;
+}
+  const baseUrl = getBaseUrl();
   const onboardingUrl = `${baseUrl}/taxpayer/onboarding-sign-up?token=${token}`;
 
   // 6. Update waitlist entry status
