@@ -8,7 +8,7 @@ import path from "path";
 const DATABASE_URL = process.env.DATABASE_URL;
 if (!DATABASE_URL) throw new Error("DATABASE_URL is not set");
 
-const isProd = process.env.NODE_ENV === "production";
+const isAws = !!process.env.AWS_REGION; 
 
 // Only load the CA bundle when needed (RDS/Aurora SSL)
 const ssl = isProd
