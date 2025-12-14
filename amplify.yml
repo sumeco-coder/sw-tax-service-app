@@ -10,11 +10,10 @@ frontend:
   phases:
     build:
       commands:
-        - echo "DATABASE_URL=$DATABASE_URL" >> .env.production
-        - npm run build
-        # ✅ Put certs into the Lambda runtime root (/var/task)
-        - mkdir -p .next/standalone/certs
-        - cp -R certs/* .next/standalone/certs/
+         - echo "DATABASE_URL=$DATABASE_URL" >> .env.production
+         - npm run build
+         - mkdir -p certs
+         - curl -fsSL https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem -o certs/global-bundle.pem
 
   artifacts:
     baseDirectory: .next
