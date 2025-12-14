@@ -1,3 +1,4 @@
+// drizzle/client.ts
 import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import * as schema from "./schema";
@@ -7,26 +8,28 @@ import path from "path";
 const DATABASE_URL = process.env.DATABASE_URL;
 if (!DATABASE_URL) throw new Error("DATABASE_URL is not set");
 
-const isProd = process.env.NODE_ENV === "production";
+// In Amplify/Lambda, safest path is /var/task (where the app is deployed)
+const isAws = !!process.env.AWS_LAMBDA_FUNCTION_NAME || !!process.env.AWS_EXECUTION_ENV;
 
-const candidates = [
-  path.join(process.cwd(), "certs", "global-bundle.pem"),
- 
-];
+const pemPath = isAws
+  ? "/var/task/certs/us-west-1-bundle.pem"
+  : path.join(process.cwd(), "certs", "us-west-1-bundle.pem");
 
-const caPath = candidates.find((p) => fs.existsSync(p));
-if (isProd && !caPath) throw new Error("No RDS CA bundle found in /certs");
+const ssl = {
+  ca: fs.readFileSync(pemPath, "utf8"),
+  rejectUnauthorized: true,
+};
 
-const ssl = isProd
-  ? { ca: fs.readFileSync(caPath!, "utf8"), rejectUnauthorized: true }
-  : undefined;
-
-console.log("DB_SSL_DEBUG", {
-  nodeEnv: process.env.NODE_ENV,
-  cwd: process.cwd(),
-  caPath,
-  caBytes: caPath ? fs.statSync(caPath).size : 0,
+console.log("DB SSL debug", {
+  isAws,
+  pemPath,
+  pemExists: fs.existsSync(pemPath),
+  pemBytes: fs.existsSync(pemPath) ? fs.statSync(pemPath).size : 0,
 });
 
-const pool = new Pool({ connectionString: DATABASE_URL, ssl });
+const pool = new Pool({
+  connectionString: DATABASE_URL,
+  ssl,
+});
+
 export const db = drizzle(pool, { schema });
