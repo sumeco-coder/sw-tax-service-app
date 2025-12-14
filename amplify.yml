@@ -8,12 +8,20 @@ backend:
 
 frontend:
   phases:
+    preBuild:
+      commands:
+        - npm ci --cache .npm --prefer-offline
+        - mkdir -p certs
+        - curl -fsSL https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem -o certs/global-bundle.pem
+        - ls -la certs
+
     build:
       commands:
-         - echo "DATABASE_URL=$DATABASE_URL" >> .env.production
-         - npm run build
-         - mkdir -p certs
-         - curl -fsSL https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem -o certs/global-bundle.pem
+        - npm run build
+        # ensure cert is present in deployed server bundle
+        - mkdir -p .next/server/certs
+        - cp certs/global-bundle.pem .next/server/certs/global-bundle.pem
+        - ls -la .next/server/certs
 
   artifacts:
     baseDirectory: .next
@@ -24,3 +32,4 @@ frontend:
     paths:
       - .next/cache/**/*
       - .npm/**/*
+
