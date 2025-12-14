@@ -12,7 +12,7 @@ if (!DATABASE_URL) throw new Error("DATABASE_URL is not set");
 // ✅ Pick ONE cert file path (recommended: global)
 const pemPath =
   process.env.RDS_CA_BUNDLE_PATH ||
-  path.join(process.cwd(), "certs", "global-bundle.pem"); // OR "us-west-1-bundle.pem"
+  path.join(process.cwd(), ".next", "server", "certs", "global-bundle.pem");
 
 // ✅ Never crash build if file is missing. Only use SSL CA when it exists.
 const ssl = fs.existsSync(pemPath)
