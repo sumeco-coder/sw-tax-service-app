@@ -1,4 +1,5 @@
-import "server-only";
+// drizzle/client.ts
+
 
 import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
@@ -6,16 +7,20 @@ import * as schema from "./schema";
 import fs from "fs";
 import path from "path";
 
-const DATABASE_URL = process.env.DATABASE_URL;
-if (!DATABASE_URL) throw new Error("DATABASE_URL is not set");
+const caPath = path.resolve(process.cwd(), 'certs/global-bundle.pem');
 
-// ✅ Pick ONE cert file path (recommended: global)
-const pemPath = path.join(process.cwd(), "certs", "global-bundle.pem");
-// ✅ Never crash build if file is missing. Only use SSL CA when it exists.
-const ssl = fs.existsSync(pemPath)
-  ? { ca: fs.readFileSync(pemPath, "utf8"), rejectUnauthorized: false }
-  : undefined;
+if (!fs.existsSync(caPath)) {
+  throw new Error(`Missing RDS CA bundle at ${caPath}`);
+}
 
-const pool = new Pool({ connectionString: DATABASE_URL, ssl });
+const ca = fs.readFileSync(caPath, "utf8");
+
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: {
+    rejectUnauthorized: true,
+    ca: ca,
+  },
+});
 
 export const db = drizzle(pool, { schema });

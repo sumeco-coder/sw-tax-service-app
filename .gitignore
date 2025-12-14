@@ -24,8 +24,8 @@
 .DS_Store
 
 # Ignore cert bundles (download during build instead)
-certs/
-rds-ca.pem
+#certs/
+#rds-ca.pem
 
 
 
