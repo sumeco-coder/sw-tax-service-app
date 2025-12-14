@@ -23,15 +23,10 @@
 # misc
 .DS_Store
 
-# ... (leave other existing rules like node_modules/ alone)
+# Ignore cert bundles (download during build instead)
+certs/
+rds-ca.pem
 
-# Ignore everything inside the certs directory by default
-certs/*
-
-# Allow the specific CA bundles we need
-!certs/global-bundle.pem
-!certs/us-west-1-bundle.pem
-!certs/rds-ca.pem
 
 
 # debug
