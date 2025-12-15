@@ -21,6 +21,7 @@ const eslintConfig = defineConfig([
         "warn",
         { argsIgnorePattern: "^_" },
       ],
+       "react/no-unescaped-entities": "warn",
     },
   },
 ]);
