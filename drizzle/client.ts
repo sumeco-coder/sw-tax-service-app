@@ -14,39 +14,36 @@ const isHosted =
   !!process.env.AWS_LAMBDA_FUNCTION_NAME ||
   process.env.AWS_EXECUTION_ENV?.includes("AWS_Lambda") === true;
 
-const cwd = process.cwd();
+const region = process.env.AWS_REGION; // e.g. "us-west-1"
 const envCa = process.env.NODE_EXTRA_CA_CERTS;
 
-const lambdaCa = "/var/task/certs/global-bundle.pem";
-const rootCa = path.resolve(cwd, "certs", "global-bundle.pem");
-const altNextCa = path.resolve(cwd, ".next", "certs", "global-bundle.pem");
+// Prefer /var/task in Lambda, repo path locally
+const baseDir = isHosted
+  ? "/var/task/certs"
+  : path.resolve(process.cwd(), "certs");
 
+// Region-first, then global (plus optional NODE_EXTRA_CA_CERTS if you set it)
 const candidates = [
-  envCa,
-  isHosted ? lambdaCa : undefined,
-  rootCa,
-  altNextCa,
+  envCa && fs.existsSync(envCa) ? envCa : undefined,
+  region ? path.join(baseDir, `${region}-bundle.pem`) : undefined, // certs/us-west-1-bundle.pem
+  path.join(baseDir, "global-bundle.pem"),
 ].filter(Boolean) as string[];
 
 const caPath = candidates.find((p) => fs.existsSync(p));
-
 if (!caPath) {
   throw new Error(`[db] Missing RDS CA bundle. Checked: ${candidates.join(", ")}`);
 }
 
 const ca = fs.readFileSync(caPath, "utf8");
 
-// Reuse pool in dev/hot reload to prevent “too many clients”
+// Reuse pool in dev/hot reload
 const globalForDb = globalThis as unknown as { __pgPool?: Pool };
 
 export const pool =
   globalForDb.__pgPool ??
   new Pool({
     connectionString: DATABASE_URL,
-    ssl: {
-      ca,
-      rejectUnauthorized: true,
-    },
+    ssl: { ca, rejectUnauthorized: true },
   });
 
 if (process.env.NODE_ENV !== "production") globalForDb.__pgPool = pool;
