@@ -10,27 +10,19 @@ import path from "path";
 const DATABASE_URL = process.env.DATABASE_URL;
 if (!DATABASE_URL) throw new Error("DATABASE_URL is not set");
 
-const isHosted =
-  !!process.env.AWS_LAMBDA_FUNCTION_NAME ||
-  process.env.AWS_EXECUTION_ENV?.includes("AWS_Lambda") === true;
-
+// In Amplify SSR, process.cwd() is typically /tmp/app.
+// Your repo files (including certs/) live under that.
 const region = process.env.AWS_REGION || "us-west-1";
-const envCa = process.env.NODE_EXTRA_CA_CERTS;
+const certDir = path.resolve(process.cwd(), "certs");
 
-// Prefer /var/task in Lambda, repo path locally
-const baseDir = isHosted
-  ? "/var/task/certs"
-  : path.resolve(process.cwd(), "certs");
-
-// Candidate CA paths (region-first, then global)
+// Prefer region bundle first, then global bundle.
+// (Do NOT prioritize NODE_EXTRA_CA_CERTS here)
 const candidates = [
-  envCa && fs.existsSync(envCa) ? envCa : undefined,
-  path.join(baseDir, `${region}-bundle.pem`),   // e.g. certs/us-west-1-bundle.pem
-  path.join(baseDir, "global-bundle.pem"),
-].filter(Boolean) as string[];
+  path.join(certDir, `${region}-bundle.pem`),   // /tmp/app/certs/us-west-1-bundle.pem
+  path.join(certDir, "global-bundle.pem"),
+];
 
 const caPath = candidates.find((p) => fs.existsSync(p));
-
 if (!caPath) {
   throw new Error(`[db] Missing RDS CA bundle. Checked: ${candidates.join(", ")}`);
 }
@@ -50,3 +42,4 @@ export const pool =
 if (process.env.NODE_ENV !== "production") globalForDb.__pgPool = pool;
 
 export const db = drizzle(pool, { schema });
+
