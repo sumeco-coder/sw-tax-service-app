@@ -10,42 +10,45 @@ import path from "path";
 const DATABASE_URL = process.env.DATABASE_URL;
 if (!DATABASE_URL) throw new Error("DATABASE_URL is not set");
 
-// ---- TEMP DEBUG (safe) ----
+const isHosted =
+  !!process.env.AWS_LAMBDA_FUNCTION_NAME ||
+  process.env.AWS_EXECUTION_ENV?.includes("AWS_Lambda") === true;
+
 const cwd = process.cwd();
 const envCa = process.env.NODE_EXTRA_CA_CERTS;
 
+const lambdaCa = "/var/task/certs/global-bundle.pem";
 const rootCa = path.resolve(cwd, "certs", "global-bundle.pem");
 const altNextCa = path.resolve(cwd, ".next", "certs", "global-bundle.pem");
 
-console.log("[db] cwd:", cwd);
-console.log("[db] NODE_EXTRA_CA_CERTS:", envCa || "(not set)");
-console.log("[db] env ca exists?:", envCa ? fs.existsSync(envCa) : false);
-console.log("[db] root ca exists?:", fs.existsSync(rootCa), rootCa);
-console.log("[db] alt .next ca exists?:", fs.existsSync(altNextCa), altNextCa);
-// ---- END TEMP DEBUG ----
+const candidates = [
+  envCa,
+  isHosted ? lambdaCa : undefined,
+  rootCa,
+  altNextCa,
+].filter(Boolean) as string[];
 
-// Pick the first CA path that actually exists
-const caPath =
-  (envCa && fs.existsSync(envCa) && envCa) ||
-  (fs.existsSync(rootCa) && rootCa) ||
-  (fs.existsSync(altNextCa) && altNextCa);
+const caPath = candidates.find((p) => fs.existsSync(p));
 
 if (!caPath) {
-  throw new Error(
-    `[db] Missing RDS CA bundle. Checked env(${envCa}), ${rootCa}, ${altNextCa}`
-  );
+  throw new Error(`[db] Missing RDS CA bundle. Checked: ${candidates.join(", ")}`);
 }
-
-console.log("[db] using CA path:", caPath);
 
 const ca = fs.readFileSync(caPath, "utf8");
 
-const pool = new Pool({
-  connectionString: DATABASE_URL,
-  ssl: {
-    ca,
-    rejectUnauthorized: true,
-  },
-});
+// Reuse pool in dev/hot reload to prevent “too many clients”
+const globalForDb = globalThis as unknown as { __pgPool?: Pool };
+
+export const pool =
+  globalForDb.__pgPool ??
+  new Pool({
+    connectionString: DATABASE_URL,
+    ssl: {
+      ca,
+      rejectUnauthorized: true,
+    },
+  });
+
+if (process.env.NODE_ENV !== "production") globalForDb.__pgPool = pool;
 
 export const db = drizzle(pool, { schema });
