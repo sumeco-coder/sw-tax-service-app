@@ -44,6 +44,12 @@ export default function Navbar() {
             Appointment
           </Link>
           <Link
+            href="/tax-knowledge"
+            className="text-gray-700 hover:text-blue-700 transition-colors"
+          >
+            Tax Knowledge
+          </Link>
+          <Link
             href="/site/waitlist"
             className="text-gray-700 hover:text-blue-700 transition-colors"
           >
@@ -99,6 +105,12 @@ export default function Navbar() {
             >
               Appointment
             </Link>
+            <Link
+            href="/tax-knowledge"
+            className="text-gray-700 hover:text-blue-700 transition-colors"
+          >
+            Tax Knowledge
+          </Link>
             <Link
               href="/site/waitlist"
               onClick={() => setIsOpen(false)}

@@ -1,5 +1,4 @@
 // lib/email/resend.ts
-// lib/email/resend.ts
 import "server-only";
 import { Resend } from "resend";
 
@@ -12,6 +11,10 @@ export type ResendEmailInput = {
   textBody?: string;
   htmlBody?: string;
   from?: string;
+
+  // ✅ extras
+  replyTo?: string;
+  headers?: Record<string, string>;
 };
 
 function getResendClient() {
@@ -30,5 +33,7 @@ export async function sendResendEmail(input: ResendEmailInput) {
     subject: input.subject,
     text: input.textBody,
     html: input.htmlBody,
+    reply_to: input.replyTo,
+    headers: input.headers,
   } as any);
 }

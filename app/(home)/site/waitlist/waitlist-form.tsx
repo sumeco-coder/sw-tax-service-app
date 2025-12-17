@@ -62,7 +62,9 @@ export default function WaitlistForm() {
 
     const form = new FormData(e.currentTarget);
     const name = String(form.get("name") || "").trim();
-    const email = String(form.get("email") || "").trim().toLowerCase();
+    const email = String(form.get("email") || "")
+      .trim()
+      .toLowerCase();
     const phone = String(form.get("phone") || "").trim();
     const contactMethod = String(form.get("contactMethod") || "email");
     const taxYear = Number(form.get("taxYear") || "") || undefined;
@@ -116,7 +118,11 @@ export default function WaitlistForm() {
       }
     } catch (err) {
       console.error(err);
-      setError("Something went wrong. Please try again.");
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Something went wrong. Please try again."
+      );
     } finally {
       setLoading(false);
     }
@@ -214,7 +220,11 @@ export default function WaitlistForm() {
             <div className="relative">
               <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">
                 {/* user icon */}
-                <svg className="h-5 w-5" viewBox="0 0 24 24" fill="currentColor">
+                <svg
+                  className="h-5 w-5"
+                  viewBox="0 0 24 24"
+                  fill="currentColor"
+                >
                   <path d="M12 12c2.8 0 5-2.2 5-5s-2.2-5-5-5-5 2.2-5 5 2.2 5 5 5zm0 2c-3.3 0-10 1.7-10 5v3h20v-3c0-3.3-6.7-5-10-5z" />
                 </svg>
               </span>
@@ -235,7 +245,11 @@ export default function WaitlistForm() {
               </label>
               <span className="pointer-events-none absolute left-3 top-[42px] text-gray-400">
                 {/* mail icon */}
-                <svg className="h-5 w-5" viewBox="0 0 24 24" fill="currentColor">
+                <svg
+                  className="h-5 w-5"
+                  viewBox="0 0 24 24"
+                  fill="currentColor"
+                >
                   <path d="M12 13l-12-8h24l-12 8zm-12-6l12 8 12-8v11h-24v-11z" />
                 </svg>
               </span>
@@ -243,6 +257,7 @@ export default function WaitlistForm() {
                 name="email"
                 type="email"
                 required
+                autoComplete="email"
                 placeholder="jane@example.com"
                 className="w-full rounded-xl border px-10 py-3 outline-none transition focus:ring-2 focus:ring-blue-500"
               />
@@ -254,14 +269,22 @@ export default function WaitlistForm() {
               </label>
               <span className="pointer-events-none absolute left-3 top-[42px] text-gray-400">
                 {/* phone icon */}
-                <svg className="h-5 w-5" viewBox="0 0 24 24" fill="currentColor">
+                <svg
+                  className="h-5 w-5"
+                  viewBox="0 0 24 24"
+                  fill="currentColor"
+                >
                   <path d="M6.6 10.8c1.2 2.4 3.2 4.4 5.6 5.6l2-2c.3-.3.8-.4 1.2-.2 1 .4 2.1.6 3.2.6.6 0 1 .4 1 1v3.1c0 .6-.4 1-1 1C9.4 20 4 14.6 4 8.4c0-.6.4-1 1-1H8c.6 0 1 .4 1 1 0 1.1.2 2.2.6 3.2.2.4.1.9-.2 1.2l-1.8 2z" />
                 </svg>
               </span>
               <input
                 name="phone"
                 inputMode="tel"
+                autoComplete="tel"
                 placeholder="(555) 555-5555"
+                maxLength={24}
+                pattern="^[0-9+()\-\s]{7,}$"
+                title="Enter a valid phone number (digits, spaces, +, -, parentheses)"
                 className="w-full rounded-xl border px-10 py-3 outline-none transition focus:ring-2 focus:ring-blue-500"
               />
             </div>
@@ -387,4 +410,3 @@ export default function WaitlistForm() {
     </section>
   );
 }
-

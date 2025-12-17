@@ -13,6 +13,7 @@ import {
   index,
   unique,
   varchar,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
 
 // --- Enums ---
@@ -73,6 +74,92 @@ export const waitlistRoleEnum = pgEnum("waitlist_role", [
   "business",
   "other",
 ]);
+
+// 3️⃣ Email Campaigns enums
+export const emailCampaignStatus = pgEnum("email_campaign_status", [
+  "draft",
+  "sending",
+  "sent",
+  "failed",
+]);
+
+export const emailRecipientStatus = pgEnum("email_recipient_status", [
+  "queued",
+  "sent",
+  "failed",
+  "unsubscribed",
+]);
+
+export const emailCampaignSegment = pgEnum("email_campaign_segment", [
+  "waitlist_pending",
+  "waitlist_approved",
+  "waitlist_all",
+]);
+
+// =========================
+// EMAIL CAMPAIGNS
+// =========================
+export const emailCampaigns = pgTable("email_campaigns", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  name: text("name").notNull(),
+  segment: emailCampaignSegment("segment")
+    .default("waitlist_pending")
+    .notNull(),
+  status: emailCampaignStatus("status").default("draft").notNull(),
+  sentAt: timestamp("sent_at", { withTimezone: true }),
+  subject: text("subject").notNull(),
+  htmlBody: text("html_body").notNull(),
+  textBody: text("text_body"),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+});
+
+// ✅ recipients (each send gets a token)
+export const emailRecipients = pgTable(
+  "email_recipients",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    campaignId: uuid("campaign_id").references(() => emailCampaigns.id, {
+      onDelete: "set null",
+    }),
+    email: text("email").notNull(),
+    unsubToken: text("unsub_token").notNull(),
+    status: emailRecipientStatus("status").default("queued").notNull(),
+    error: text("error"),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => ({
+    emailIdx: index("email_recipients_email_idx").on(t.email),
+    tokenUq: uniqueIndex("email_recipients_unsub_token_uq").on(t.unsubToken),
+    campaignIdx: index("email_recipients_campaign_idx").on(t.campaignId),
+  })
+);
+
+// ✅ global unsub list (one row per email)
+export const emailUnsubscribes = pgTable("email_unsubscribes", {
+  email: text("email").primaryKey(),
+  unsubscribedAt: timestamp("unsubscribed_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+  source: text("source"), // "page" | "one-click" | etc
+});
+
+// 3️⃣ App settings table
+export const appSettings = pgTable("app_settings", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
 
 // 3️⃣ Waitlist table
 export const waitlist = pgTable("waitlist", {
@@ -188,7 +275,7 @@ export const users = pgTable(
     cognitoSub: text("cognito_sub").notNull().unique(), // map to Cognito sub
     email: text("email").notNull(),
 
-      // ✅ NEW: split name
+    // ✅ NEW: split name
     firstName: text("first_name"),
     lastName: text("last_name"),
 
@@ -231,7 +318,6 @@ export const appointmentStatus = pgEnum("appointment_status", [
   "cancelled",
   "no_show",
 ]);
-
 
 // --- Appointments ---
 export const appointments = pgTable("appointments", {
@@ -654,5 +740,98 @@ export const sopFiles = pgTable(
   (t) => ({
     firmIdx: index("sop_files_firm_idx").on(t.firmId),
     storageKeyUniq: unique("sop_files_storage_key_uniq").on(t.storageKey),
+  })
+);
+
+// 1) Providers
+export const socialProvider = pgEnum("social_provider", [
+  "facebook",
+  "instagram",
+  "x",
+]);
+
+// 2) Post status
+export const socialPostStatus = pgEnum("social_post_status", [
+  "queued",
+  "sending",
+  "sent",
+  "failed",
+  "canceled",
+]);
+
+export const socialAccounts = pgTable(
+  "social_accounts",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+
+    provider: socialProvider("provider").notNull(),
+
+    // display name you show in admin UI
+    label: text("label").notNull(), // ex: "SW Tax Service FB Page"
+
+    // For Facebook Page posting
+    pageId: text("page_id"),
+
+    // For Instagram Content Publishing
+    igUserId: text("ig_user_id"),
+
+    // Tokens (store encrypted later if you want)
+    accessToken: text("access_token").notNull(),
+    refreshToken: text("refresh_token"),
+
+    tokenExpiresAt: timestamp("token_expires_at", { withTimezone: true }),
+
+    isEnabled: boolean("is_enabled").default(true).notNull(),
+
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => ({
+    providerIdx: index("social_accounts_provider_idx").on(t.provider),
+    enabledIdx: index("social_accounts_enabled_idx").on(t.isEnabled),
+  })
+);
+
+export const socialPosts = pgTable(
+  "social_posts",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+
+    provider: socialProvider("provider").notNull(),
+
+    // optional: link to a specific connected account
+    accountId: uuid("account_id").references(() => socialAccounts.id, {
+      onDelete: "set null",
+      onUpdate: "no action",
+    }),
+
+    // Trigger key lets you auto-post from anywhere:
+    // examples: "waitlist.opened", "campaign.sent", "blog.published"
+    triggerKey: text("trigger_key"),
+
+    status: socialPostStatus("status").default("queued").notNull(),
+
+    // If null => “post now”
+    scheduledAt: timestamp("scheduled_at", { withTimezone: true }),
+
+    // Content
+    textBody: text("text_body").notNull(),
+
+    // Optional media list (IG needs media; X/FB can use links/media)
+    mediaUrls: jsonb("media_urls").$type<string[]>().default([]).notNull(),
+
+    // Store provider response
+    result: jsonb("result").$type<Record<string, any> | null>(),
+    error: text("error"),
+
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => ({
+    statusScheduleIdx: index("social_posts_status_scheduled_idx").on(t.status, t.scheduledAt),
+    providerIdx: index("social_posts_provider_idx").on(t.provider),
+    triggerIdx: index("social_posts_trigger_idx").on(t.triggerKey),
   })
 );

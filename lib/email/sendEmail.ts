@@ -8,6 +8,10 @@ export type SendEmailArgs = {
   subject: string;
   htmlBody: string;
   textBody?: string;
+
+  // ✅ NEW
+  replyTo?: string;
+  headers?: Record<string, string>;
 };
 
 const provider = (process.env.EMAIL_PROVIDER || "resend").toLowerCase();
@@ -18,15 +22,10 @@ const provider = (process.env.EMAIL_PROVIDER || "resend").toLowerCase();
  * - If EMAIL_PROVIDER=ses → try SES, fall back to Resend on failure
  * - Otherwise → use Resend
  */
-export async function sendEmail({ to, subject, htmlBody, textBody }: SendEmailArgs) {
+export async function sendEmail(args: SendEmailArgs): Promise<void> {
   if (provider === "ses") {
     try {
-      await sendSesEmail({
-        to,
-        subject,
-        htmlBody,
-        textBody,
-      });
+      await sendSesEmail(args);
       return;
     } catch (err) {
       console.error("SES send failed, falling back to Resend:", err);
@@ -34,11 +33,5 @@ export async function sendEmail({ to, subject, htmlBody, textBody }: SendEmailAr
     }
   }
 
-  // Default / fallback → Resend
-  await sendResendEmail({
-    to,
-    subject,
-    htmlBody,
-    textBody,
-  });
+  await sendResendEmail(args);
 }

@@ -1,21 +1,77 @@
-CREATE TYPE "public"."appointment_status" AS ENUM('scheduled', 'completed', 'cancelled', 'no_show');--> statement-breakpoint
-CREATE TYPE "public"."course_level" AS ENUM('BEGINNER', 'INTERMEDIATE', 'ADVANCED');--> statement-breakpoint
-CREATE TYPE "public"."course_status" AS ENUM('DRAFT', 'PUBLISHED', 'ARCHIVED');--> statement-breakpoint
-CREATE TYPE "public"."enrollment_role" AS ENUM('LEARNER', 'INSTRUCTOR', 'ADMIN');--> statement-breakpoint
-CREATE TYPE "public"."invite_status" AS ENUM('pending', 'accepted', 'expired', 'revoked');--> statement-breakpoint
-CREATE TYPE "public"."invite_type" AS ENUM('taxpayer', 'lms-preparer');--> statement-breakpoint
-CREATE TYPE "public"."invoice_status" AS ENUM('UNPAID', 'PAID', 'VOID', 'REFUNDED', 'PARTIAL');--> statement-breakpoint
-CREATE TYPE "public"."lesson_status" AS ENUM('DRAFT', 'PUBLISHED');--> statement-breakpoint
-CREATE TYPE "public"."lesson_type" AS ENUM('VIDEO', 'ARTICLE', 'QUIZ', 'CHECKLIST');--> statement-breakpoint
-CREATE TYPE "public"."onboarding_step" AS ENUM('PROFILE', 'DOCUMENTS', 'QUESTIONS', 'SCHEDULE', 'SUMMARY', 'SUBMITTED', 'DONE');--> statement-breakpoint
-CREATE TYPE "public"."profile_visibility" AS ENUM('public', 'private');--> statement-breakpoint
-CREATE TYPE "public"."progress_status" AS ENUM('NOT_STARTED', 'IN_PROGRESS', 'COMPLETED');--> statement-breakpoint
-CREATE TYPE "public"."return_status" AS ENUM('DRAFT', 'IN_REVIEW', 'FILED', 'ACCEPTED', 'REJECTED', 'AMENDED');--> statement-breakpoint
-CREATE TYPE "public"."task_status" AS ENUM('OPEN', 'IN_PROGRESS', 'WAITING', 'DONE', 'CANCELLED');--> statement-breakpoint
-CREATE TYPE "public"."theme_pref" AS ENUM('light', 'dark', 'system');--> statement-breakpoint
-CREATE TYPE "public"."waitlist_role" AS ENUM('taxpayer', 'business', 'other');--> statement-breakpoint
-CREATE TYPE "public"."waitlist_status" AS ENUM('pending', 'approved', 'rejected', 'archived');--> statement-breakpoint
-CREATE TABLE "appointments" (
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'appointment_status') THEN
+    CREATE TYPE "public"."appointment_status" AS ENUM('scheduled', 'completed', 'cancelled', 'no_show');
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'course_level') THEN
+    CREATE TYPE "public"."course_level" AS ENUM('BEGINNER', 'INTERMEDIATE', 'ADVANCED');
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'course_status') THEN
+    CREATE TYPE "public"."course_status" AS ENUM('DRAFT', 'PUBLISHED', 'ARCHIVED');
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'enrollment_role') THEN
+    CREATE TYPE "public"."enrollment_role" AS ENUM('LEARNER', 'INSTRUCTOR', 'ADMIN');
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'invite_status') THEN
+    CREATE TYPE "public"."invite_status" AS ENUM('pending', 'accepted', 'expired', 'revoked');
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'invite_type') THEN
+    CREATE TYPE "public"."invite_type" AS ENUM('taxpayer', 'lms-preparer');
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'invoice_status') THEN
+    CREATE TYPE "public"."invoice_status" AS ENUM('UNPAID', 'PAID', 'VOID', 'REFUNDED', 'PARTIAL');
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'lesson_status') THEN
+    CREATE TYPE "public"."lesson_status" AS ENUM('DRAFT', 'PUBLISHED');
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'lesson_type') THEN
+    CREATE TYPE "public"."lesson_type" AS ENUM('VIDEO', 'ARTICLE', 'QUIZ', 'CHECKLIST');
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'onboarding_step') THEN
+    CREATE TYPE "public"."onboarding_step" AS ENUM('PROFILE', 'DOCUMENTS', 'QUESTIONS', 'SCHEDULE', 'SUMMARY', 'SUBMITTED', 'DONE');
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'profile_visibility') THEN
+    CREATE TYPE "public"."profile_visibility" AS ENUM('public', 'private');
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'progress_status') THEN
+    CREATE TYPE "public"."progress_status" AS ENUM('NOT_STARTED', 'IN_PROGRESS', 'COMPLETED');
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'return_status') THEN
+    CREATE TYPE "public"."return_status" AS ENUM('DRAFT', 'IN_REVIEW', 'FILED', 'ACCEPTED', 'REJECTED', 'AMENDED');
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'task_status') THEN
+    CREATE TYPE "public"."task_status" AS ENUM('OPEN', 'IN_PROGRESS', 'WAITING', 'DONE', 'CANCELLED');
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'theme_pref') THEN
+    CREATE TYPE "public"."theme_pref" AS ENUM('light', 'dark', 'system');
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'waitlist_role') THEN
+    CREATE TYPE "public"."waitlist_role" AS ENUM('taxpayer', 'business', 'other');
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'waitlist_status') THEN
+    CREATE TYPE "public"."waitlist_status" AS ENUM('pending', 'approved', 'rejected', 'archived');
+  END IF;
+END
+$$;
+--> statement-breakpoint
+
+CREATE TABLE IF NOT EXISTS "appointments" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"user_id" uuid NOT NULL,
 	"scheduled_at" timestamp with time zone NOT NULL,
@@ -28,7 +84,7 @@ CREATE TABLE "appointments" (
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
-CREATE TABLE "courses" (
+CREATE TABLE IF NOT EXISTS "courses" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"firm_id" uuid NOT NULL,
 	"owner_user_id" uuid,
@@ -42,7 +98,7 @@ CREATE TABLE "courses" (
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
-CREATE TABLE "dependents" (
+CREATE TABLE IF NOT EXISTS "dependents" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"user_id" uuid NOT NULL,
 	"first_name" varchar(80) NOT NULL,
@@ -58,7 +114,7 @@ CREATE TABLE "dependents" (
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
-CREATE TABLE "documents" (
+CREATE TABLE IF NOT EXISTS "documents" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"user_id" uuid NOT NULL,
 	"tax_return_id" uuid,
@@ -71,7 +127,7 @@ CREATE TABLE "documents" (
 	CONSTRAINT "documents_key_uniq" UNIQUE("key")
 );
 --> statement-breakpoint
-CREATE TABLE "enrollments" (
+CREATE TABLE IF NOT EXISTS "enrollments" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"course_id" uuid NOT NULL,
 	"user_id" uuid NOT NULL,
@@ -81,7 +137,7 @@ CREATE TABLE "enrollments" (
 	CONSTRAINT "enrollments_course_user_uniq" UNIQUE("course_id","user_id")
 );
 --> statement-breakpoint
-CREATE TABLE "firms" (
+CREATE TABLE IF NOT EXISTS "firms" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"name" text NOT NULL,
 	"subdomain" text,
@@ -90,7 +146,7 @@ CREATE TABLE "firms" (
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
-CREATE TABLE "invites" (
+CREATE TABLE IF NOT EXISTS "invites" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"email" text NOT NULL,
 	"type" "invite_type" NOT NULL,
@@ -104,7 +160,7 @@ CREATE TABLE "invites" (
 	CONSTRAINT "invites_token_unique" UNIQUE("token")
 );
 --> statement-breakpoint
-CREATE TABLE "invoices" (
+CREATE TABLE IF NOT EXISTS "invoices" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"user_id" uuid NOT NULL,
 	"tax_return_id" uuid,
@@ -114,7 +170,7 @@ CREATE TABLE "invoices" (
 	"paid_at" timestamp with time zone
 );
 --> statement-breakpoint
-CREATE TABLE "lesson_progress" (
+CREATE TABLE IF NOT EXISTS "lesson_progress" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"enrollment_id" uuid NOT NULL,
 	"lesson_id" uuid NOT NULL,
@@ -124,7 +180,7 @@ CREATE TABLE "lesson_progress" (
 	CONSTRAINT "lesson_progress_enrollment_lesson_uniq" UNIQUE("enrollment_id","lesson_id")
 );
 --> statement-breakpoint
-CREATE TABLE "lessons" (
+CREATE TABLE IF NOT EXISTS "lessons" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"course_id" uuid NOT NULL,
 	"module_id" uuid,
@@ -140,7 +196,7 @@ CREATE TABLE "lessons" (
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
-CREATE TABLE "messages" (
+CREATE TABLE IF NOT EXISTS "messages" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"user_id" uuid NOT NULL,
 	"sender" text NOT NULL,
@@ -148,7 +204,7 @@ CREATE TABLE "messages" (
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
-CREATE TABLE "modules" (
+CREATE TABLE IF NOT EXISTS "modules" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"course_id" uuid NOT NULL,
 	"title" text NOT NULL,
@@ -158,7 +214,7 @@ CREATE TABLE "modules" (
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
-CREATE TABLE "sop_files" (
+CREATE TABLE IF NOT EXISTS "sop_files" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"firm_id" uuid NOT NULL,
 	"title" text NOT NULL,
@@ -171,7 +227,7 @@ CREATE TABLE "sop_files" (
 	CONSTRAINT "sop_files_storage_key_uniq" UNIQUE("storage_key")
 );
 --> statement-breakpoint
-CREATE TABLE "tasks" (
+CREATE TABLE IF NOT EXISTS"tasks" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"user_id" uuid NOT NULL,
 	"tax_return_id" uuid,
@@ -182,7 +238,7 @@ CREATE TABLE "tasks" (
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
-CREATE TABLE "tax_returns" (
+CREATE TABLE IF NOT EXISTS"tax_returns" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"user_id" uuid NOT NULL,
 	"tax_year" integer NOT NULL,
@@ -193,7 +249,7 @@ CREATE TABLE "tax_returns" (
 	CONSTRAINT "tax_returns_user_year_uniq" UNIQUE("user_id","tax_year")
 );
 --> statement-breakpoint
-CREATE TABLE "user_settings" (
+CREATE TABLE IF NOT EXISTS"user_settings" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"user_id" uuid NOT NULL,
 	"theme" "theme_pref" DEFAULT 'system' NOT NULL,
@@ -209,7 +265,7 @@ CREATE TABLE "user_settings" (
 	CONSTRAINT "user_settings_user_id_unique" UNIQUE("user_id")
 );
 --> statement-breakpoint
-CREATE TABLE "users" (
+CREATE TABLE IF NOT EXISTS "users" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"cognito_sub" text NOT NULL,
 	"email" text NOT NULL,
@@ -231,7 +287,7 @@ CREATE TABLE "users" (
 	CONSTRAINT "users_cognito_sub_unique" UNIQUE("cognito_sub")
 );
 --> statement-breakpoint
-CREATE TABLE "waitlist" (
+CREATE TABLE IF NOT EXISTS "waitlist" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"full_name" text NOT NULL,
 	"email" text NOT NULL,
@@ -267,30 +323,30 @@ ALTER TABLE "tasks" ADD CONSTRAINT "tasks_user_id_users_id_fk" FOREIGN KEY ("use
 ALTER TABLE "tasks" ADD CONSTRAINT "tasks_tax_return_id_tax_returns_id_fk" FOREIGN KEY ("tax_return_id") REFERENCES "public"."tax_returns"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "tax_returns" ADD CONSTRAINT "tax_returns_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "user_settings" ADD CONSTRAINT "user_settings_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-CREATE INDEX "courses_firm_idx" ON "courses" USING btree ("firm_id");--> statement-breakpoint
-CREATE INDEX "courses_owner_idx" ON "courses" USING btree ("owner_user_id");--> statement-breakpoint
-CREATE INDEX "dependents_user_idx" ON "dependents" USING btree ("user_id");--> statement-breakpoint
-CREATE INDEX "dependents_months_check" ON "dependents" USING btree ("months_in_home");--> statement-breakpoint
-CREATE INDEX "documents_user_idx" ON "documents" USING btree ("user_id");--> statement-breakpoint
-CREATE INDEX "documents_return_idx" ON "documents" USING btree ("tax_return_id");--> statement-breakpoint
-CREATE INDEX "enrollments_course_idx" ON "enrollments" USING btree ("course_id");--> statement-breakpoint
-CREATE INDEX "enrollments_user_idx" ON "enrollments" USING btree ("user_id");--> statement-breakpoint
-CREATE INDEX "firms_subdomain_idx" ON "firms" USING btree ("subdomain");--> statement-breakpoint
-CREATE INDEX "invoices_user_idx" ON "invoices" USING btree ("user_id");--> statement-breakpoint
-CREATE INDEX "invoices_return_idx" ON "invoices" USING btree ("tax_return_id");--> statement-breakpoint
-CREATE INDEX "lesson_progress_enrollment_idx" ON "lesson_progress" USING btree ("enrollment_id");--> statement-breakpoint
-CREATE INDEX "lesson_progress_lesson_idx" ON "lesson_progress" USING btree ("lesson_id");--> statement-breakpoint
-CREATE INDEX "lessons_course_idx" ON "lessons" USING btree ("course_id");--> statement-breakpoint
-CREATE INDEX "lessons_module_idx" ON "lessons" USING btree ("module_id");--> statement-breakpoint
-CREATE INDEX "lessons_sort_idx" ON "lessons" USING btree ("course_id","sort_order");--> statement-breakpoint
-CREATE INDEX "messages_user_idx" ON "messages" USING btree ("user_id");--> statement-breakpoint
-CREATE INDEX "messages_created_idx" ON "messages" USING btree ("created_at");--> statement-breakpoint
-CREATE INDEX "modules_course_idx" ON "modules" USING btree ("course_id");--> statement-breakpoint
-CREATE INDEX "modules_sort_idx" ON "modules" USING btree ("course_id","sort_order");--> statement-breakpoint
-CREATE INDEX "sop_files_firm_idx" ON "sop_files" USING btree ("firm_id");--> statement-breakpoint
-CREATE INDEX "tasks_user_idx" ON "tasks" USING btree ("user_id");--> statement-breakpoint
-CREATE INDEX "tasks_return_idx" ON "tasks" USING btree ("tax_return_id");--> statement-breakpoint
-CREATE INDEX "tax_returns_user_idx" ON "tax_returns" USING btree ("user_id");--> statement-breakpoint
-CREATE INDEX "tax_returns_year_idx" ON "tax_returns" USING btree ("tax_year");--> statement-breakpoint
-CREATE INDEX "user_settings_user_idx" ON "user_settings" USING btree ("user_id");--> statement-breakpoint
-CREATE INDEX "users_email_idx" ON "users" USING btree ("email");
+CREATE INDEX IF NOT EXISTS "courses_firm_idx" ON "courses" USING btree ("firm_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "courses_owner_idx" ON "courses" USING btree ("owner_user_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "dependents_user_idx" ON "dependents" USING btree ("user_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "dependents_months_check" ON "dependents" USING btree ("months_in_home");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "documents_user_idx" ON "documents" USING btree ("user_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "documents_return_idx" ON "documents" USING btree ("tax_return_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "enrollments_course_idx" ON "enrollments" USING btree ("course_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "enrollments_user_idx" ON "enrollments" USING btree ("user_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "firms_subdomain_idx" ON "firms" USING btree ("subdomain");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "invoices_user_idx" ON "invoices" USING btree ("user_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "invoices_return_idx" ON "invoices" USING btree ("tax_return_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "lesson_progress_enrollment_idx" ON "lesson_progress" USING btree ("enrollment_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "lesson_progress_lesson_idx" ON "lesson_progress" USING btree ("lesson_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "lessons_course_idx" ON "lessons" USING btree ("course_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "lessons_module_idx" ON "lessons" USING btree ("module_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "lessons_sort_idx" ON "lessons" USING btree ("course_id","sort_order");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "messages_user_idx" ON "messages" USING btree ("user_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "messages_created_idx" ON "messages" USING btree ("created_at");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "modules_course_idx" ON "modules" USING btree ("course_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "modules_sort_idx" ON "modules" USING btree ("course_id","sort_order");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "sop_files_firm_idx" ON "sop_files" USING btree ("firm_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "tasks_user_idx" ON "tasks" USING btree ("user_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "tasks_return_idx" ON "tasks" USING btree ("tax_return_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "tax_returns_user_idx" ON "tax_returns" USING btree ("user_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "tax_returns_year_idx" ON "tax_returns" USING btree ("tax_year");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "user_settings_user_idx" ON "user_settings" USING btree ("user_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "users_email_idx" ON "users" USING btree ("email");

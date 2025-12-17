@@ -15,6 +15,27 @@
       "when": 1765042176131,
       "tag": "0001_flashy_leopardon",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1765948079958,
+      "tag": "0002_small_black_knight",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1765952733718,
+      "tag": "0003_common_expediter",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1765954753232,
+      "tag": "0004_lame_bedlam",
+      "breakpoints": true
     }
   ]
 }

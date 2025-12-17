@@ -82,7 +82,7 @@ export default function Footer() {
 
       {/* Copyright line */}
       <div className="relative z-10 border-t border-blue-700 mt-10 pt-6 text-center text-sm text-blue-200">
-        © {new Date().getFullYear()} All-In-Well Tax Firm. All rights reserved.
+        © {new Date().getFullYear()} SW Tax Service All-In-Well Tax Firm. All rights reserved.
       </div>
     </footer>
   );

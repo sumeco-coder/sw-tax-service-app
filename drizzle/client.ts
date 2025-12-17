@@ -10,13 +10,11 @@ import path from "path";
 const DATABASE_URL = process.env.DATABASE_URL;
 if (!DATABASE_URL) throw new Error("DATABASE_URL is not set");
 
-// In Amplify SSR, process.cwd() is typically /tmp/app.
-// Your repo files (including certs/) live under that.
+
 const region = process.env.AWS_REGION || "us-west-1";
 const certDir = path.resolve(process.cwd(), "certs");
 
-// Prefer region bundle first, then global bundle.
-// (Do NOT prioritize NODE_EXTRA_CA_CERTS here)
+// region-first (matches your DB), then global fallback
 const candidates = [
   path.join(certDir, `${region}-bundle.pem`),   // /tmp/app/certs/us-west-1-bundle.pem
   path.join(certDir, "global-bundle.pem"),
