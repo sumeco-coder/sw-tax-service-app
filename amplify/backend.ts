@@ -4,6 +4,7 @@ import { data } from './data/resource';
 import { storage } from "./storage/resource";
 import { assignRoleOnConfirm } from "./functions/assignRoleOnConfirm/resource";  // <-- REQUIRED IMPORT
 import { socialPostRunner } from "./functions/socialPostRunner/resource";
+import { emailCampaignRunner } from "./functions/emailCampaignRunner/resource";
 /**
  * @see https://docs.amplify.aws/react/build-a-backend/ to add storage, functions, and more
  */
@@ -13,5 +14,6 @@ defineBackend({
   storage,
   assignRoleOnConfirm,
   socialPostRunner,
+  emailCampaignRunner,
 });
 

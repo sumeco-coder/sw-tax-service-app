@@ -1,4 +1,5 @@
 // drizzle/schema.ts
+import { sql } from "drizzle-orm";
 import {
   pgTable,
   text,
@@ -49,146 +50,9 @@ export const profileVisibility = pgEnum("profile_visibility", [
 
 export const themeEnum = pgEnum("theme_pref", ["light", "dark", "system"]);
 
-// 1️⃣ Status enum (best practice)
-export const waitlistStatusEnum = pgEnum("waitlist_status", [
-  "pending",
-  "approved",
-  "rejected",
-  "archived",
-]);
-
-// 2️⃣ Onboarding Step enum
-export const onboardingStepEnum = pgEnum("onboarding_step", [
-  "PROFILE",
-  "DOCUMENTS",
-  "QUESTIONS",
-  "SCHEDULE",
-  "SUMMARY",
-  "SUBMITTED",
-  "DONE",
-]);
-
-// 2️⃣ RoleType enum (optional but recommended)
-export const waitlistRoleEnum = pgEnum("waitlist_role", [
-  "taxpayer",
-  "business",
-  "other",
-]);
-
-// 3️⃣ Email Campaigns enums
-export const emailCampaignStatus = pgEnum("email_campaign_status", [
-  "draft",
-  "sending",
-  "sent",
-  "failed",
-]);
-
-export const emailRecipientStatus = pgEnum("email_recipient_status", [
-  "queued",
-  "sent",
-  "failed",
-  "unsubscribed",
-]);
-
-export const emailCampaignSegment = pgEnum("email_campaign_segment", [
-  "waitlist_pending",
-  "waitlist_approved",
-  "waitlist_all",
-]);
-
 // =========================
-// EMAIL CAMPAIGNS
+// INVITES ENUMS
 // =========================
-export const emailCampaigns = pgTable("email_campaigns", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  name: text("name").notNull(),
-  segment: emailCampaignSegment("segment")
-    .default("waitlist_pending")
-    .notNull(),
-  status: emailCampaignStatus("status").default("draft").notNull(),
-  sentAt: timestamp("sent_at", { withTimezone: true }),
-  subject: text("subject").notNull(),
-  htmlBody: text("html_body").notNull(),
-  textBody: text("text_body"),
-  createdAt: timestamp("created_at", { withTimezone: true })
-    .defaultNow()
-    .notNull(),
-  updatedAt: timestamp("updated_at", { withTimezone: true })
-    .defaultNow()
-    .notNull(),
-});
-
-// ✅ recipients (each send gets a token)
-export const emailRecipients = pgTable(
-  "email_recipients",
-  {
-    id: uuid("id").defaultRandom().primaryKey(),
-    campaignId: uuid("campaign_id").references(() => emailCampaigns.id, {
-      onDelete: "set null",
-    }),
-    email: text("email").notNull(),
-    unsubToken: text("unsub_token").notNull(),
-    status: emailRecipientStatus("status").default("queued").notNull(),
-    error: text("error"),
-    sentAt: timestamp("sent_at", { withTimezone: true }),
-    createdAt: timestamp("created_at", { withTimezone: true })
-      .defaultNow()
-      .notNull(),
-    updatedAt: timestamp("updated_at", { withTimezone: true })
-      .defaultNow()
-      .notNull(),
-  },
-  (t) => ({
-    emailIdx: index("email_recipients_email_idx").on(t.email),
-    tokenUq: uniqueIndex("email_recipients_unsub_token_uq").on(t.unsubToken),
-    campaignIdx: index("email_recipients_campaign_idx").on(t.campaignId),
-  })
-);
-
-// ✅ global unsub list (one row per email)
-export const emailUnsubscribes = pgTable("email_unsubscribes", {
-  email: text("email").primaryKey(),
-  unsubscribedAt: timestamp("unsubscribed_at", { withTimezone: true })
-    .defaultNow()
-    .notNull(),
-  source: text("source"), // "page" | "one-click" | etc
-});
-
-// 3️⃣ App settings table
-export const appSettings = pgTable("app_settings", {
-  key: text("key").primaryKey(),
-  value: text("value").notNull(),
-  updatedAt: timestamp("updated_at").notNull().defaultNow(),
-});
-
-// 3️⃣ Waitlist table
-export const waitlist = pgTable("waitlist", {
-  id: uuid("id").defaultRandom().primaryKey(),
-
-  fullName: text("full_name").notNull(),
-  email: text("email").notNull(),
-  phone: text("phone"),
-
-  // use your enum here:
-  roleType: waitlistRoleEnum("role_type").notNull().default("taxpayer"),
-
-  notes: text("notes"), // extra info: goals, situation, etc.
-
-  // If they selected a plan (optional)
-  plan: text("plan"),
-
-  // For multi-agency (optional)
-  agencyId: uuid("agency_id"),
-
-  // 🔥 enum status
-  status: waitlistStatusEnum("status").notNull().default("pending"),
-
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).$onUpdate(
-    () => new Date()
-  ),
-});
-
 export const inviteTypeEnum = pgEnum("invite_type", [
   "taxpayer",
   "lms-preparer",
@@ -201,6 +65,9 @@ export const inviteStatusEnum = pgEnum("invite_status", [
   "revoked",
 ]);
 
+// =========================
+// INVITE TABLE
+// =========================
 export const invites = pgTable("invites", {
   id: uuid("id").defaultRandom().primaryKey(),
 
@@ -233,7 +100,160 @@ export const invites = pgTable("invites", {
     () => new Date()
   ),
 });
-// --- LMS Enums ---
+// =========================
+// WAITLIST ENUMS
+// =========================
+export const waitlistStatusEnum = pgEnum("waitlist_status", [
+  "pending",
+  "approved",
+  "rejected",
+  "archived",
+]);
+
+// 2️⃣ RoleType enum (optional but recommended)
+export const waitlistRoleEnum = pgEnum("waitlist_role", [
+  "taxpayer",
+  "business",
+  "other",
+]);
+
+// =========================
+// WAITLIST TABLE
+// =========================
+export const waitlist = pgTable("waitlist", {
+  id: uuid("id").defaultRandom().primaryKey(),
+
+  fullName: text("full_name").notNull(),
+  email: text("email").notNull(),
+  phone: text("phone"),
+
+  // use your enum here:
+  roleType: waitlistRoleEnum("role_type").notNull().default("taxpayer"),
+
+  notes: text("notes"), // extra info: goals, situation, etc.
+
+  // If they selected a plan (optional)
+  plan: text("plan"),
+
+  // For multi-agency (optional)
+  agencyId: uuid("agency_id"),
+
+  // 🔥 enum status
+  status: waitlistStatusEnum("status").notNull().default("pending"),
+
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).$onUpdate(
+    () => new Date()
+  ),
+});
+
+// =========================
+// ONBOARDING STEP ENUM
+// =========================
+export const onboardingStepEnum = pgEnum("onboarding_step", [
+  "PROFILE",
+  "DOCUMENTS",
+  "QUESTIONS",
+  "SCHEDULE",
+  "SUMMARY",
+  "SUBMITTED",
+  "DONE",
+]);
+
+// =========================
+// EMAIL ENUMS
+// =========================
+export const emailCampaignStatus = pgEnum("email_campaign_status", [
+  "draft",
+  "sending",
+  "sent",
+  "failed",
+]);
+
+export const emailRecipientStatus = pgEnum("email_recipient_status", [
+  "queued",
+  "sent",
+  "failed",
+  "unsubscribed",
+]);
+
+export const emailCampaignSegment = pgEnum("email_campaign_segment", [
+  "waitlist_pending",
+  "waitlist_approved",
+  "waitlist_all",
+  "manual",
+]);
+
+// =========================
+// EMAIL CAMPAIGNS
+// =========================
+export const emailCampaigns = pgTable("email_campaigns", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  name: text("name").notNull(),
+  segment: emailCampaignSegment("segment")
+    .default("waitlist_pending")
+    .notNull(),
+  status: emailCampaignStatus("status").default("draft").notNull(),
+  sentAt: timestamp("sent_at", { withTimezone: true }),
+  subject: text("subject").notNull(),
+  htmlBody: text("html_body").notNull(),
+  textBody: text("text_body"),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+});
+
+export const emailRecipients = pgTable(
+  "email_recipients",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    campaignId: uuid("campaign_id").references(() => emailCampaigns.id, {
+      onDelete: "set null",
+    }),
+    email: text("email").notNull(),
+    unsubToken: text("unsub_token").notNull(),
+    status: emailRecipientStatus("status").default("queued").notNull(),
+    error: text("error"),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => ({
+    emailIdx: index("email_recipients_email_idx").on(t.email),
+    tokenUq: uniqueIndex("email_recipients_unsub_token_uq").on(t.unsubToken),
+    campaignIdx: index("email_recipients_campaign_idx").on(t.campaignId),
+
+    // ✅ prevents duplicates per campaign
+    campaignEmailUq: uniqueIndex("email_recipients_campaign_email_uq").on(
+      t.campaignId,
+      t.email
+    ),
+  })
+);
+
+export const emailUnsubscribes = pgTable("email_unsubscribes", {
+  email: text("email").primaryKey(),
+  unsubscribedAt: timestamp("unsubscribed_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+  source: text("source"), // "page" | "one-click" | etc
+});
+
+// 3️⃣ App settings table
+export const appSettings = pgTable("app_settings", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+  .notNull()
+  .defaultNow(),
+});
+
+// =========================
+// LMS ENUMS
+// =========================
 export const courseLevelEnum = pgEnum("course_level", [
   "BEGINNER",
   "INTERMEDIATE",
@@ -267,7 +287,9 @@ export const progressStatusEnum = pgEnum("progress_status", [
   "COMPLETED",
 ]);
 
-// --- Users ---
+// =========================
+// USERS
+// =========================
 export const users = pgTable(
   "users",
   {
@@ -311,7 +333,9 @@ export const users = pgTable(
   })
 );
 
-// Enum for appointment status
+// =========================
+// APPOINTMENTS ENUM & TABLES
+// =========================
 export const appointmentStatus = pgEnum("appointment_status", [
   "scheduled",
   "completed",
@@ -319,7 +343,6 @@ export const appointmentStatus = pgEnum("appointment_status", [
   "no_show",
 ]);
 
-// --- Appointments ---
 export const appointments = pgTable("appointments", {
   id: uuid("id").defaultRandom().primaryKey(),
 
@@ -348,6 +371,19 @@ export const appointments = pgTable("appointments", {
     .$onUpdate(() => new Date())
     .notNull(),
 });
+
+export const appointmentRequests = pgTable("appointment_requests", {
+  id: uuid("id").defaultRandom().primaryKey(),
+
+  name: text("name").notNull(),
+  email: text("email").notNull(),
+  phone: text("phone"),
+  scheduledAt: timestamp("scheduled_at", { withTimezone: true }).notNull(),
+
+  status: text("status").default("requested").notNull(), // requested/confirmed/cancelled
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
 
 // --- Dependents ---
 export const dependents = pgTable(
@@ -381,7 +417,9 @@ export const dependents = pgTable(
   }) // placeholder to allow inline check below if you use SQL
 );
 
-// --- Tax Returns ---
+// =========================
+// TAX RETURN TABLES
+// =========================
 export const taxReturns = pgTable(
   "tax_returns",
   {
@@ -407,7 +445,9 @@ export const taxReturns = pgTable(
   })
 );
 
-// --- Documents (Vault) ---
+// ===================================================
+// DOCUMENTS, INVOICES, TASKS, MESSAGES, USER SETTINGS
+// ===================================================
 export const documents = pgTable(
   "documents",
   {
@@ -420,9 +460,9 @@ export const documents = pgTable(
     }),
     taxYear: integer("tax_year"),
     key: text("key").notNull(), // storage key (S3)
-    fileName: text("file_name").notNull(),
-    mimeType: text("mime_type").notNull(),
-    size: integer("size").notNull(),
+    fileName: text("file_name"),
+    mimeType: text("mime_type"),
+    size: integer("size"),
     url: text("url"), // presigned or CDN URL
     docType: text("doc_type"), // e.g., W2, 1099, ID, etc.
     displayName: text("display_name"),
@@ -437,7 +477,6 @@ export const documents = pgTable(
   })
 );
 
-// --- Invoices ---
 export const invoices = pgTable(
   "invoices",
   {
@@ -461,7 +500,6 @@ export const invoices = pgTable(
   })
 );
 
-// --- Tasks (to-dos) ---
 export const tasks = pgTable(
   "tasks",
   {
@@ -489,7 +527,6 @@ export const tasks = pgTable(
   })
 );
 
-// --- Messages (secure chat) ---
 export const messages = pgTable(
   "messages",
   {
@@ -509,7 +546,6 @@ export const messages = pgTable(
   })
 );
 
-// --- User Settings ---
 export const userSettings = pgTable(
   "user_settings",
   {
@@ -541,15 +577,10 @@ export const userSettings = pgTable(
   })
 );
 
-// =========================
-// LMS TABLES
-// =========================
 /* ======================================================================
    LMS SECTION
    Firms, Courses, Modules, Lessons, Enrollments, Progress, SOP Files
    ====================================================================== */
-
-// --- Firms (tax firms / agencies owning an LMS) ---
 export const firms = pgTable(
   "firms",
   {
@@ -572,7 +603,6 @@ export const firms = pgTable(
   })
 );
 
-// Courses inside a firm (e.g. "New Preparer Training", "Due Diligence 101")
 export const courses = pgTable(
   "courses",
   {
@@ -604,7 +634,6 @@ export const courses = pgTable(
   })
 );
 
-// Modules inside a course (e.g. "Module 1 – Tax Basics", "Module 2 – EITC")
 export const modules = pgTable(
   "modules",
   {
@@ -629,7 +658,6 @@ export const modules = pgTable(
   })
 );
 
-// Individual lessons (videos, text, etc.) inside a module
 export const lessons = pgTable(
   "lessons",
   {
@@ -664,7 +692,6 @@ export const lessons = pgTable(
   })
 );
 
-// Which users are connected to which courses (learner/instructor/admin)
 export const enrollments = pgTable(
   "enrollments",
   {
@@ -691,7 +718,6 @@ export const enrollments = pgTable(
   })
 );
 
-// Track which lessons each user has completed
 export const lessonProgress = pgTable(
   "lesson_progress",
   {
@@ -716,7 +742,6 @@ export const lessonProgress = pgTable(
   })
 );
 
-// Firm SOP / policy files stored in S3
 export const sopFiles = pgTable(
   "sop_files",
   {
@@ -743,14 +768,15 @@ export const sopFiles = pgTable(
   })
 );
 
-// 1) Providers
+// ============================
+// SOCIAL MEDIA ENUMS & TABLES
+// ============================
 export const socialProvider = pgEnum("social_provider", [
   "facebook",
   "instagram",
   "x",
 ]);
 
-// 2) Post status
 export const socialPostStatus = pgEnum("social_post_status", [
   "queued",
   "sending",
@@ -783,8 +809,12 @@ export const socialAccounts = pgTable(
 
     isEnabled: boolean("is_enabled").default(true).notNull(),
 
-    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
   },
   (t) => ({
     providerIdx: index("social_accounts_provider_idx").on(t.provider),
@@ -826,12 +856,47 @@ export const socialPosts = pgTable(
 
     sentAt: timestamp("sent_at", { withTimezone: true }),
 
-    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
   },
   (t) => ({
-    statusScheduleIdx: index("social_posts_status_scheduled_idx").on(t.status, t.scheduledAt),
+    statusScheduleIdx: index("social_posts_status_scheduled_idx").on(
+      t.status,
+      t.scheduledAt
+    ),
     providerIdx: index("social_posts_provider_idx").on(t.provider),
     triggerIdx: index("social_posts_trigger_idx").on(t.triggerKey),
   })
 );
+
+// Status enum
+export const subscriberStatusEnum = pgEnum("subscriber_status", [
+  "subscribed",
+  "unsubscribed",
+]);
+
+export const emailSubscribers = pgTable("email_subscribers", {
+  id: uuid("id").defaultRandom().primaryKey(),
+
+  email: text("email").notNull().unique(),
+  fullName: text("full_name"),
+
+  // keep simple: comma-separated tags like: "waitlist,prospect,2026"
+  tags: text("tags"),
+
+  status: subscriberStatusEnum("status").notNull().default("subscribed"),
+
+  source: text("source").notNull().default("manual"),
+
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .default(sql`now()`),
+
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .default(sql`now()`),
+});

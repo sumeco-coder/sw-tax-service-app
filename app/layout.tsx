@@ -2,7 +2,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
-import Navbar from "@/components/global/Navbar";
+
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -17,19 +17,32 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "SW Tax Service",
   description: "Fast, secure online tax filing.",
+
+  icons: {
+    icon: [
+      { url: "/favicon.ico" },
+      { url: "/favicon-16x16.png", sizes: "16x16", type: "image/png" },
+      { url: "/favicon-32x32.png", sizes: "32x32", type: "image/png" },
+    ],
+    apple: [{ url: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" }],
+  },
+
+  manifest: "/site.webmanifest",
 };
 
-export default function RootLayout({
-  children,
-}: Readonly<{
-  children: React.ReactNode;
-}>) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+        className={[
+          geistSans.variable,
+          geistMono.variable,
+          "antialiased",
+          "min-h-dvh",
+          "bg-slate-50",        // ✅ page background
+          "text-slate-900"      // ✅ default text color
+        ].join(" ")}
       >
-       
         {children}
       </body>
     </html>

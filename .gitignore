@@ -55,3 +55,6 @@ node_modules
 amplify_outputs*
 amplifyconfiguration*
 .env.production
+public/docs/
+public/swtax-favicon-pack/
+swtaxservice.zip

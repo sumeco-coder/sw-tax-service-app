@@ -7,6 +7,12 @@ import { desc, eq, sql } from "drizzle-orm";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
+const BRAND = {
+  primary: "#E00040",
+  accent: "#B04020",
+  dark: "#202030",
+};
+
 export default async function AdminDashboardPage() {
   const [pendingRow] = await db
     .select({ count: sql<number>`count(*)::int` })
@@ -26,6 +32,7 @@ export default async function AdminDashboardPage() {
   const pending = pendingRow?.count ?? 0;
   const approved = approvedRow?.count ?? 0;
   const rejected = rejectedRow?.count ?? 0;
+  const total = pending + approved + rejected;
 
   const recent = await db
     .select({
@@ -40,45 +47,130 @@ export default async function AdminDashboardPage() {
     .limit(8);
 
   return (
-    <div className="space-y-8">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h1 className="text-3xl font-bold text-gray-900">Admin Dashboard</h1>
-          <p className="text-sm text-gray-600">Quick overview of today’s workload.</p>
-        </div>
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="relative overflow-hidden rounded-3xl border bg-white p-6 shadow-sm">
+        <div
+          className="pointer-events-none absolute inset-0 opacity-[0.10]"
+          style={{
+            background:
+              `radial-gradient(800px 240px at 20% 0%, ${BRAND.primary} 0%, transparent 60%),` +
+              `radial-gradient(700px 240px at 85% 20%, ${BRAND.accent} 0%, transparent 55%)`,
+          }}
+        />
+        <div className="relative flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-[#202030]/60">
+              SW Tax Service • Admin
+            </p>
+            <h1 className="mt-1 text-2xl font-bold text-[#202030] sm:text-3xl">
+              Dashboard
+            </h1>
+            <p className="mt-1 text-sm text-[#202030]/70">
+              Waitlist pipeline + quick access to Email, Social, and Settings.
+            </p>
+          </div>
 
-        <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
+            <Link
+              href="/admin/waitlist"
+              className="rounded-2xl px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:opacity-95"
+              style={{ backgroundColor: BRAND.dark }}
+            >
+              Review Waitlist →
+            </Link>
+
+            <Link
+              href="/admin/email"
+              className="rounded-2xl border px-4 py-2 text-sm font-semibold text-[#202030] transition hover:bg-black/5"
+            >
+              Email →
+            </Link>
+
+            <Link
+              href="/admin/social"
+              className="rounded-2xl border px-4 py-2 text-sm font-semibold text-[#202030] transition hover:bg-black/5"
+            >
+              Social →
+            </Link>
+          </div>
+        </div>
+      </div>
+
+      {/* KPI row */}
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <Kpi
+          label="Pending"
+          value={pending}
+          hint="Needs review"
+          tone="warning"
+        />
+        <Kpi
+          label="Approved"
+          value={approved}
+          hint="Invites sent"
+          tone="success"
+        />
+        <Kpi
+          label="Rejected"
+          value={rejected}
+          hint="Not eligible"
+          tone="danger"
+        />
+        <Kpi
+          label="Total"
+          value={total}
+          hint="All statuses"
+          tone="brand"
+        />
+      </div>
+
+      {/* Quick actions */}
+      <div className="grid gap-4 lg:grid-cols-3">
+        <ActionCard
+          title="Waitlist"
+          desc="Approve, reject, and generate invites."
+          href="/admin/waitlist"
+          badge={`${pending} pending`}
+          color={BRAND.accent}
+        />
+        <ActionCard
+          title="Email"
+          desc="Campaigns, templates, and logs."
+          href="/admin/email"
+          badge="Open center"
+          color={BRAND.primary}
+        />
+        <ActionCard
+          title="Settings"
+          desc="System toggles and admin controls."
+          href="/admin/settings"
+          badge="Manage"
+          color={BRAND.dark}
+        />
+      </div>
+
+      {/* Recent */}
+      <section className="overflow-hidden rounded-3xl border bg-white shadow-sm">
+        <div className="flex items-center justify-between gap-3 px-5 py-4">
+          <div>
+            <h2 className="text-lg font-semibold text-[#202030]">Recent waitlist</h2>
+            <p className="text-sm text-[#202030]/70">
+              Latest entries pulled from the database.
+            </p>
+          </div>
+
           <Link
             href="/admin/waitlist"
-            className="rounded-xl bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-black"
+            className="text-sm font-semibold transition hover:underline"
+            style={{ color: BRAND.primary }}
           >
-            Review Waitlist →
-          </Link>
-        </div>
-      </div>
-
-      {/* KPI cards */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Kpi label="Pending Waitlist" value={pending} />
-        <Kpi label="Approved" value={approved} />
-        <Kpi label="Rejected" value={rejected} />
-        <Kpi label="Total" value={pending + approved + rejected} />
-      </div>
-
-      {/* Recent activity */}
-      <section className="rounded-2xl border bg-white p-5 shadow-sm">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-lg font-semibold text-gray-900">Recent Waitlist</h2>
-            <p className="text-sm text-gray-600">Latest entries from the database.</p>
-          </div>
-          <Link href="/admin/waitlist" className="text-sm font-semibold text-gray-900 hover:underline">
             View all →
           </Link>
         </div>
 
-        <div className="mt-4 overflow-hidden rounded-xl border">
-          <div className="grid grid-cols-12 bg-gray-50 px-4 py-3 text-xs font-semibold uppercase tracking-wide text-gray-500">
+        <div className="border-t">
+          <div className="grid grid-cols-12 bg-black/[0.02] px-5 py-3 text-xs font-semibold uppercase tracking-wide text-[#202030]/60">
             <div className="col-span-4">Name</div>
             <div className="col-span-4">Email</div>
             <div className="col-span-2">Status</div>
@@ -87,26 +179,31 @@ export default async function AdminDashboardPage() {
 
           <div className="divide-y">
             {recent.map((r) => {
-              const created =
-                r.createdAt instanceof Date
-                  ? r.createdAt.toLocaleString("en-US", { month: "short", day: "numeric" })
-                  : new Date(r.createdAt as any).toLocaleString("en-US", { month: "short", day: "numeric" });
+              const created = formatShortDate(r.createdAt);
 
               return (
-                <div key={r.id} className="grid grid-cols-12 px-4 py-3 text-sm">
-                  <div className="col-span-4 font-medium text-gray-900">{r.fullName}</div>
-                  <div className="col-span-4 text-gray-700">{r.email}</div>
-                  <div className="col-span-2">
-                    <span className="rounded-full border px-2 py-0.5 text-xs font-semibold">
-                      {r.status}
-                    </span>
+                <div
+                  key={r.id}
+                  className="grid grid-cols-12 items-center px-5 py-3 text-sm"
+                >
+                  <div className="col-span-4 font-medium text-[#202030]">
+                    {r.fullName}
                   </div>
-                  <div className="col-span-2 text-xs text-gray-500">{created}</div>
+                  <div className="col-span-4 text-[#202030]/80">{r.email}</div>
+                  <div className="col-span-2">
+                    <StatusPill status={r.status} />
+                  </div>
+                  <div className="col-span-2 text-xs text-[#202030]/60">
+                    {created}
+                  </div>
                 </div>
               );
             })}
+
             {recent.length === 0 ? (
-              <div className="px-4 py-8 text-center text-sm text-gray-500">No waitlist entries yet.</div>
+              <div className="px-5 py-10 text-center text-sm text-[#202030]/60">
+                No waitlist entries yet.
+              </div>
             ) : null}
           </div>
         </div>
@@ -115,11 +212,107 @@ export default async function AdminDashboardPage() {
   );
 }
 
-function Kpi({ label, value }: { label: string; value: number }) {
+function formatShortDate(d: unknown) {
+  const date = d instanceof Date ? d : new Date(d as any);
+  return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" }).format(date);
+}
+
+function StatusPill({ status }: { status: string }) {
+  const tone =
+    status === "approved"
+      ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+      : status === "rejected"
+      ? "bg-rose-50 text-rose-700 border-rose-200"
+      : "bg-amber-50 text-amber-800 border-amber-200";
+
   return (
-    <div className="rounded-2xl border bg-white p-5 shadow-sm">
-      <p className="text-sm text-gray-600">{label}</p>
-      <p className="mt-2 text-3xl font-bold text-gray-900">{value}</p>
+    <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-semibold ${tone}`}>
+      {status}
+    </span>
+  );
+}
+
+function Kpi({
+  label,
+  value,
+  hint,
+  tone,
+}: {
+  label: string;
+  value: number;
+  hint: string;
+  tone: "warning" | "success" | "danger" | "brand";
+}) {
+  const ring =
+    tone === "success"
+      ? "ring-emerald-200"
+      : tone === "danger"
+      ? "ring-rose-200"
+      : tone === "warning"
+      ? "ring-amber-200"
+      : "ring-[#E00040]/20";
+
+  const dot =
+    tone === "success"
+      ? "bg-emerald-500"
+      : tone === "danger"
+      ? "bg-rose-500"
+      : tone === "warning"
+      ? "bg-amber-500"
+      : "bg-[#E00040]";
+
+  return (
+    <div className={`rounded-3xl border bg-white p-5 shadow-sm ring-1 ${ring}`}>
+      <div className="flex items-center justify-between">
+        <p className="text-sm font-semibold text-[#202030]">{label}</p>
+        <span className={`h-2 w-2 rounded-full ${dot}`} />
+      </div>
+
+      <p className="mt-2 text-3xl font-bold text-[#202030]">{value}</p>
+      <p className="mt-1 text-sm text-[#202030]/60">{hint}</p>
     </div>
+  );
+}
+
+function ActionCard({
+  title,
+  desc,
+  href,
+  badge,
+  color,
+}: {
+  title: string;
+  desc: string;
+  href: string;
+  badge: string;
+  color: string;
+}) {
+  return (
+    <Link
+      href={href}
+      className="group relative overflow-hidden rounded-3xl border bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
+    >
+      <div
+        className="pointer-events-none absolute -right-20 -top-20 h-48 w-48 rounded-full opacity-10"
+        style={{ backgroundColor: color }}
+      />
+      <div className="relative flex items-start justify-between gap-3">
+        <div>
+          <h3 className="text-lg font-semibold text-[#202030]">{title}</h3>
+          <p className="mt-1 text-sm text-[#202030]/70">{desc}</p>
+        </div>
+
+        <span
+          className="shrink-0 rounded-full px-3 py-1 text-xs font-semibold"
+          style={{ backgroundColor: `${color}1A`, color }}
+        >
+          {badge}
+        </span>
+      </div>
+
+      <div className="relative mt-4 text-sm font-semibold" style={{ color }}>
+        Open →
+      </div>
+    </Link>
   );
 }
