@@ -87,7 +87,7 @@ export default function HomePage() {
                 </p>
 
                 <Link
-                  href="/home/tax-filing"
+                  href="/tax-filing"
                   className="mt-5 inline-flex items-center justify-center rounded-full px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:opacity-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 active:translate-y-[1px]"
                   style={{ background: "var(--brand-gradient)" }}
                 >

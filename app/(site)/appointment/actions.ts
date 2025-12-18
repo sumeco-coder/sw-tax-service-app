@@ -6,6 +6,8 @@ import { appointmentRequests } from "@/drizzle/schema";
 import { sendAppointmentEmail } from "@/lib/email/appointments";
 import { sendSms } from "@/lib/sms/sns";
 
+export type AppointmentState = { ok: boolean; message: string };
+
 const RequestInput = z.object({
   name: z.string().trim().min(2, "Name is required"),
   email: z.string().trim().toLowerCase().email("Valid email required"),
@@ -13,11 +15,14 @@ const RequestInput = z.object({
   scheduledAt: z.string().trim(),
 });
 
-export async function requestAppointment(formData: FormData) {
+export async function requestAppointment(
+  _prevState: AppointmentState,
+  formData: FormData
+): Promise<AppointmentState> {
   const parsed = RequestInput.safeParse({
     name: formData.get("name"),
     email: formData.get("email"),
-    phone: formData.get("phone") ?? undefined,
+    phone: (formData.get("phone") as string | null) ?? undefined,
     scheduledAt: formData.get("scheduledAt"),
   });
 
@@ -37,7 +42,6 @@ export async function requestAppointment(formData: FormData) {
     scheduledAt,
   });
 
-  // Optional confirmations
   await sendAppointmentEmail({
     to: parsed.data.email,
     kind: "BOOKED",
@@ -46,7 +50,10 @@ export async function requestAppointment(formData: FormData) {
   });
 
   if (parsed.data.phone) {
-    await sendSms(parsed.data.phone, `Your SW Tax Service appointment request is set for ${scheduledAt.toLocaleString()}.`);
+    await sendSms(
+      parsed.data.phone,
+      `Your SW Tax Service appointment request is set for ${scheduledAt.toLocaleString()}.`
+    );
   }
 
   return { ok: true, message: "Booked! Check your email for confirmation." };
