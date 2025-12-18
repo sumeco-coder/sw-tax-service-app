@@ -1,32 +1,28 @@
-import { confirmUnsubscribeAction } from "../unsubscribe/action";
+// app/unsubscribe/page.tsx
 
-export const dynamic = "force-dynamic";
+type UnsubscribePageProps = {
+  searchParams: Promise<{ token?: string }>;
+};
 
-export default function UnsubscribePage({
-  searchParams,
-}: {
-  searchParams: { token?: string };
-}) {
-  const token = searchParams.token ?? "";
+export default async function Page({ searchParams }: UnsubscribePageProps) {
+  const { token } = await searchParams;
 
-  return (
-    <main className="min-h-screen bg-gray-50 px-4 py-12">
-      <div className="mx-auto max-w-md rounded-xl border bg-white p-6">
-        <h1 className="text-xl font-bold text-gray-900">Unsubscribe</h1>
-        <p className="mt-2 text-sm text-gray-600">
-          Confirm to stop receiving marketing emails from SW Tax Service.
+  if (!token) {
+    return (
+      <div className="mx-auto max-w-md p-6">
+        <h1 className="text-xl font-semibold">Missing token</h1>
+        <p className="mt-2 text-sm text-muted-foreground">
+          This unsubscribe link is missing a token.
         </p>
-
-        <form action={confirmUnsubscribeAction} className="mt-5 space-y-3">
-          <input type="hidden" name="token" value={token} />
-          <button
-            type="submit"
-            className="w-full rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-black"
-          >
-            Confirm unsubscribe
-          </button>
-        </form>
       </div>
-    </main>
+    );
+  }
+
+  // ... your unsubscribe logic here
+  return (
+    <div className="mx-auto max-w-md p-6">
+      <h1 className="text-xl font-semibold">Unsubscribe</h1>
+      <p className="mt-2 text-sm text-muted-foreground">Processing…</p>
+    </div>
   );
 }
