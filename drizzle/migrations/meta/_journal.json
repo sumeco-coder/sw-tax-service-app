@@ -36,6 +36,13 @@
       "when": 1765954753232,
       "tag": "0004_lame_bedlam",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1766056973227,
+      "tag": "0005_add-social-attempts",
+      "breakpoints": true
     }
   ]
 }

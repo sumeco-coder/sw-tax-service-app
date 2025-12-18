@@ -57,6 +57,7 @@ export async function createSocialPostAction(formData: FormData): Promise<void> 
     scheduledAt,
     textBody,
     mediaUrls,
+    attempts: 0, 
     result: null,
     error: null,
     sentAt: null,

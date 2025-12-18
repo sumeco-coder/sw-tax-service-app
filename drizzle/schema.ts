@@ -841,6 +841,8 @@ export const socialPosts = pgTable(
 
     status: socialPostStatus("status").default("queued").notNull(),
 
+    attempts: integer("attempts").default(0).notNull(),
+
     // If null => “post now”
     scheduledAt: timestamp("scheduled_at", { withTimezone: true }),
 
