@@ -28,6 +28,9 @@
 #rds-ca.pem
 
 
+!public/swtax-favicon-pack/
+!public/swtax-favicon-pack/**
+
 
 # debug
 npm-debug.log*
@@ -56,5 +59,7 @@ amplify_outputs*
 amplifyconfiguration*
 .env.production
 public/docs/
-public/swtax-favicon-pack/
+# public/swtax-favicon-pack/
 swtaxservice.zip
+!public/swtax-favicon-pack/
+!public/swtax-favicon-pack/**
