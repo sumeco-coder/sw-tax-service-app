@@ -1,8 +1,13 @@
 // amplify/functions/assignRoleOnConfirm/resource.ts
-import { defineFunction } from "@aws-amplify/backend";
+import { defineFunction, secret } from "@aws-amplify/backend";
 
 export const assignRoleOnConfirm = defineFunction({
   name: "assignRoleOnConfirm",
   entry: "./handler.ts",
   timeoutSeconds: 10,
+  environment: {
+    ADMIN_EMAILS: secret("ADMIN_EMAILS"),
+    INVITE_CODE_LMS_PREPARER: secret("INVITE_CODE_LMS_PREPARER"),
+    INVITE_CODE_LMS_ADMIN: secret("INVITE_CODE_LMS_ADMIN"),
+  },
 });
