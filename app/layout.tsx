@@ -3,7 +3,6 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
-
 const geistSans = Geist({
   variable: "--font-geist-sans",
   subsets: ["latin"],
@@ -15,22 +14,50 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "SW Tax Service",
+  title: {
+    default: "SW Tax Service",
+    template: "%s | SW Tax Service",
+  },
   description: "Fast, secure online tax filing.",
+  applicationName: "SW Tax Service",
 
   icons: {
     icon: [
+      // ✅ fallback for browsers that request /favicon.ico
       { url: "/favicon.ico" },
-      { url: "/swtax-favicon-pack/favicon-16x16.png", sizes: "16x16", type: "image/png" },
-      { url: "/swtax-favicon-pack/favicon-32x32.png", sizes: "32x32", type: "image/png" },
-      { url: "/swtax-favicon-pack/favicon-48x48.png", sizes: "48x48", type: "image/png" },
+
+      // ✅ favicon pack sizes (served from /public)
+      {
+        url: "/swtax-favicon-pack/favicon-16x16.png",
+        sizes: "16x16",
+        type: "image/png",
+      },
+      {
+        url: "/swtax-favicon-pack/favicon-32x32.png",
+        sizes: "32x32",
+        type: "image/png",
+      },
+      {
+        url: "/swtax-favicon-pack/favicon-48x48.png",
+        sizes: "48x48",
+        type: "image/png",
+      },
     ],
     apple: "/swtax-favicon-pack/apple-touch-icon.png",
   },
+
+  // ✅ Android/Chrome icons should be referenced in the manifest
   manifest: "/swtax-favicon-pack/site.webmanifest",
+
+  // Optional but helpful for PWA theming if your manifest has these too
+  themeColor: "#ffffff",
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   return (
     <html lang="en">
       <body
@@ -39,8 +66,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           geistMono.variable,
           "antialiased",
           "min-h-dvh",
-          "bg-slate-50",        // ✅ page background
-          "text-slate-900"      // ✅ default text color
+          "bg-slate-50",
+          "text-slate-900",
         ].join(" ")}
       >
         {children}
