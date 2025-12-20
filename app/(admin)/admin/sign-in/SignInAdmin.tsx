@@ -235,6 +235,17 @@ export default function SignInClient() {
               />
             </label>
 
+            {/* ✅ Forgot password */}
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-slate-500">Having trouble signing in?</span>
+              <Link
+                href="/admin/forgot-password"
+                className="text-xs font-medium text-slate-700 hover:underline"
+              >
+                Forgot password?
+              </Link>
+            </div>
+
             <button
               type="submit"
               disabled={loading}
@@ -268,6 +279,7 @@ export default function SignInClient() {
                 value={code}
                 onChange={(e) => setCode(e.target.value)}
                 inputMode="numeric"
+                autoComplete="one-time-code"
                 required
               />
             </label>
@@ -280,17 +292,27 @@ export default function SignInClient() {
               {loading ? "Confirming..." : "Confirm"}
             </button>
 
-            <button
-              type="button"
-              onClick={() => {
-                setPhase("signin");
-                setCode("");
-                setMsg("");
-              }}
-              className="w-full rounded-xl border px-4 py-2 text-sm font-semibold text-slate-700"
-            >
-              Back
-            </button>
+            <div className="flex items-center justify-between">
+              <button
+                type="button"
+                onClick={() => {
+                  setPhase("signin");
+                  setCode("");
+                  setMsg("");
+                }}
+                className="text-sm font-semibold text-slate-700 hover:underline"
+              >
+                Back
+              </button>
+
+              {/* ✅ Forgot password also visible during MFA if needed */}
+              <Link
+                href="/admin/forgot-password"
+                className="text-sm font-semibold text-slate-700 hover:underline"
+              >
+                Forgot password?
+              </Link>
+            </div>
           </form>
         )}
 
