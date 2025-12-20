@@ -7,6 +7,8 @@ export default function ComingSoon({
   primaryLabel = "Join the waitlist",
   secondaryHref = "/tax-knowledge",
   secondaryLabel = "Read tax tips",
+  tertiaryHref,
+  tertiaryLabel,
 }: {
   title?: string;
   subtitle?: string;
@@ -14,6 +16,8 @@ export default function ComingSoon({
   primaryLabel?: string;
   secondaryHref?: string;
   secondaryLabel?: string;
+  tertiaryHref?: string;
+  tertiaryLabel?: string;
 }) {
   const year = new Date().getFullYear();
 
@@ -53,7 +57,8 @@ export default function ComingSoon({
               "This page isn’t live yet — but it will be. Join the waitlist and we’ll notify you the moment it opens."}
           </p>
 
-          <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
+          {/* CTA buttons */}
+          <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row sm:flex-wrap">
             <Link
               href={primaryHref}
               className="inline-flex w-full items-center justify-center rounded-xl px-6 py-3 text-sm font-semibold text-primary-foreground shadow-md transition hover:opacity-95 sm:w-auto"
@@ -68,6 +73,15 @@ export default function ComingSoon({
             >
               {secondaryLabel}
             </Link>
+
+            {tertiaryHref && tertiaryLabel ? (
+              <Link
+                href={tertiaryHref}
+                className="inline-flex w-full items-center justify-center rounded-xl border border-border px-6 py-3 text-sm font-semibold hover:bg-black/5 sm:w-auto"
+              >
+                {tertiaryLabel}
+              </Link>
+            ) : null}
           </div>
 
           <div className="mt-8 grid gap-3 sm:grid-cols-3">
