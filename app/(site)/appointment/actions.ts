@@ -27,7 +27,10 @@ export async function requestAppointment(
   });
 
   if (!parsed.success) {
-    return { ok: false, message: parsed.error.issues[0]?.message ?? "Invalid form" };
+    return {
+      ok: false,
+      message: parsed.error.issues[0]?.message ?? "Invalid form",
+    };
   }
 
   const scheduledAt = new Date(parsed.data.scheduledAt);
@@ -35,16 +38,25 @@ export async function requestAppointment(
     return { ok: false, message: "Invalid date/time selected." };
   }
 
-  await db.insert(appointmentRequests).values({
-    name: parsed.data.name,
-    email: parsed.data.email,
-    phone: parsed.data.phone ?? null,
-    scheduledAt,
-  });
+  // ✅ Insert + return id so we can pass appointmentId into the email params
+  const [req] = await db
+    .insert(appointmentRequests)
+    .values({
+      name: parsed.data.name,
+      email: parsed.data.email,
+      phone: parsed.data.phone ?? null,
+      scheduledAt,
+    })
+    .returning({ id: appointmentRequests.id });
+
+  if (!req?.id) {
+    return { ok: false, message: "Could not create appointment request. Try again." };
+  }
 
   await sendAppointmentEmail({
     to: parsed.data.email,
     kind: "BOOKED",
+    appointmentId: req.id, // ✅ required now
     startsAt: scheduledAt,
     endsAt: new Date(scheduledAt.getTime() + 30 * 60000),
   });
