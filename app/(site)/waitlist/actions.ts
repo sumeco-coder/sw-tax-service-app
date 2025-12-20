@@ -75,15 +75,19 @@ export async function joinWaitlist(data: {
 
   if (parsed.data.phone) {
     const raw = parsed.data.phone.trim();
-    const cleaned = raw.replace(/[^\d+]/g, ""); // 678-546-4528 -> 6785464528
 
-    // OPTIONAL strictness (uncomment if you want exactly 10 digits when provided)
-    // const digits = cleaned.replace(/\D/g, "");
-    // if (digits.length !== 10) {
-    //   throw new Error("Phone must be 10 digits (ex: 678-546-4528) or leave it blank.");
-    // }
+    // keep only digits
+    const digits = raw.replace(/\D/g, "");
 
-    const pn = parsePhoneNumberFromString(cleaned, "US"); // default region
+    // ✅ strict US length (10 digits)
+    if (digits.length !== 10) {
+      throw new Error(
+        "Phone must be 10 digits (ex: 678-546-4528) or leave it blank."
+      );
+    }
+
+    // parse as US and normalize
+    const pn = parsePhoneNumberFromString(digits, "US");
     if (!pn || !pn.isValid()) {
       throw new Error("Please enter a valid phone number or leave it blank.");
     }

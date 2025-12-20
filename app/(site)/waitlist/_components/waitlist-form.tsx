@@ -2,8 +2,9 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import type { FormEvent } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { joinWaitlist } from "../actions"; // 🔑 use your server action
+import { joinWaitlist } from "../actions"; // 🔑 your server action
 
 // Toggle this to switch behavior
 const USE_REDIRECT_AFTER_SUBMIT = true; // set to false for in-page success
@@ -11,6 +12,8 @@ const USE_REDIRECT_AFTER_SUBMIT = true; // set to false for in-page success
 export default function WaitlistForm() {
   const router = useRouter();
   const params = useSearchParams();
+
+  const [phoneValue, setPhoneValue] = useState("");
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -50,27 +53,39 @@ export default function WaitlistForm() {
   }, [tracking]);
 
   function isValidEmail(v: string) {
-    return /^\S+@\S+\.\S+$/.test(v);
-  }
-  function isValidPhone(v: string) {
-    return /^[0-9+()\-\s]{7,}$/.test(v);
+    const email = v.trim();
+    if (email.length > 254) return false;
+    if (/\s/.test(email)) return false;
+    if (email.includes("..")) return false;
+    if (email.endsWith(".")) return false;
+
+    return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email);
   }
 
-  async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
+  function isValidPhone(v: string) {
+    const digits = v.replace(/\D/g, "");
+    return digits.length === 10;
+  }
+
+  async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setError(null);
 
     const form = new FormData(e.currentTarget);
+
     const name = String(form.get("name") || "").trim();
-    const email = String(form.get("email") || "")
-      .trim()
-      .toLowerCase();
-    const phone = String(form.get("phone") || "").trim();
-    const contactMethod = String(form.get("contactMethod") || "email");
-    const taxYear = Number(form.get("taxYear") || "") || undefined;
+    const email = String(form.get("email") || "").trim().toLowerCase();
+    const phone = phoneValue.trim();
+
+    const contactMethod = String(form.get("contactMethod") || "email").trim();
+
+    const taxYearRaw = String(form.get("taxYear") || "").trim();
+    const taxYear = taxYearRaw ? Number(taxYearRaw) : undefined;
 
     const lastPreparer = String(form.get("lastPreparer") || "").trim();
     const priorTaxReturns = String(form.get("priorTaxReturns") || "").trim();
+    const priorTaxReturnsLabel =
+      priorTaxReturns === "yes" ? "Yes" : priorTaxReturns === "no" ? "No" : "";
 
     const messageRaw = String(form.get("message") || "").trim();
 
@@ -81,14 +96,21 @@ export default function WaitlistForm() {
     if (!email || !isValidEmail(email))
       return setError("Please enter a valid email address.");
     if (phone && !isValidPhone(phone))
-      return setError("Please enter a valid phone number or leave it blank.");
+      return setError("Please enter a valid 10-digit phone number or leave it blank.");
+
+    if (taxYear !== undefined) {
+      if (!Number.isInteger(taxYear))
+        return setError("Tax year must be a whole number.");
+      if (taxYear < 2000 || taxYear > 2100)
+        return setError("Tax year must be between 2000 and 2100.");
+    }
 
     // Fold extra info into a single notes field (matches your waitlist schema)
     const extras = [
       contactMethod ? `Preferred contact: ${contactMethod}` : "",
       taxYear ? `Tax year: ${taxYear}` : "",
       lastPreparer ? `Last preparer: ${lastPreparer}` : "",
-      priorTaxReturns ? `Needs prior-year returns: ${priorTaxReturns}` : "",
+      priorTaxReturnsLabel ? `Needs prior-year returns: ${priorTaxReturnsLabel}` : "",
       pageSource ? `Source: ${pageSource}` : "",
     ]
       .filter(Boolean)
@@ -99,22 +121,24 @@ export default function WaitlistForm() {
 
     setLoading(true);
     try {
-      // 🔑 Save into your Drizzle waitlist table via server action
       await joinWaitlist({
         fullName: name,
         email,
         phone: phone || undefined,
         plan: tracking.plan, // from ?plan=
         notes,
-        roleType: "taxpayer", // default role for this form
+        roleType: "taxpayer",
         // agencyId: if you later map agency slug -> firm UUID, set it here
       });
+
+      // ✅ reset controlled phone input no matter what
+      setPhoneValue("");
 
       if (USE_REDIRECT_AFTER_SUBMIT) {
         router.push("/site/waitlist/thanks");
       } else {
         setOk(true);
-        (e.target as HTMLFormElement).reset();
+        (e.currentTarget as HTMLFormElement).reset();
       }
     } catch (err) {
       console.error(err);
@@ -145,7 +169,11 @@ export default function WaitlistForm() {
           opens.
         </p>
         <button
-          onClick={() => setOk(false)}
+          onClick={() => {
+            setOk(false);
+            setError(null);
+            setPhoneValue("");
+          }}
           className="mt-4 inline-flex rounded-xl bg-emerald-600 px-4 py-2 text-white shadow hover:bg-emerald-700 transition"
         >
           Add another
@@ -223,18 +251,22 @@ export default function WaitlistForm() {
             </label>
             <div className="relative">
               <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">
-                <svg
-                  className="h-5 w-5"
-                  viewBox="0 0 24 24"
-                  fill="currentColor"
-                >
+                <svg className="h-5 w-5" viewBox="0 0 24 24" fill="currentColor">
                   <path d="M12 12c2.8 0 5-2.2 5-5s-2.2-5-5-5-5 2.2-5 5 2.2 5 5 5zm0 2c-3.3 0-10 1.7-10 5v3h20v-3c0-3.3-6.7-5-10-5z" />
                 </svg>
               </span>
+
               <input
                 name="name"
+                type="text"
                 required
+                autoComplete="name"
                 placeholder="Jane Doe"
+                minLength={2}
+                maxLength={80}
+                // If you want business names too, loosen this pattern.
+                pattern="^[A-Za-z][A-Za-z\s.'-]{1,79}$"
+                title="Enter your full name (letters, spaces, apostrophes, hyphens)."
                 className="w-full rounded-xl border border-input bg-background px-10 py-3 text-sm outline-none transition
                        focus:ring-2 focus:ring-ring"
               />
@@ -248,20 +280,24 @@ export default function WaitlistForm() {
                 Email *
               </label>
               <span className="pointer-events-none absolute left-3 top-[42px] text-muted-foreground">
-                <svg
-                  className="h-5 w-5"
-                  viewBox="0 0 24 24"
-                  fill="currentColor"
-                >
+                <svg className="h-5 w-5" viewBox="0 0 24 24" fill="currentColor">
                   <path d="M12 13l-12-8h24l-12 8zm-12-6l12 8 12-8v11h-24v-11z" />
                 </svg>
               </span>
+
               <input
                 name="email"
                 type="email"
                 required
+                inputMode="email"
                 autoComplete="email"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                maxLength={254}
                 placeholder="jane@example.com"
+                pattern="^[^\s@]+@[^\s@]+\.[^\s@]{2,}$"
+                title="Enter a valid email address (example: name@example.com)"
                 className="w-full rounded-xl border border-input bg-background px-10 py-3 text-sm outline-none transition
                        focus:ring-2 focus:ring-ring"
               />
@@ -269,25 +305,32 @@ export default function WaitlistForm() {
 
             <div className="relative">
               <label className="mb-1 block text-sm font-medium text-foreground">
-                Phone (optional)
+                Phone *
               </label>
               <span className="pointer-events-none absolute left-3 top-[42px] text-muted-foreground">
-                <svg
-                  className="h-5 w-5"
-                  viewBox="0 0 24 24"
-                  fill="currentColor"
-                >
+                <svg className="h-5 w-5" viewBox="0 0 24 24" fill="currentColor">
                   <path d="M6.6 10.8c1.2 2.4 3.2 4.4 5.6 5.6l2-2c.3-.3.8-.4 1.2-.2 1 .4 2.1.6 3.2.6.6 0 1 .4 1 1v3.1c0 .6-.4 1-1 1C9.4 20 4 14.6 4 8.4c0-.6.4-1 1-1H8c.6 0 1 .4 1 1 0 1.1.2 2.2.6 3.2.2.4.1.9-.2 1.2l-1.8 2z" />
                 </svg>
               </span>
+
               <input
                 name="phone"
+                type="tel"
                 inputMode="tel"
                 autoComplete="tel"
+                required
                 placeholder="(555) 555-5555"
-                maxLength={24}
-                pattern="^[0-9+()\-\s]{7,}$"
-                title="Enter a valid phone number (digits, spaces, +, -, parentheses)"
+                value={phoneValue}
+                onChange={(e) => {
+                  const digits = e.target.value.replace(/\D/g, "").slice(0, 10);
+                  const formatted =
+                    digits.length <= 3
+                      ? digits
+                      : digits.length <= 6
+                      ? `(${digits.slice(0, 3)}) ${digits.slice(3)}`
+                      : `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
+                  setPhoneValue(formatted);
+                }}
                 className="w-full rounded-xl border border-input bg-background px-10 py-3 text-sm outline-none transition
                        focus:ring-2 focus:ring-ring"
               />
@@ -319,9 +362,14 @@ export default function WaitlistForm() {
               <input
                 name="taxYear"
                 type="number"
-                min="2000"
-                max="2100"
+                inputMode="numeric"
+                min={2000}
+                max={2100}
+                step={1}
                 placeholder="2024"
+                onKeyDown={(e) => {
+                  if (["e", "E", "+", "-", "."].includes(e.key)) e.preventDefault();
+                }}
                 className="w-full rounded-xl border border-input bg-background px-3 py-3 text-sm outline-none transition
                        focus:ring-2 focus:ring-ring"
               />
@@ -387,11 +435,7 @@ export default function WaitlistForm() {
           >
             {loading ? (
               <span className="inline-flex items-center gap-2">
-                <svg
-                  className="h-5 w-5 animate-spin"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                >
+                <svg className="h-5 w-5 animate-spin" viewBox="0 0 24 24" fill="none">
                   <circle
                     className="opacity-25"
                     cx="12"

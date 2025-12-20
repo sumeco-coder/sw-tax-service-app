@@ -79,8 +79,11 @@ export default async function EmailLogsPage({
         </Link>
       </div>
 
-      {/* Filters */}
-      <LogsFilters campaigns={campaigns} />
+      {/* ✅ Filters (client) — NO useSearchParams inside */}
+      <LogsFilters
+        campaigns={campaigns}
+        initial={{ q, status, campaignId }}
+      />
 
       {/* KPIs */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
