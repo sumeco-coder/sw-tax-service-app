@@ -1,14 +1,17 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { configureAmplify } from "@/lib/amplifyClient";
 import { confirmSignUp } from "aws-amplify/auth";
 
-configureAmplify();
-
 export default function AdminConfirmPage() {
+  useEffect(() => {
+    // ✅ runs only on the client (prevents build/prerender crash)
+    configureAmplify();
+  }, []);
+
   const router = useRouter();
   const sp = useSearchParams();
   const email = useMemo(() => (sp.get("email") ?? "").toLowerCase(), [sp]);
@@ -41,7 +44,8 @@ export default function AdminConfirmPage() {
       <div className="w-full max-w-md rounded-3xl border bg-white p-6 shadow-sm">
         <h1 className="text-2xl font-bold text-slate-900">Confirm admin email</h1>
         <p className="mt-1 text-sm text-slate-600">
-          Enter the code sent to <span className="font-medium">{email || "your email"}</span>.
+          Enter the code sent to{" "}
+          <span className="font-medium">{email || "your email"}</span>.
         </p>
 
         {error ? (
