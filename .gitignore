@@ -42,7 +42,9 @@ yarn-error.log*
 .env
 .env.local
 .env.*.local
-
+.env.development.local
+.env.test.local
+.env.production.local
 
 # vercel
 .vercel
@@ -59,7 +61,11 @@ amplify_outputs*
 amplifyconfiguration*
 .env.production
 public/docs/
+
 # public/swtax-favicon-pack/
 swtaxservice.zip
 !public/swtax-favicon-pack/
 !public/swtax-favicon-pack/**
+
+# logs
+*.log

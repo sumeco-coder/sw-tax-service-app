@@ -8,7 +8,12 @@
     "start": "next start",
     "lint": "eslint",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "drizzle-kit migrate"
+    "db:migrate": "drizzle-kit migrate",
+    "ampx": "ampx",
+    "ampx:build": "ampx build",
+    "ampx:deploy": "ampx deploy",
+    "ampx:deploy:prod": "ampx deploy --env prod",
+    "sandbox": "ampx sandbox"
   },
   "dependencies": {
     "@aws-amplify/ui-react": "^6.13.1",

@@ -1,17 +1,54 @@
+// app/(admin)/admin/_components/AdminSidebar.tsx
 "use client";
 
 import { useState } from "react";
 import Link from "next/link";
-import { X, Menu } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { X, Menu, LogOut } from "lucide-react";
 import AdminNav from "./AdminNav";
+import { configureAmplify } from "@/lib/amplifyClient";
+import { signOut } from "aws-amplify/auth";
+
+configureAmplify();
 
 const BRAND = {
   primary: "#E00040",
   accent: "#B04020",
 };
 
+async function hardSignOut() {
+  // 1) Clear Amplify client session
+  try {
+    await signOut({ global: true });
+  } catch {
+    try {
+      await signOut();
+    } catch {}
+  }
+
+  // 2) Clear your server cookies
+  try {
+    await fetch("/api/auth/logout", {
+      method: "POST",
+      credentials: "include",
+      cache: "no-store",
+    });
+  } catch {}
+
+  // 3) small delay to avoid race conditions
+  await new Promise((r) => setTimeout(r, 200));
+}
+
 export default function AdminSidebar() {
   const [open, setOpen] = useState(false);
+  const router = useRouter();
+
+  async function handleLogout() {
+    await hardSignOut();
+    setOpen(false);
+    router.replace("/admin/sign-in");
+    router.refresh();
+  }
 
   return (
     <>
@@ -26,10 +63,24 @@ export default function AdminSidebar() {
       </button>
 
       {/* Desktop sidebar */}
-      <aside className="hidden w-72 border-r border-white/10 bg-[#0b0b10] px-4 py-6 md:block">
+      <aside className="hidden w-72 border-r border-white/10 bg-[#0b0b10] px-4 py-6 md:flex md:flex-col">
         <BrandHeader />
         <AdminNav />
         <QuickLinks />
+
+        <div className="mt-6">
+          <div className="h-px bg-white/10" />
+          <button
+            type="button"
+            onClick={handleLogout}
+            className="mt-4 flex w-full items-center gap-3 rounded-2xl px-3 py-2 text-sm font-semibold text-white/80 transition hover:bg-white/10 hover:text-white"
+          >
+            <LogOut className="h-4 w-4 text-white/70" />
+            Logout
+          </button>
+
+          <p className="mt-4 text-xs text-white/50">SW Tax Service • Admin</p>
+        </div>
       </aside>
 
       {/* Mobile drawer */}
@@ -43,7 +94,7 @@ export default function AdminSidebar() {
           />
 
           {/* drawer */}
-          <div className="absolute left-0 top-0 h-full w-[82%] max-w-sm border-r border-white/10 bg-[#0b0b10] px-4 py-6">
+          <div className="absolute left-0 top-0 flex h-full w-[82%] max-w-sm flex-col border-r border-white/10 bg-[#0b0b10] px-4 py-6">
             <div className="flex items-center justify-between">
               <BrandHeader />
               <button
@@ -64,11 +115,19 @@ export default function AdminSidebar() {
               <QuickLinks onNavigate={() => setOpen(false)} />
             </div>
 
-            <div className="mt-6 text-xs text-white/50">
+            <div className="mt-auto pt-6">
               <div className="h-px bg-white/10" />
-              <p className="mt-4">
-                SW Tax Service • Admin
-              </p>
+
+              <button
+                type="button"
+                onClick={handleLogout}
+                className="mt-4 flex w-full items-center gap-3 rounded-2xl px-3 py-2 text-sm font-semibold text-white/80 transition hover:bg-white/10 hover:text-white"
+              >
+                <LogOut className="h-4 w-4 text-white/70" />
+                Logout
+              </button>
+
+              <p className="mt-4 text-xs text-white/50">SW Tax Service • Admin</p>
             </div>
           </div>
         </div>
@@ -97,7 +156,6 @@ function BrandHeader() {
   return (
     <div className="sw-brand-glow mb-6 rounded-3xl border border-white/10 bg-white/5 p-4">
       <div className="flex items-center gap-3">
-        {/* Replace with your logo image later if you want */}
         <div className="grid h-11 w-11 place-items-center rounded-2xl bg-white/10 ring-1 ring-white/10">
           <span className="text-sm font-black text-white">SW</span>
         </div>
@@ -120,10 +178,18 @@ function QuickLinks({ onNavigate }: { onNavigate?: () => void }) {
     <div className="rounded-3xl border border-white/10 bg-white/5 p-4 text-sm text-white/80">
       <p className="font-semibold text-white">Quick Links</p>
       <div className="mt-3 flex flex-col gap-2">
-        <Link className="hover:underline" href="/tax-knowledge/wheres-my-refund" onClick={onNavigate}>
+        <Link
+          className="hover:underline"
+          href="/tax-knowledge/wheres-my-refund"
+          onClick={onNavigate}
+        >
           Where’s My Refund →
         </Link>
-        <Link className="hover:underline" href="/tax-knowledge/docs-checklist" onClick={onNavigate}>
+        <Link
+          className="hover:underline"
+          href="/tax-knowledge/docs-checklist"
+          onClick={onNavigate}
+        >
           Docs Checklist →
         </Link>
       </div>

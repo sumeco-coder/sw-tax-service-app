@@ -3,7 +3,7 @@
 
 import { db } from "@/drizzle/db";
 import { waitlist } from "@/drizzle/schema";
-import { approveWaitlistAndCreateInvite } from "../../(admin)/admin/waitlist/actions";
+import { approveWaitlistAndCreateInvite } from "../../(admin)/admin/(protected)/waitlist/actions";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { parsePhoneNumberFromString } from "libphonenumber-js";

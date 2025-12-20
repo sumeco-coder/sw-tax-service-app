@@ -1,18 +1,21 @@
 // lib/email/appointments.ts
+// lib/email/appointments.ts
+import "server-only";
+
 import { sendEmail } from "./sendEmail";
-import { randomUUID } from "crypto";
 
 type AppointmentEmailKind = "BOOKED" | "RESCHEDULED" | "CANCELLED";
 
-interface AppointmentEmailParams {
+export interface AppointmentEmailParams {
   to: string;
   kind: AppointmentEmailKind;
+  appointmentId: string; // ✅ stable id (db id)
   startsAt: Date;
   endsAt: Date;
   cancelReason?: string;
 }
 
-const APPT_TZ = "America/Los_Angeles"; // ✅ timezone lock
+const APPT_TZ = "America/Los_Angeles"; // ✅ timezone lock for display
 
 function getTzAbbrev(d: Date, timeZone: string) {
   const parts = new Intl.DateTimeFormat("en-US", {
@@ -29,7 +32,7 @@ function formatAppointmentWindow(startsAt: Date, endsAt: Date) {
     weekday: "short",
     month: "short",
     day: "numeric",
-    year: "numeric", // ✅ include year
+    year: "numeric",
     timeZone: APPT_TZ,
   }).format(startsAt);
 
@@ -46,13 +49,10 @@ function formatAppointmentWindow(startsAt: Date, endsAt: Date) {
   }).format(endsAt);
 
   const tz = getTzAbbrev(startsAt, APPT_TZ);
-
-  // ✅ clean formatting
   return `${dateStr} • ${startTime} – ${endTime} ${tz}`.trim();
 }
 
 function toIcsUtc(d: Date) {
-  // YYYYMMDDTHHMMSSZ
   const pad = (n: number) => String(n).padStart(2, "0");
   return (
     d.getUTCFullYear() +
@@ -67,8 +67,7 @@ function toIcsUtc(d: Date) {
 }
 
 function icsEscape(text: string) {
-  // escape for ICS: backslash, comma, semicolon, newline
-  return text
+  return String(text ?? "")
     .replace(/\\/g, "\\\\")
     .replace(/,/g, "\\,")
     .replace(/;/g, "\\;")
@@ -83,15 +82,16 @@ function buildIcs(params: {
   endsAt: Date;
   organizerName?: string;
   organizerEmail?: string;
+  isCancelled?: boolean;
+  sequence?: number;
 }) {
   const dtstamp = toIcsUtc(new Date());
   const dtstart = toIcsUtc(params.startsAt);
   const dtend = toIcsUtc(params.endsAt);
 
-  // METHOD:REQUEST works for “booked/rescheduled”
-  // For cancelled, METHOD:CANCEL is better so calendars remove it
-  const method =
-    params.summary.toLowerCase().includes("cancelled") ? "CANCEL" : "REQUEST";
+  const method = params.isCancelled ? "CANCEL" : "REQUEST";
+  const status = params.isCancelled ? "CANCELLED" : "CONFIRMED";
+  const sequence = Number.isFinite(params.sequence) ? String(params.sequence) : "0";
 
   return [
     "BEGIN:VCALENDAR",
@@ -106,11 +106,13 @@ function buildIcs(params: {
     `DTEND:${dtend}`,
     `SUMMARY:${icsEscape(params.summary)}`,
     `DESCRIPTION:${icsEscape(params.description)}`,
-    // Optional organizer (leave blank if you don't want it)
+    `STATUS:${status}`,
+    `SEQUENCE:${sequence}`,
     params.organizerEmail
-      ? `ORGANIZER;CN=${icsEscape(params.organizerName ?? "SW Tax Service")}:mailto:${icsEscape(params.organizerEmail)}`
+      ? `ORGANIZER;CN=${icsEscape(params.organizerName ?? "SW Tax Service")}:mailto:${icsEscape(
+          params.organizerEmail
+        )}`
       : null,
-    "STATUS:CONFIRMED",
     "END:VEVENT",
     "END:VCALENDAR",
   ]
@@ -119,23 +121,23 @@ function buildIcs(params: {
 }
 
 export async function sendAppointmentEmail(params: AppointmentEmailParams) {
-  const { to, kind, startsAt, endsAt, cancelReason } = params;
+  const { to, kind, startsAt, endsAt, cancelReason, appointmentId } = params;
 
   const timeWindow = formatAppointmentWindow(startsAt, endsAt);
 
-  let subject = "";
-  let intro = "";
+  const subject =
+    kind === "BOOKED"
+      ? "Your SW Tax Service appointment is booked"
+      : kind === "RESCHEDULED"
+      ? "Your SW Tax Service appointment was rescheduled"
+      : "Your SW Tax Service appointment was cancelled";
 
-  if (kind === "BOOKED") {
-    subject = "Your SW Tax Service appointment is booked";
-    intro = "Thank you for scheduling your tax review appointment with SW Tax Service.";
-  } else if (kind === "RESCHEDULED") {
-    subject = "Your SW Tax Service appointment was rescheduled";
-    intro = "Your SW Tax Service appointment has been successfully rescheduled.";
-  } else {
-    subject = "Your SW Tax Service appointment was cancelled";
-    intro = "Your SW Tax Service appointment has been cancelled.";
-  }
+  const intro =
+    kind === "BOOKED"
+      ? "Thank you for scheduling your tax review appointment with SW Tax Service."
+      : kind === "RESCHEDULED"
+      ? "Your SW Tax Service appointment has been successfully rescheduled."
+      : "Your SW Tax Service appointment has been cancelled.";
 
   const html = `
     <div style="font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; line-height: 1.6;">
@@ -174,8 +176,9 @@ export async function sendAppointmentEmail(params: AppointmentEmailParams) {
     .filter(Boolean)
     .join("\n");
 
-  // ✅ Calendar invite (.ics)
-  const uid = `${randomUUID()}@swtaxservice.com`;
+  // ✅ Stable UID so reschedule/cancel updates the same event
+  const uid = `${appointmentId}@swtaxservice.com`;
+
   const icsSummary =
     kind === "CANCELLED"
       ? "SW Tax Service Appointment (Cancelled)"
@@ -192,9 +195,10 @@ export async function sendAppointmentEmail(params: AppointmentEmailParams) {
     description: icsDescription,
     startsAt,
     endsAt,
-    // Optional — set this if you want it to show as organizer
-    // organizerName: "SW Tax Service",
-    // organizerEmail: "support@swtaxservice.com",
+    isCancelled: kind === "CANCELLED",
+    organizerName: "SW Tax Service",
+    organizerEmail: "support@swtaxservice.com",
+    sequence: kind === "RESCHEDULED" ? 1 : 0,
   });
 
   await sendEmail({

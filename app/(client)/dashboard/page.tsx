@@ -1,9 +1,7 @@
-// app/(main)/dashboard/page.tsx
+// app/(client)/dashboard/
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { configureAmplify } from "@/lib/amplifyClient";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import DashboardHeader from "./_components/DashboardHeader";
 import NextStepsCard from "./_components/NextStepsCard";
@@ -34,14 +32,12 @@ import type {
 } from "@/types/dashboard";
 
 import {
-  cx,
   currency,
   fmtDate,
-  fmtDateTime,
   getTimelineStageIndex,
   formatRefundBalance,
 } from "@/lib/utils/dashboard";
-configureAmplify();
+
 /* ------------------------- Dashboard Page ------------------------- */
 export default function DashboardPage() {
   const router = useRouter();

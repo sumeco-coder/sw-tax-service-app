@@ -1,43 +1,54 @@
+// app/unsubscribe/actions.ts
+// app/unsubscribe/actions.ts
 "use server";
 
 import { db } from "@/drizzle/db";
-import { emailRecipients, emailUnsubscribes } from "@/drizzle/schema";
+import { emailRecipients, emailSubscribers, emailUnsubscribes } from "@/drizzle/schema";
 import { eq } from "drizzle-orm";
 import { redirect } from "next/navigation";
+import { verifyUnsubToken } from "@/lib/email/unsubscribe";
 
 export async function confirmUnsubscribeAction(formData: FormData): Promise<void> {
   const token = String(formData.get("token") ?? "").trim();
   if (!token) return;
 
-  // 1) Find recipient row by token
-  const [rec] = await db
-    .select()
-    .from(emailRecipients)
-    .where(eq(emailRecipients.unsubToken, token))
-    .limit(1);
+  // ✅ signed token verification (no DB lookup needed)
+  const payload = verifyUnsubToken(token);
+  if (!payload?.email) return;
 
-  if (!rec) return;
+  const email = payload.email.toLowerCase().trim();
 
-  const email = rec.email.toLowerCase().trim();
-
-  // 2) Add to global unsubscribe list (if not already there)
+  // 1) Global unsubscribe list (idempotent)
   await db
     .insert(emailUnsubscribes)
-    .values({
-      email,
-      source: "page",
-      unsubscribedAt: new Date(), // you have default now() but explicit is fine
-    })
-    // ✅ Postgres upsert: ignore if already unsubscribed
-    // @ts-ignore (depends on drizzle version typings)
-    .onConflictDoNothing();
+    .values({ email, source: "page" })
+    .onConflictDoUpdate({
+      target: emailUnsubscribes.email,
+      set: { unsubscribedAt: new Date(), source: "page" },
+    });
 
-  // 3) Mark this recipient row too (optional, but nice)
+  // 2) Mark all recipient rows for this email as unsubscribed
   await db
     .update(emailRecipients)
-    .set({ status: "unsubscribed", updatedAt: new Date() })
-    .where(eq(emailRecipients.id, rec.id));
+    .set({
+      status: "unsubscribed",
+      updatedAt: new Date(),
+    })
+    .where(eq(emailRecipients.email, email));
 
-  // 4) redirect back to show success state
+  // 3) OPTIONAL: also update your master subscriber list
+  try {
+    await db
+      .update(emailSubscribers)
+      .set({
+        status: "unsubscribed",
+        updatedAt: new Date(),
+      })
+      .where(eq(emailSubscribers.email, email));
+  } catch {
+    // ignore if you don't want/use emailSubscribers
+  }
+
+  // 4) Redirect to success page
   redirect(`/unsubscribe?token=${encodeURIComponent(token)}`);
 }

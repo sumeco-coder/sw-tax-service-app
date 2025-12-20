@@ -1,5 +1,5 @@
 // app/layout.tsx
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
@@ -48,8 +48,9 @@ export const metadata: Metadata = {
 
   // ✅ Android/Chrome icons should be referenced in the manifest
   manifest: "/swtax-favicon-pack/site.webmanifest",
+};
 
-  // Optional but helpful for PWA theming if your manifest has these too
+export const viewport: Viewport = {
   themeColor: "#ffffff",
 };
 

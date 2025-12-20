@@ -1,7 +1,6 @@
 // app/(admin)/admin/layout.tsx
 import type { ReactNode } from "react";
-import AdminShell from "./_components/AdminShell";
 
 export default function AdminLayout({ children }: { children: ReactNode }) {
-  return <AdminShell>{children}</AdminShell>;
+  return children;
 }

@@ -7,6 +7,7 @@ export const assignRoleOnConfirm = defineFunction({
   timeoutSeconds: 10,
   environment: {
     ADMIN_EMAILS: secret("ADMIN_EMAILS"),
+    ADMIN_INVITE_CODE: secret("ADMIN_INVITE_CODE"),
     INVITE_CODE_LMS_PREPARER: secret("INVITE_CODE_LMS_PREPARER"),
     INVITE_CODE_LMS_ADMIN: secret("INVITE_CODE_LMS_ADMIN"),
   },

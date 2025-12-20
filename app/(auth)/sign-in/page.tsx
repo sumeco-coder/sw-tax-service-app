@@ -11,7 +11,7 @@ export const metadata: Metadata = {
 
 export const dynamic = "force-dynamic";
 
-export default function SignUpPage() {
+export default function SignInPage() {
   return (
     <Suspense fallback={null}>
       <SignInClient />

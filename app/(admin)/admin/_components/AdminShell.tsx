@@ -1,6 +1,12 @@
 // app/(admin)/admin/_components/AdminShell.tsx
 import Link from "next/link";
-import AdminSidebar from "../_components/AdminSidebar";
+import AdminSidebar from "./AdminSidebar";
+
+const portalLinks = [
+  { label: "Client Portal", href: "/dashboard" },
+  { label: "Preparer Portal", href: "/preparer" }, // change if needed
+  { label: "LMS Portal", href: "/lms" },           // change if needed
+];
 
 export default function AdminShell({ children }: { children: React.ReactNode }) {
   return (
@@ -13,12 +19,25 @@ export default function AdminShell({ children }: { children: React.ReactNode }) 
         <div className="flex min-w-0 flex-1 flex-col">
           <header className="sticky top-0 z-20 border-b border-white/10 bg-[#0b0b10]/80 backdrop-blur">
             <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 py-4 pl-14 md:pl-4">
-
               <p className="hidden text-sm text-white/70 md:block">
                 Manage waitlist, email, templates, and social.
               </p>
 
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                {/* Jump to other portals */}
+                <div className="hidden md:flex items-center gap-2">
+                  {portalLinks.map((l) => (
+                    <Link
+                      key={l.href}
+                      href={l.href}
+                      className="rounded-2xl border border-white/15 bg-white/5 px-3 py-2 text-sm text-white/90 transition hover:bg-white/10"
+                    >
+                      {l.label}
+                    </Link>
+                  ))}
+                </div>
+
+                {/* Always keep View Site */}
                 <Link
                   href="/"
                   className="rounded-2xl border border-white/15 bg-white/5 px-3 py-2 text-sm text-white transition hover:bg-white/10"
