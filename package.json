@@ -19,6 +19,7 @@
     "@aws-amplify/ui-react": "^6.13.1",
     "@aws-sdk/client-cognito-identity-provider": "^3.940.0",
     "@aws-sdk/client-s3": "^3.946.0",
+    "@aws-sdk/client-scheduler": "^3.956.0",
     "@aws-sdk/client-sesv2": "^3.940.0",
     "@aws-sdk/client-sns": "^3.940.0",
     "@aws-sdk/s3-request-presigner": "^3.946.0",
