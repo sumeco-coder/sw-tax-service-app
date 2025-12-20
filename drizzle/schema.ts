@@ -165,6 +165,7 @@ export const onboardingStepEnum = pgEnum("onboarding_step", [
 // =========================
 export const emailCampaignStatus = pgEnum("email_campaign_status", [
   "draft",
+  "scheduled",
   "sending",
   "sent",
   "failed",
@@ -194,6 +195,8 @@ export const emailCampaigns = pgTable("email_campaigns", {
     .default("waitlist_pending")
     .notNull(),
   status: emailCampaignStatus("status").default("draft").notNull(),
+  scheduledAt: timestamp("scheduled_at", { withTimezone: true }),
+  schedulerName: text("scheduler_name"),
   sentAt: timestamp("sent_at", { withTimezone: true }),
   subject: text("subject").notNull(),
   htmlBody: text("html_body").notNull(),

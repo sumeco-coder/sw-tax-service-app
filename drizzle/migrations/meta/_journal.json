@@ -43,6 +43,13 @@
       "when": 1766056973227,
       "tag": "0005_add-social-attempts",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1766238055205,
+      "tag": "0006_silly_mongoose",
+      "breakpoints": true
     }
   ]
 }

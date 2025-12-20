@@ -1,6 +1,5 @@
 // app/api/email/worker/route.ts
 import { NextResponse } from "next/server";
-import crypto from "crypto";
 import { db } from "@/drizzle/db";
 import {
   emailCampaigns,
