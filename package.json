@@ -36,7 +36,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "dotenv": "^17.2.3",
-    "drizzle-kit": "^0.31.6",
+    "drizzle-kit": "^0.31.8",
     "drizzle-orm": "^0.44.7",
     "jose": "^6.1.2",
     "libphonenumber-js": "^1.12.31",
