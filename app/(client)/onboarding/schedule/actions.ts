@@ -8,7 +8,6 @@ import { revalidatePath } from "next/cache";
 import { sendAppointmentEmail } from "@/lib/email/appointments";
 import { sendSms } from "@/lib/sms/sns";
 
-
 /**
  * BOOK APPOINTMENT
  * Expects form fields:
@@ -50,19 +49,30 @@ export async function bookAppointment(formData: FormData): Promise<void> {
   const phone = phoneFromForm || (userRow as any).phone || "";
 
   // Create appointment (single start time + duration)
-  // Adjust durationMinutes if you want longer
   const DEFAULT_DURATION_MINUTES = 30;
 
-  // Email confirmation
-  await db.insert(appointments).values({
-    userId: userRow.id,
-    scheduledAt,
-    durationMinutes: DEFAULT_DURATION_MINUTES,
-    status: "scheduled",
-    notes: null,
-    cancelledReason: null,
-    cancelledAt: null,
-  });
+  // ✅ Insert + return appointment id (needed for email params)
+  const [appt] = await db
+    .insert(appointments)
+    .values({
+      userId: userRow.id,
+      scheduledAt,
+      durationMinutes: DEFAULT_DURATION_MINUTES,
+      status: "scheduled",
+      notes: null,
+      cancelledReason: null,
+      cancelledAt: null,
+    })
+    .returning({
+      id: appointments.id,
+      scheduledAt: appointments.scheduledAt,
+      durationMinutes: appointments.durationMinutes,
+    });
+
+  if (!appt?.id) {
+    console.error("Appointment insert failed (no id returned)");
+    return;
+  }
 
   await db
     .update(users)
@@ -72,16 +82,18 @@ export async function bookAppointment(formData: FormData): Promise<void> {
     })
     .where(eq(users.id, userRow.id));
 
+  const endsAt = new Date(
+    scheduledAt.getTime() + DEFAULT_DURATION_MINUTES * 60000
+  );
 
   // Email
   if (email) {
     await sendAppointmentEmail({
       to: email,
       kind: "BOOKED",
+      appointmentId: appt.id, // ✅ required
       startsAt: scheduledAt,
-      endsAt: new Date(
-        scheduledAt.getTime() + DEFAULT_DURATION_MINUTES * 60000
-      ),
+      endsAt,
     });
   }
 
@@ -147,7 +159,7 @@ export async function cancelAppointment(formData: FormData): Promise<void> {
   const email = (userRow as any)?.email ?? "";
   const phone = (userRow as any)?.phone ?? "";
 
-   // Email notification
+  // Email notification
   if (email) {
     const startsAt = appt.scheduledAt;
     const endsAt = new Date(
@@ -157,13 +169,14 @@ export async function cancelAppointment(formData: FormData): Promise<void> {
     await sendAppointmentEmail({
       to: email,
       kind: "CANCELLED",
+      appointmentId: apptId, // ✅ required
       startsAt,
       endsAt,
       cancelReason: reason,
     });
   }
 
-   // SMS notification
+  // SMS notification
   if (phone) {
     await sendSms(
       phone,
@@ -237,6 +250,7 @@ export async function rescheduleAppointment(formData: FormData): Promise<void> {
     await sendAppointmentEmail({
       to: email,
       kind: "RESCHEDULED",
+      appointmentId: apptId, // ✅ required
       startsAt: scheduledAt,
       endsAt,
     });

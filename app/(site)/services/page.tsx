@@ -60,26 +60,32 @@ export default function ServicesPage() {
   ] as const;
 
   return (
-    <main className="bg-white">
+    <main className="bg-background text-foreground">
       {/* Hero */}
       <section className="max-w-6xl mx-auto px-6 pt-12 pb-8">
-        <h1 className="text-4xl md:text-5xl font-extrabold text-blue-900 tracking-tight">
+        <h1 className="text-4xl md:text-5xl font-extrabold tracking-tight">
           Services
         </h1>
-        <p className="mt-4 text-gray-700 max-w-2xl">
-          Everything you need for a smooth tax season and clean books—plus a
+
+        <p className="mt-4 max-w-2xl text-muted-foreground">
+          Everything you need for a smooth tax season and clean books — plus a
           professional LMS training suite for tax pros.
         </p>
+
         <div className="mt-6 flex flex-wrap gap-3">
           <Link
-            href="/site/appointment"
-            className="inline-flex items-center rounded-2xl border border-blue-900 px-5 py-2.5 text-blue-900 hover:bg-blue-50 transition"
+            href="/appointment"
+            className="inline-flex items-center rounded-xl border border-border px-5 py-2.5 font-semibold
+                   text-primary hover:bg-secondary transition"
           >
             Book Appointment
           </Link>
+
           <Link
-            href="/site/lms"
-            className="inline-flex items-center rounded-2xl bg-blue-900 px-5 py-2.5 text-white hover:opacity-90 transition"
+            href="/lms"
+            className="inline-flex items-center rounded-xl px-5 py-2.5 font-semibold text-primary-foreground
+                   shadow-md transition hover:opacity-95"
+            style={{ background: "var(--brand-gradient)" }}
           >
             Explore LMS for Tax Pros
           </Link>
@@ -88,29 +94,37 @@ export default function ServicesPage() {
 
       {/* Service Cards */}
       <section className="max-w-6xl mx-auto px-6 pb-16">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
           {services.map((s) => (
             <article
               key={s.slug}
-              className="rounded-2xl border border-gray-200 shadow-sm hover:shadow-md transition p-6"
+              className="rounded-2xl border border-border bg-card p-6 shadow-sm
+                     transition hover:shadow-md"
             >
-              <h2 className="text-2xl font-bold text-blue-900">{s.title}</h2>
-              <p className="mt-2 text-gray-700">{s.blurb}</p>
-              <ul className="mt-4 text-gray-700 space-y-1 list-disc list-inside">
+              <h2 className="text-2xl font-bold">{s.title}</h2>
+
+              <p className="mt-2 text-muted-foreground">{s.blurb}</p>
+
+              <ul className="mt-4 space-y-1 list-disc list-inside text-muted-foreground">
                 {s.bullets.map((b) => (
                   <li key={b}>{b}</li>
                 ))}
               </ul>
+
               <div className="mt-6 flex items-center justify-between">
                 <Link
                   href={s.slug}
-                  className="rounded-xl bg-blue-900 text-white px-4 py-2 hover:opacity-90 transition"
+                  className="rounded-xl px-4 py-2 font-semibold text-primary-foreground
+                         shadow-md transition hover:opacity-95"
+                  style={{ background: "var(--brand-gradient)" }}
                 >
                   {s.cta}
                 </Link>
+
                 <Link
-                  href="/site/appointment"
-                  className="text-blue-900 underline underline-offset-4 hover:no-underline"
+                  href="/appointment"
+                  className="text-primary font-semibold underline underline-offset-4
+                         hover:no-underline"
                 >
                   Book now
                 </Link>
@@ -121,35 +135,42 @@ export default function ServicesPage() {
       </section>
 
       {/* LMS Block */}
-      <section className="bg-gray-50 border-t border-gray-200">
+      <section className="bg-secondary border-t border-border">
         <div className="max-w-6xl mx-auto px-6 py-14">
-          <div className="rounded-2xl border border-gray-200 bg-white p-6 md:p-10 shadow-sm">
+          <div className="rounded-2xl border border-border bg-card p-6 md:p-10 shadow-sm">
             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-6">
               <div className="max-w-3xl">
-                <h2 className="text-2xl md:text-3xl font-bold text-blue-900">
+                <h2 className="text-2xl md:text-3xl font-bold">
                   LMS for Tax Pros
                 </h2>
-                <p className="mt-2 text-gray-700">
-                  Level up your tax practice with step‑by‑step courses, client
-                  workflows, compliance checklists, and templates. Built by
-                  practitioners to help you deliver premium service at scale.
+
+                <p className="mt-2 text-muted-foreground">
+                  Level up your tax practice with step-by-step courses, client
+                  workflows, compliance checklists, and templates — built by
+                  practitioners.
                 </p>
-                <ul className="mt-4 text-gray-700 space-y-1 list-disc list-inside">
+
+                <ul className="mt-4 space-y-1 list-disc list-inside text-muted-foreground">
                   <li>Onboarding & discovery call scripts</li>
-                  <li>Tax prep SOPs & quality‑control checklists</li>
+                  <li>Tax prep SOPs & quality-control checklists</li>
                   <li>Client portals, engagement letters & templates</li>
                 </ul>
               </div>
+
               <div className="flex gap-3 shrink-0">
                 <Link
-                  href="/site/lms"
-                  className="rounded-xl border border-blue-900 px-4 py-2 text-blue-900 hover:bg-blue-50 transition"
+                  href="/lms"
+                  className="rounded-xl border border-border px-4 py-2 font-semibold
+                         text-primary hover:bg-secondary transition"
                 >
                   Explore LMS
                 </Link>
+
                 <Link
-                  href="/site/lms/enroll"
-                  className="rounded-xl bg-blue-900 px-4 py-2 text-white hover:opacity-90 transition"
+                  href="/lms/enroll"
+                  className="rounded-xl px-4 py-2 font-semibold text-primary-foreground
+                         shadow-md transition hover:opacity-95"
+                  style={{ background: "var(--brand-gradient)" }}
                 >
                   Enroll Now
                 </Link>
