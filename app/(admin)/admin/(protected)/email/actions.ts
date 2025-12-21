@@ -1,5 +1,4 @@
 // app/(admin)/admin/(protected)/email/actions.ts
-// app/(admin)/admin/(protected)/email/actions.ts
 "use server";
 
 import crypto from "crypto";
@@ -14,18 +13,45 @@ import {
 import { and, eq, inArray } from "drizzle-orm";
 
 import { sendEmail } from "@/lib/email/sendEmail"; // ✅ keep your wrapper
-import { renderTemplate, hasUnrenderedTokens } from "@/lib/email/renderTemplate";
+import {
+  renderTemplate,
+  hasUnrenderedTokens,
+} from "@/lib/email/renderTemplate";
 import { buildEmailFooterHTML, buildEmailFooterText } from "@/lib/email/footer";
 import { z } from "zod";
 
 type Segment = "waitlist_pending" | "waitlist_approved" | "waitlist_all";
 
+// ✅ helper to safely read strings from FormData
+function fdString(formData: FormData, key: string) {
+  const v = formData.get(key);
+  return typeof v === "string" ? v : "";
+}
+
+// ✅ helper to safely read optional strings (null/missing -> undefined)
+function fdOptionalString(formData: FormData, key: string) {
+  const v = formData.get(key);
+  if (typeof v !== "string") return undefined;
+  const s = v.trim();
+  return s.length ? s : undefined;
+}
+
 const SendCampaignSchema = z.object({
-  name: z.string().trim().min(1).optional(),
+  // ✅ name is truly optional now ("" becomes undefined)
+  name: z
+    .string()
+    .optional()
+    .transform((v) => {
+      const s = (v ?? "").trim();
+      return s.length ? s : undefined;
+    }),
+
   segment: z
     .enum(["waitlist_pending", "waitlist_approved", "waitlist_all"])
     .default("waitlist_pending"),
+
   limit: z.coerce.number().int().min(1).max(5000).default(200),
+
   subject: z.string().trim().min(2, "Subject is required."),
   htmlBody: z.string().trim().min(5, "HTML body is required."),
   textBody: z.string().trim().min(5, "Text body is required."),
@@ -50,7 +76,10 @@ function buildUnsubUrls(token: string) {
 
 async function loadSegmentEmails(segment: Segment, limit: number) {
   if (segment === "waitlist_all") {
-    const rows = await db.select({ email: waitlist.email }).from(waitlist).limit(limit);
+    const rows = await db
+      .select({ email: waitlist.email })
+      .from(waitlist)
+      .limit(limit);
     return rows.map((r) => r.email.toLowerCase().trim());
   }
 
@@ -78,10 +107,12 @@ async function loadSegmentEmails(segment: Segment, limit: number) {
  * Quick send: creates + sends a campaign immediately to a WAITLIST segment
  * (used by /admin/email “Send campaign” form)
  */
-export async function createAndSendCampaignAction(formData: FormData): Promise<void> {
+export async function createAndSendCampaignAction(
+  formData: FormData
+): Promise<void> {
   const parsed = SendCampaignSchema.safeParse({
-    name: formData.get("name"),
-    segment: formData.get("segment"),
+    name: fdOptionalString(formData, "name"),
+    segment: fdString(formData, "segment"),
     limit: formData.get("limit"),
     subject: formData.get("subject"),
     htmlBody: formData.get("htmlBody"),
@@ -89,11 +120,22 @@ export async function createAndSendCampaignAction(formData: FormData): Promise<v
   });
 
   if (!parsed.success) {
-    throw new Error(parsed.error.issues[0]?.message ?? "Invalid input.");
+    // ✅ better error so you see WHICH field failed
+    const details = parsed.error.issues
+      .map((i) => `${i.path.join(".") || "field"}: ${i.message}`)
+      .join(" | ");
+    throw new Error(details || "Invalid input.");
   }
 
-  const { name, segment, limit, subject: subjectRaw, htmlBody: htmlBodyRaw, textBody: textBodyRaw } =
-    parsed.data;
+
+  const {
+    name,
+    segment,
+    limit,
+    subject: subjectRaw,
+    htmlBody: htmlBodyRaw,
+    textBody: textBodyRaw,
+  } = parsed.data;
 
   // 1) Create campaign
   const [campaign] = await db
@@ -181,7 +223,12 @@ export async function createAndSendCampaignAction(formData: FormData): Promise<v
         unsubToken: emailRecipients.unsubToken,
       })
       .from(emailRecipients)
-      .where(and(eq(emailRecipients.campaignId, campaign.id), eq(emailRecipients.email, normalized)))
+      .where(
+        and(
+          eq(emailRecipients.campaignId, campaign.id),
+          eq(emailRecipients.email, normalized)
+        )
+      )
       .limit(1);
 
     // If it already exists and isn't queued, don't re-send
@@ -230,13 +277,18 @@ export async function createAndSendCampaignAction(formData: FormData): Promise<v
     if (!templateHasFooterText) textBody = `${textBody}\n\n${footerText}`;
 
     // ✅ never send raw tokens
-    if (hasUnrenderedTokens(htmlBody) || hasUnrenderedTokens(textBody) || hasUnrenderedTokens(subject)) {
+    if (
+      hasUnrenderedTokens(htmlBody) ||
+      hasUnrenderedTokens(textBody) ||
+      hasUnrenderedTokens(subject)
+    ) {
       failedCount++;
       await db
         .update(emailRecipients)
         .set({
           status: "failed",
-          error: "Template contains unknown {{tokens}}. Fix template variables.",
+          error:
+            "Template contains unknown {{tokens}}. Fix template variables.",
           updatedAt: new Date(),
         })
         .where(eq(emailRecipients.id, rec.id));
