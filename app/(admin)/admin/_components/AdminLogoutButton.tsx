@@ -1,49 +1,58 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { LogOut } from "lucide-react";
 import { signOut } from "aws-amplify/auth";
 import { configureAmplify } from "@/lib/amplifyClient";
 
-configureAmplify();
-
-export default function AdminLogoutButton({
-  onDone,
-}: {
-  onDone?: () => void;
-}) {
+export default function AdminLogoutButton({ onDone }: { onDone?: () => void }) {
   const router = useRouter();
   const [pending, setPending] = useState(false);
+
+  // ✅ configure Amplify once, safely
+  const configuredRef = useRef(false);
+  useEffect(() => {
+    if (!configuredRef.current) {
+      configureAmplify();
+      configuredRef.current = true;
+    }
+  }, []);
 
   async function handleLogout() {
     if (pending) return;
     setPending(true);
 
-    // 1) Amplify/Cognito sign out
     try {
-      await signOut({ global: true });
-    } catch {
+      // 1) Amplify/Cognito sign out
       try {
-        await signOut();
+        await signOut({ global: true });
+      } catch {
+        try {
+          await signOut();
+        } catch {}
+      }
+
+      // 2) Clear server cookies (your endpoint)
+      try {
+        await fetch("/api/auth/logout", {
+          method: "POST",
+          credentials: "include",
+          cache: "no-store",
+        });
       } catch {}
+
+      // 3) Close drawer if needed
+      try {
+        onDone?.();
+      } catch {}
+
+      // 4) Go to admin sign-in
+      router.replace("/admin/sign-in");
+      router.refresh();
+    } finally {
+      setPending(false);
     }
-
-    // 2) Clear server cookies (your endpoint)
-    try {
-      await fetch("/api/auth/logout", { method: "POST" });
-    } catch {}
-
-    // 3) Close drawer if needed
-    try {
-      onDone?.();
-    } catch {}
-
-    // 4) Go to admin sign-in
-    router.replace("/admin/sign-in");
-    router.refresh();
-
-    setPending(false);
   }
 
   return (

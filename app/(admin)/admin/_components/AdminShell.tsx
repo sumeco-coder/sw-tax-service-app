@@ -1,31 +1,71 @@
 // app/(admin)/admin/_components/AdminShell.tsx
+"use client";
+
+import * as React from "react";
 import Link from "next/link";
 import AdminSidebar from "./AdminSidebar";
+import { useRouter } from "next/navigation";
+import { LogOut, ChevronDown } from "lucide-react";
 
 const portalLinks = [
   { label: "Client Portal", href: "/dashboard" },
   { label: "Preparer Portal", href: "/preparer" }, // change if needed
-  { label: "LMS Portal", href: "/lms" },           // change if needed
+  { label: "LMS Portal", href: "/lms" }, // change if needed
 ];
 
-export default function AdminShell({ children }: { children: React.ReactNode }) {
+type AdminShellProps = {
+  children: React.ReactNode;
+  title?: string;
+  description?: string;
+  actions?: React.ReactNode;
+};
+
+export default function AdminShell({
+  children,
+  title = "Admin",
+  description = "Manage waitlist, email, templates, and social.",
+  actions,
+}: AdminShellProps) {
+  const router = useRouter();
+  const [loggingOut, setLoggingOut] = React.useState(false);
+
+  async function handleLogout() {
+    try {
+      setLoggingOut(true);
+      await fetch("/api/auth/logout", { method: "POST" });
+      router.replace("/admin/sign-in");
+      router.refresh();
+    } finally {
+      setLoggingOut(false);
+    }
+  }
   return (
     <div className="min-h-screen bg-[#0b0b10]">
       <div className="mx-auto flex min-h-screen max-w-7xl">
-        {/* Desktop sidebar + Mobile drawer */}
+        {/* Sidebar (your component can handle desktop + mobile drawer) */}
         <AdminSidebar />
 
         {/* Main */}
         <div className="flex min-w-0 flex-1 flex-col">
           <header className="sticky top-0 z-20 border-b border-white/10 bg-[#0b0b10]/80 backdrop-blur">
             <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 py-4 pl-14 md:pl-4">
-              <p className="hidden text-sm text-white/70 md:block">
-                Manage waitlist, email, templates, and social.
-              </p>
+              <div className="min-w-0">
+                <div className="truncate text-sm font-semibold text-white">
+                  {title}
+                </div>
+                <p className="hidden truncate text-sm text-white/70 md:block">
+                  {description}
+                </p>
+              </div>
 
               <div className="flex flex-wrap items-center gap-2">
-                {/* Jump to other portals */}
-                <div className="hidden md:flex items-center gap-2">
+                {/* Optional page-level actions (buttons, etc.) */}
+                {actions ? (
+                  <div className="hidden md:block">{actions}</div>
+                ) : null}
+
+                {/* Jump to other portals (desktop) */}
+                <div className="hidden items-center gap-2 md:flex">
                   {portalLinks.map((l) => (
                     <Link
                       key={l.href}
@@ -37,6 +77,26 @@ export default function AdminShell({ children }: { children: React.ReactNode }) 
                   ))}
                 </div>
 
+                {/* Jump to other portals (mobile dropdown) */}
+                <details className="group md:hidden">
+                  <summary className="list-none cursor-pointer rounded-2xl border border-white/15 bg-white/5 px-3 py-2 text-sm text-white/90 transition hover:bg-white/10">
+                    <span className="inline-flex items-center gap-2">
+                      Portals <ChevronDown className="h-4 w-4 opacity-80" />
+                    </span>
+                  </summary>
+                  <div className="absolute right-4 mt-2 w-56 overflow-hidden rounded-2xl border border-white/10 bg-[#111118] shadow-xl">
+                    {portalLinks.map((l) => (
+                      <Link
+                        key={l.href}
+                        href={l.href}
+                        className="block px-4 py-3 text-sm text-white/90 hover:bg-white/10"
+                      >
+                        {l.label}
+                      </Link>
+                    ))}
+                  </div>
+                </details>
+
                 {/* Always keep View Site */}
                 <Link
                   href="/"
@@ -44,6 +104,19 @@ export default function AdminShell({ children }: { children: React.ReactNode }) 
                 >
                   View Site
                 </Link>
+
+                {/* Logout */}
+                <button
+                  onClick={handleLogout}
+                  disabled={loggingOut}
+                  className="inline-flex items-center gap-2 rounded-2xl border border-white/15 bg-white/5 px-3 py-2 text-sm text-white transition hover:bg-white/10 disabled:opacity-60"
+                  title="Logout"
+                >
+                  <LogOut className="h-4 w-4" />
+                  <span className="hidden sm:inline">
+                    {loggingOut ? "Logging out…" : "Logout"}
+                  </span>
+                </button>
               </div>
             </div>
           </header>

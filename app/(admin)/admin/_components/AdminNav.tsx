@@ -23,16 +23,19 @@ const nav = [
   { label: "Settings", href: "/admin/settings", icon: Settings },
 ];
 
+function isActivePath(pathname: string, href: string) {
+  if (href === "/admin") return pathname === "/admin";
+  // ✅ matches "/admin/email" and "/admin/email/anything"
+  return pathname === href || pathname.startsWith(href + "/");
+}
+
 export default function AdminNav({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
 
   return (
     <nav className="flex flex-col gap-1">
       {nav.map((item) => {
-        const active =
-          pathname === item.href ||
-          (item.href !== "/admin" && pathname.startsWith(item.href));
-
+        const active = isActivePath(pathname, item.href);
         const Icon = item.icon;
 
         return (
@@ -40,6 +43,7 @@ export default function AdminNav({ onNavigate }: { onNavigate?: () => void }) {
             key={item.href}
             href={item.href}
             onClick={onNavigate}
+            aria-current={active ? "page" : undefined}
             className={[
               "group flex items-center gap-3 rounded-2xl px-3 py-2 text-sm font-medium transition",
               active
@@ -54,7 +58,13 @@ export default function AdminNav({ onNavigate }: { onNavigate?: () => void }) {
                 : undefined
             }
           >
-            <Icon className={active ? "h-4 w-4 text-white" : "h-4 w-4 text-white/70 group-hover:text-white"} />
+            <Icon
+              className={
+                active
+                  ? "h-4 w-4 text-white"
+                  : "h-4 w-4 text-white/70 group-hover:text-white"
+              }
+            />
             <span className="truncate">{item.label}</span>
           </Link>
         );

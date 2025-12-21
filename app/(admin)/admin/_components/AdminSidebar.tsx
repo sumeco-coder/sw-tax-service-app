@@ -1,15 +1,13 @@
 // app/(admin)/admin/_components/AdminSidebar.tsx
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { X, Menu, LogOut } from "lucide-react";
 import AdminNav from "./AdminNav";
 import { configureAmplify } from "@/lib/amplifyClient";
 import { signOut } from "aws-amplify/auth";
-
-configureAmplify();
 
 const BRAND = {
   primary: "#E00040",
@@ -43,6 +41,35 @@ export default function AdminSidebar() {
   const [open, setOpen] = useState(false);
   const router = useRouter();
 
+  // ✅ configure Amplify once, safely, inside the client component
+  const configuredRef = useRef(false);
+  useEffect(() => {
+    if (!configuredRef.current) {
+      configureAmplify();
+      configuredRef.current = true;
+    }
+  }, []);
+
+  // ✅ lock body scroll while drawer open
+  useEffect(() => {
+    if (!open) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [open]);
+
+  // ✅ ESC closes drawer
+  useEffect(() => {
+    if (!open) return;
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") setOpen(false);
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [open]);
+
   async function handleLogout() {
     await hardSignOut();
     setOpen(false);
@@ -58,6 +85,8 @@ export default function AdminSidebar() {
         onClick={() => setOpen(true)}
         className="fixed left-4 top-4 z-30 inline-flex items-center justify-center rounded-2xl border border-white/15 bg-white/5 p-2 text-white backdrop-blur md:hidden"
         aria-label="Open admin menu"
+        aria-expanded={open}
+        aria-controls="admin-mobile-drawer"
       >
         <Menu className="h-5 w-5" />
       </button>
@@ -85,16 +114,20 @@ export default function AdminSidebar() {
 
       {/* Mobile drawer */}
       {open ? (
-        <div className="fixed inset-0 z-40 md:hidden">
+        <div className="fixed inset-0 z-40 md:hidden" role="dialog" aria-modal="true">
           {/* overlay */}
           <button
+            type="button"
             aria-label="Close admin menu overlay"
             className="absolute inset-0 bg-black/60"
             onClick={() => setOpen(false)}
           />
 
           {/* drawer */}
-          <div className="absolute left-0 top-0 flex h-full w-[82%] max-w-sm flex-col border-r border-white/10 bg-[#0b0b10] px-4 py-6">
+          <div
+            id="admin-mobile-drawer"
+            className="absolute left-0 top-0 flex h-full w-[82%] max-w-sm flex-col border-r border-white/10 bg-[#0b0b10] px-4 py-6"
+          >
             <div className="flex items-center justify-between">
               <BrandHeader />
               <button
@@ -178,18 +211,10 @@ function QuickLinks({ onNavigate }: { onNavigate?: () => void }) {
     <div className="rounded-3xl border border-white/10 bg-white/5 p-4 text-sm text-white/80">
       <p className="font-semibold text-white">Quick Links</p>
       <div className="mt-3 flex flex-col gap-2">
-        <Link
-          className="hover:underline"
-          href="/tax-knowledge/wheres-my-refund"
-          onClick={onNavigate}
-        >
+        <Link className="hover:underline" href="/tax-knowledge/wheres-my-refund" onClick={onNavigate}>
           Where’s My Refund →
         </Link>
-        <Link
-          className="hover:underline"
-          href="/tax-knowledge/docs-checklist"
-          onClick={onNavigate}
-        >
+        <Link className="hover:underline" href="/tax-knowledge/docs-checklist" onClick={onNavigate}>
           Docs Checklist →
         </Link>
       </div>

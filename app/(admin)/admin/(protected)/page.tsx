@@ -1,8 +1,11 @@
-// app/(admin)/admin/page.tsx
+// app/(admin)/admin/(protected)/page.tsx
 import Link from "next/link";
+
 import { db } from "@/drizzle/db";
 import { waitlist } from "@/drizzle/schema";
 import { desc, eq, sql } from "drizzle-orm";
+
+import AnalyticsPanel from "./_components/AnalyticsPanel";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -48,81 +51,12 @@ export default async function AdminDashboardPage() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="relative overflow-hidden rounded-3xl border bg-white p-6 shadow-sm">
-        <div
-          className="pointer-events-none absolute inset-0 opacity-[0.10]"
-          style={{
-            background:
-              `radial-gradient(800px 240px at 20% 0%, ${BRAND.primary} 0%, transparent 60%),` +
-              `radial-gradient(700px 240px at 85% 20%, ${BRAND.accent} 0%, transparent 55%)`,
-          }}
-        />
-        <div className="relative flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-wide text-[#202030]/60">
-              SW Tax Service • Admin
-            </p>
-            <h1 className="mt-1 text-2xl font-bold text-[#202030] sm:text-3xl">
-              Dashboard
-            </h1>
-            <p className="mt-1 text-sm text-[#202030]/70">
-              Waitlist pipeline + quick access to Email, Social, and Settings.
-            </p>
-          </div>
-
-          <div className="flex flex-wrap gap-2">
-            <Link
-              href="/admin/waitlist"
-              className="rounded-2xl px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:opacity-95"
-              style={{ backgroundColor: BRAND.dark }}
-            >
-              Review Waitlist →
-            </Link>
-
-            <Link
-              href="/admin/email"
-              className="rounded-2xl border px-4 py-2 text-sm font-semibold text-[#202030] transition hover:bg-black/5"
-            >
-              Email →
-            </Link>
-
-            <Link
-              href="/admin/social"
-              className="rounded-2xl border px-4 py-2 text-sm font-semibold text-[#202030] transition hover:bg-black/5"
-            >
-              Social →
-            </Link>
-          </div>
-        </div>
-      </div>
-
       {/* KPI row */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Kpi
-          label="Pending"
-          value={pending}
-          hint="Needs review"
-          tone="warning"
-        />
-        <Kpi
-          label="Approved"
-          value={approved}
-          hint="Invites sent"
-          tone="success"
-        />
-        <Kpi
-          label="Rejected"
-          value={rejected}
-          hint="Not eligible"
-          tone="danger"
-        />
-        <Kpi
-          label="Total"
-          value={total}
-          hint="All statuses"
-          tone="brand"
-        />
+        <Kpi label="Pending" value={pending} hint="Needs review" tone="warning" />
+        <Kpi label="Approved" value={approved} hint="Invites sent" tone="success" />
+        <Kpi label="Rejected" value={rejected} hint="Not eligible" tone="danger" />
+        <Kpi label="Total" value={total} hint="All statuses" tone="brand" />
       </div>
 
       {/* Quick actions */}
@@ -150,8 +84,11 @@ export default async function AdminDashboardPage() {
         />
       </div>
 
+      {/* Analytics (Looker + Clarity) */}
+      <AnalyticsPanel />
+
       {/* Recent */}
-      <section className="overflow-hidden rounded-3xl border bg-white shadow-sm">
+      <section className="overflow-hidden rounded-3xl border bg-black/[0.02] shadow-sm">
         <div className="flex items-center justify-between gap-3 px-5 py-4">
           <div>
             <h2 className="text-lg font-semibold text-[#202030]">Recent waitlist</h2>
@@ -169,7 +106,7 @@ export default async function AdminDashboardPage() {
           </Link>
         </div>
 
-        <div className="border-t">
+        <div className="border-t bg-white">
           <div className="grid grid-cols-12 bg-black/[0.02] px-5 py-3 text-xs font-semibold uppercase tracking-wide text-[#202030]/60">
             <div className="col-span-4">Name</div>
             <div className="col-span-4">Email</div>
@@ -182,20 +119,13 @@ export default async function AdminDashboardPage() {
               const created = formatShortDate(r.createdAt);
 
               return (
-                <div
-                  key={r.id}
-                  className="grid grid-cols-12 items-center px-5 py-3 text-sm"
-                >
-                  <div className="col-span-4 font-medium text-[#202030]">
-                    {r.fullName}
-                  </div>
+                <div key={r.id} className="grid grid-cols-12 items-center px-5 py-3 text-sm">
+                  <div className="col-span-4 font-medium text-[#202030]">{r.fullName}</div>
                   <div className="col-span-4 text-[#202030]/80">{r.email}</div>
                   <div className="col-span-2">
                     <StatusPill status={r.status} />
                   </div>
-                  <div className="col-span-2 text-xs text-[#202030]/60">
-                    {created}
-                  </div>
+                  <div className="col-span-2 text-xs text-[#202030]/60">{created}</div>
                 </div>
               );
             })}
@@ -213,7 +143,9 @@ export default async function AdminDashboardPage() {
 }
 
 function formatShortDate(d: unknown) {
+  if (!d) return "";
   const date = d instanceof Date ? d : new Date(d as any);
+  if (Number.isNaN(date.getTime())) return "";
   return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" }).format(date);
 }
 
@@ -262,7 +194,7 @@ function Kpi({
       : "bg-[#E00040]";
 
   return (
-    <div className={`rounded-3xl border bg-white p-5 shadow-sm ring-1 ${ring}`}>
+    <div className={`rounded-3xl border bg-black/[0.02] p-5 shadow-sm ring-1 ${ring}`}>
       <div className="flex items-center justify-between">
         <p className="text-sm font-semibold text-[#202030]">{label}</p>
         <span className={`h-2 w-2 rounded-full ${dot}`} />
@@ -290,7 +222,7 @@ function ActionCard({
   return (
     <Link
       href={href}
-      className="group relative overflow-hidden rounded-3xl border bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
+      className="group relative overflow-hidden rounded-3xl border bg-black/[0.02] p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
     >
       <div
         className="pointer-events-none absolute -right-20 -top-20 h-48 w-48 rounded-full opacity-10"
