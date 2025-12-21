@@ -1,5 +1,10 @@
 import Link from "next/link";
-import { clearRecipientError, deleteRecipient, requeueRecipient } from "../actions";
+import StatusPill from "./status-pill";
+import {
+  clearRecipientError,
+  deleteRecipient,
+  requeueRecipient,
+} from "../actions";
 
 type Row = {
   id: string;
@@ -25,9 +30,19 @@ export default function LogsTable({ rows }: { rows: Row[] }) {
 
       <div className="divide-y">
         {rows.map((r) => (
-          <div key={r.id} className="grid grid-cols-12 items-center px-5 py-3 text-sm">
+          <div
+            key={r.id}
+            className="grid grid-cols-12 items-center px-5 py-3 text-sm"
+          >
             <div className="col-span-4 font-medium text-[#202030]">
-              {r.email}
+              <Link
+                href={`/admin/email/logs/${r.id}`}
+                className="hover:underline"
+                title="View recipient log"
+              >
+                {r.email}
+              </Link>
+
               {r.error ? (
                 <div className="mt-1 text-xs text-[#991b1b]" title={r.error}>
                   {r.error.slice(0, 110)}
@@ -36,9 +51,7 @@ export default function LogsTable({ rows }: { rows: Row[] }) {
             </div>
 
             <div className="col-span-2">
-              <span className="rounded-full border px-2 py-1 text-xs font-semibold">
-                {r.status}
-              </span>
+              <StatusPill status={r.status} />
             </div>
 
             <div className="col-span-3 text-[#202030]/80">
@@ -63,6 +76,15 @@ export default function LogsTable({ rows }: { rows: Row[] }) {
             </div>
 
             <div className="col-span-1 flex justify-end gap-2">
+              {/* ✅ Preview */}
+              <Link
+                href={`/admin/email/logs/${r.id}`}
+                className="rounded-xl border px-2 py-1 text-xs font-semibold hover:bg-black/5"
+                title="Preview rendered email"
+              >
+                View
+              </Link>
+
               {r.status === "failed" ? (
                 <form action={requeueRecipient}>
                   <input type="hidden" name="id" value={r.id} />
