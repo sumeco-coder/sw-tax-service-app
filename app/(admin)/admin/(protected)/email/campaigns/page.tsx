@@ -18,6 +18,10 @@ const DEFAULT_VARS = {
   website: "https://www.swtaxservice.com",
   signature_name: "Sumeco Wynn",
   waitlist_link: "https://www.swtaxservice.com/waitlist",
+  logo_url: "https://www.swtaxservice.com/swtax-favicon-pack/android-chrome-512x512.png",
+  logo_alt: "SW Tax Service",
+  logo_link: "https://www.swtaxservice.com",
+  logo_width: "72px",
 };
 
 export default async function CampaignsPage() {
@@ -40,8 +44,8 @@ export default async function CampaignsPage() {
     name: t.name,
     category: t.category,
     subject: t.subject,
-    html: t.html,
-    text: t.text,
+    html: t.mjml ?? t.html ?? "",
+    text: t.text ?? "",
   }));
 
   return (

@@ -1,3 +1,4 @@
+// app/emai/renderTemplate
 import "server-only";
 
 export type EmailTemplateVars = Record<string, string | number | null | undefined>;

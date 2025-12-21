@@ -1,7 +1,6 @@
 // types/email.ts
 import "server-only";
 
-// ✅ 1) Define the ONLY placeholders your system supports
 export const EMAIL_PLACEHOLDERS = [
   "company_name",
   "waitlist_link",
@@ -12,23 +11,30 @@ export const EMAIL_PLACEHOLDERS = [
   "unsubscribe_link",
   "footer_html",
   "footer_text",
+  "logo_url",
+  "logo_alt",
+  "logo_link",
+  "logo_width",
 ] as const;
 
 export type EmailPlaceholder = (typeof EMAIL_PLACEHOLDERS)[number];
 
-// ✅ 2) Vars must match renderTemplate() support
-export type TemplateVars = Partial<Record<EmailPlaceholder, string | number | null | undefined>>;
+export type TemplateVars = Partial<
+  Record<EmailPlaceholder, string | number | null | undefined>
+>;
 
-// ✅ 3) Template type
+// ✅ Allow either MJML or HTML (MJML gets compiled to HTML)
 export type EmailTemplate = {
-  id: string;        // "waitlist/01-prelaunch"
-  name: string;      // "Waitlist Pre-Launch"
+  id: string;
+  name: string;
   subject: string;
-  html: string;
+
+  // One of these should be present:
+  html?: string;
+  mjml?: string;
+
   text: string;
 
-  // only allowed placeholders
   placeholders: EmailPlaceholder[];
-
-  category?: string; // "waitlist"
+  category?: string;
 };

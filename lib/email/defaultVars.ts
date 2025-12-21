@@ -8,7 +8,10 @@ export const DEFAULT_EMAIL_VARS = {
   first_name: "there",
   signature_name: "SW Tax Service Team",
 
-  // ✅ template tokens you’ll actually use
+  logo_url: "https://www.swtaxservice.com/swtax-favicon-pack/android-chrome-512x512.png",
+  logo_alt: "SW Tax Service",
+  logo_link: "https://www.swtaxservice.com",
+  logo_width: "72px",
   unsubscribe_link: "", // page unsubscribe (filled per recipient)
   footer_html: "",      // filled at send-time
   footer_text: "",      // filled at send-time

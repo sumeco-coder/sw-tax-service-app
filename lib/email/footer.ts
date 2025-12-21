@@ -1,3 +1,4 @@
+// app/lib/email/footer.ts (or lib/email/footer.ts)
 import "server-only";
 
 export type FooterMode = "marketing" | "transactional" | "tax_advice";
@@ -13,7 +14,7 @@ export type FooterContext = {
 };
 
 function escapeHtml(s: string) {
-  return s
+  return String(s ?? "")
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
@@ -21,6 +22,7 @@ function escapeHtml(s: string) {
     .replaceAll("'", "&#039;");
 }
 
+/** ✅ Plain HTML footer (for non-MJML emails) */
 export function buildEmailFooterHTML(mode: FooterMode, ctx: FooterContext) {
   const company = escapeHtml(ctx.companyName);
   const support = escapeHtml(ctx.supportEmail);
@@ -38,10 +40,7 @@ export function buildEmailFooterHTML(mode: FooterMode, ctx: FooterContext) {
     </p>
   `.trim();
 
-  if (mode === "marketing") {
-    // Keep it short for deliverability
-    return base;
-  }
+  if (mode === "marketing") return base;
 
   const confidentiality = `
     <p style="font-size:12px;color:#6b7280;line-height:18px;margin:14px 0 0;">
@@ -51,11 +50,8 @@ export function buildEmailFooterHTML(mode: FooterMode, ctx: FooterContext) {
     </p>
   `.trim();
 
-  if (mode === "transactional") {
-    return `${base}\n${confidentiality}`;
-  }
+  if (mode === "transactional") return `${base}\n${confidentiality}`;
 
-  // tax_advice: confidentiality + Circular 230 language (shorter version)
   const circular230 = `
     <p style="font-size:12px;color:#6b7280;line-height:18px;margin:14px 0 0;">
       U.S. Treasury Department Circular 230 Disclosure: Unless expressly stated otherwise,
@@ -68,9 +64,9 @@ export function buildEmailFooterHTML(mode: FooterMode, ctx: FooterContext) {
   return `${base}\n${confidentiality}\n${circular230}`;
 }
 
+/** ✅ Plain text footer */
 export function buildEmailFooterText(mode: FooterMode, ctx: FooterContext) {
   const lines: string[] = [];
-
   lines.push("---");
   lines.push(`${ctx.companyName}${ctx.addressLine ? ` • ${ctx.addressLine}` : ""}`);
   lines.push(`Support: ${ctx.supportEmail}`);
@@ -96,4 +92,46 @@ export function buildEmailFooterText(mode: FooterMode, ctx: FooterContext) {
   }
 
   return lines.join("\n");
+}
+
+/** ✅ MJML footer (best for MJML templates) */
+export function buildEmailFooterMJML(mode: FooterMode, ctx: FooterContext) {
+  const company = escapeHtml(ctx.companyName);
+  const support = escapeHtml(ctx.supportEmail);
+  const website = escapeHtml(ctx.website);
+  const address = ctx.addressLine ? escapeHtml(ctx.addressLine) : "";
+  const unsub = ctx.unsubUrl ? escapeHtml(ctx.unsubUrl) : "";
+
+  const base = `
+<mj-divider border-width="1px" border-style="solid" border-color="#e5e7eb" padding="18px 0 12px" />
+<mj-text font-size="12px" line-height="18px" color="#6b7280" padding="0">
+  <strong style="color:#111827">${company}</strong>${address ? ` • ${address}` : ""}<br/>
+  Support: <a style="color:#6b7280" href="mailto:${support}">${support}</a><br/>
+  Website: <a style="color:#6b7280" href="${website}">${website}</a>
+  ${unsub ? `<br/><a style="color:#6b7280" href="${unsub}">Unsubscribe</a>` : ""}
+</mj-text>
+  `.trim();
+
+  if (mode === "marketing") return base;
+
+  const confidentiality = `
+<mj-text font-size="12px" line-height="18px" color="#6b7280" padding="10px 0 0">
+  This email may include information that is confidential and/or subject to the accountant/client privilege.
+  If you are not the intended recipient, please notify us by reply email and then delete this message and destroy any copies.
+  This transmission is not intended to and does not waive any privileges.
+</mj-text>
+  `.trim();
+
+  if (mode === "transactional") return `${base}\n${confidentiality}`;
+
+  const circular230 = `
+<mj-text font-size="12px" line-height="18px" color="#6b7280" padding="10px 0 0">
+  U.S. Treasury Department Circular 230 Disclosure: Unless expressly stated otherwise,
+  any written advice in this communication is not intended or written to be used,
+  and cannot be used, for the purpose of avoiding penalties under the Internal Revenue Code
+  or applicable state or local law, or for promoting, marketing, or recommending to another party any transaction or matter addressed herein.
+</mj-text>
+  `.trim();
+
+  return `${base}\n${confidentiality}\n${circular230}`;
 }

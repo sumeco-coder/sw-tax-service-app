@@ -9,26 +9,56 @@ import {
   emailRecipients,
   emailUnsubscribes,
   waitlist,
-} from "@/drizzle/schema";
-import { and, eq, inArray } from "drizzle-orm";
 
-import { sendEmail } from "@/lib/email/sendEmail"; // ✅ keep your wrapper
-import {
-  renderTemplate,
-  hasUnrenderedTokens,
-} from "@/lib/email/renderTemplate";
+  // ✅ use subscribers table for "Email List"
+  emailSubscribers,
+
+  // ✅ appointments + requests
+  appointments,
+  appointmentRequests,
+
+  // ✅ join for appointments -> users
+  users,
+} from "@/drizzle/schema";
+import { and, eq, inArray, sql } from "drizzle-orm";
+
+import { sendEmail } from "@/lib/email/sendEmail";
 import { buildEmailFooterHTML, buildEmailFooterText } from "@/lib/email/footer";
 import { z } from "zod";
 
-type Segment = "waitlist_pending" | "waitlist_approved" | "waitlist_all";
+import {
+  renderHandlebars,
+  isMjml,
+  compileMjmlToHtml,
+  safeHtml,
+} from "@/lib/email/templateEngine";
+import { EMAIL_PARTIALS } from "@/lib/email/templatePartials";
+import { htmlToText } from "html-to-text";
 
-// ✅ helper to safely read strings from FormData
+// =========================
+// Types
+// =========================
+type Segment =
+  | "waitlist_pending"
+  | "waitlist_approved"
+  | "waitlist_all"
+  | "email_list"
+  | "appointments"
+  | "manual";
+
+// ✅ standardized spelling: cancelled (double L)
+type ApptSegment = "upcoming" | "today" | "past" | "cancelled" | "all";
+
+type Recipient = { email: string; fullName?: string | null };
+
+// =========================
+// FormData helpers
+// =========================
 function fdString(formData: FormData, key: string) {
   const v = formData.get(key);
   return typeof v === "string" ? v : "";
 }
 
-// ✅ helper to safely read optional strings (null/missing -> undefined)
 function fdOptionalString(formData: FormData, key: string) {
   const v = formData.get(key);
   if (typeof v !== "string") return undefined;
@@ -36,8 +66,10 @@ function fdOptionalString(formData: FormData, key: string) {
   return s.length ? s : undefined;
 }
 
+// =========================
+// Validation
+// =========================
 const SendCampaignSchema = z.object({
-  // ✅ name is truly optional now ("" becomes undefined)
   name: z
     .string()
     .optional()
@@ -47,18 +79,38 @@ const SendCampaignSchema = z.object({
     }),
 
   segment: z
-    .enum(["waitlist_pending", "waitlist_approved", "waitlist_all"])
+    .enum([
+      "waitlist_pending",
+      "waitlist_approved",
+      "waitlist_all",
+      "email_list",
+      "appointments",
+      "manual",
+    ])
     .default("waitlist_pending"),
+
+  // ✅ list tag filter (comma separated)
+  listTags: z.string().optional().transform((v) => (v ?? "").trim()),
+
+  // appointments
+  apptSegment: z.enum(["upcoming", "today", "past", "cancelled", "all"]).optional(),
+
+  // manual
+  manualEmails: z.string().optional(),
 
   limit: z.coerce.number().int().min(1).max(5000).default(200),
 
   subject: z.string().trim().min(2, "Subject is required."),
   htmlBody: z.string().trim().min(5, "HTML body is required."),
-  textBody: z.string().trim().min(5, "Text body is required."),
+
+  // ✅ allow blank textBody; generate from HTML
+  textBody: z.string().optional().transform((v) => (v ?? "").trim()),
 });
 
+// =========================
+// URL helpers
+// =========================
 function getAppUrl() {
-  // ✅ set APP_URL=https://www.swtaxservice.com in prod
   return (process.env.APP_URL ?? "http://localhost:3000").replace(/\/$/, "");
 }
 
@@ -74,45 +126,231 @@ function buildUnsubUrls(token: string) {
   };
 }
 
-async function loadSegmentEmails(segment: Segment, limit: number) {
+// =========================
+// Recipient helpers
+// =========================
+function normalizeEmail(email: string) {
+  return (email ?? "").toLowerCase().trim();
+}
+
+function firstNameFrom(fullName?: string | null) {
+  const first = (fullName ?? "").trim().split(/\s+/)[0];
+  return first || "there";
+}
+
+function dedupeRecipients(list: Recipient[]) {
+  const map = new Map<string, Recipient>();
+  for (const r of list) {
+    const e = normalizeEmail(r.email);
+    if (!e) continue;
+    if (!map.has(e)) map.set(e, { email: e, fullName: r.fullName ?? null });
+  }
+  return [...map.values()];
+}
+
+function parseManualRecipients(input?: string, limit = 200): Recipient[] {
+  const s = (input ?? "").trim();
+  if (!s) return [];
+
+  const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+  const emails = s
+    .split(/[\n,;]+/g)
+    .map((x) => normalizeEmail(x))
+    .filter((e) => e && emailRe.test(e));
+
+  const unique = [...new Set(emails)];
+  return unique.slice(0, limit).map((email) => ({ email }));
+}
+
+function parseTags(input?: string): string[] {
+  const raw = (input ?? "").trim();
+  if (!raw) return [];
+  const tags = raw
+    .split(",")
+    .map((t) => t.trim().toLowerCase())
+    .filter(Boolean);
+  return [...new Set(tags)];
+}
+
+// =========================
+// Loaders
+// =========================
+async function loadWaitlistRecipients(
+  segment: "waitlist_pending" | "waitlist_approved" | "waitlist_all",
+  limit: number
+): Promise<Recipient[]> {
   if (segment === "waitlist_all") {
     const rows = await db
-      .select({ email: waitlist.email })
+      .select({ email: waitlist.email, fullName: waitlist.fullName })
       .from(waitlist)
       .limit(limit);
-    return rows.map((r) => r.email.toLowerCase().trim());
+
+    return rows
+      .map((r) => ({ email: normalizeEmail(r.email), fullName: r.fullName }))
+      .filter((r) => r.email);
   }
 
   if (segment === "waitlist_pending") {
     const rows = await db
-      .select({ email: waitlist.email })
+      .select({ email: waitlist.email, fullName: waitlist.fullName })
       .from(waitlist)
       .where(eq(waitlist.status, "pending"))
       .limit(limit);
 
-    return rows.map((r) => r.email.toLowerCase().trim());
+    return rows
+      .map((r) => ({ email: normalizeEmail(r.email), fullName: r.fullName }))
+      .filter((r) => r.email);
   }
 
-  // approved
   const rows = await db
-    .select({ email: waitlist.email })
+    .select({ email: waitlist.email, fullName: waitlist.fullName })
     .from(waitlist)
     .where(eq(waitlist.status, "approved"))
     .limit(limit);
 
-  return rows.map((r) => r.email.toLowerCase().trim());
+  return rows
+    .map((r) => ({ email: normalizeEmail(r.email), fullName: r.fullName }))
+    .filter((r) => r.email);
 }
 
 /**
- * Quick send: creates + sends a campaign immediately to a WAITLIST segment
- * (used by /admin/email “Send campaign” form)
+ * ✅ Email List = email_subscribers (status=subscribed)
+ * Tag match:
+ * - if listTags is empty => ALL subscribed
+ * - if listTags provided => match ANY tag (OR)
+ *
+ * Matching logic uses: (',' || lower(tags) || ',') LIKE '%,tag,%'
  */
-export async function createAndSendCampaignAction(
-  formData: FormData
-): Promise<void> {
+async function loadEmailListRecipientsByTags(listTags: string | undefined, limit: number): Promise<Recipient[]> {
+  const tags = parseTags(listTags);
+
+  const baseWhere = eq(emailSubscribers.status, "subscribed");
+
+  let whereClause: any = baseWhere;
+
+  if (tags.length) {
+    const tagOr = tags
+      .map((t) => sql`(',' || lower(coalesce(${emailSubscribers.tags}, '')) || ',') like ${`%,${t},%`}`)
+      .reduce((acc, cur) => (acc ? sql`${acc} OR ${cur}` : cur), null as any);
+
+    whereClause = and(baseWhere, tagOr)!;
+  }
+
+  const rows = await db
+    .select({
+      email: emailSubscribers.email,
+      fullName: emailSubscribers.fullName,
+    })
+    .from(emailSubscribers)
+    .where(whereClause)
+    .limit(limit);
+
+  return rows
+    .map((r) => ({ email: normalizeEmail(r.email), fullName: r.fullName }))
+    .filter((r) => r.email);
+}
+
+async function loadAppointmentRecipients(apptSegment: ApptSegment, limit: number): Promise<Recipient[]> {
+  const now = new Date();
+
+  const startOfToday = new Date(now);
+  startOfToday.setHours(0, 0, 0, 0);
+
+  const endOfToday = new Date(startOfToday);
+  endOfToday.setDate(endOfToday.getDate() + 1);
+
+  const CANCELLED_STATUS = "cancelled";
+
+  // -------- appointment_requests (leads) --------
+  let reqWhere = sql`true`;
+
+  if (apptSegment === "cancelled") {
+    reqWhere = sql`${appointmentRequests.status} = ${CANCELLED_STATUS}`;
+  } else if (apptSegment === "today") {
+    reqWhere = and(
+      sql`${appointmentRequests.scheduledAt} >= ${startOfToday}`,
+      sql`${appointmentRequests.scheduledAt} < ${endOfToday}`,
+      sql`${appointmentRequests.status} != ${CANCELLED_STATUS}`
+    )!;
+  } else if (apptSegment === "upcoming") {
+    reqWhere = and(
+      sql`${appointmentRequests.scheduledAt} >= ${now}`,
+      sql`${appointmentRequests.status} != ${CANCELLED_STATUS}`
+    )!;
+  } else if (apptSegment === "past") {
+    reqWhere = and(
+      sql`${appointmentRequests.scheduledAt} < ${now}`,
+      sql`${appointmentRequests.status} != ${CANCELLED_STATUS}`
+    )!;
+  } else {
+    reqWhere = sql`true`;
+  }
+
+  const reqRows = await db
+    .select({
+      email: appointmentRequests.email,
+      fullName: appointmentRequests.name,
+    })
+    .from(appointmentRequests)
+    .where(reqWhere)
+    .limit(limit);
+
+  // -------- appointments (booked users) --------
+  let apptWhere = sql`true`;
+
+  if (apptSegment === "cancelled") {
+    apptWhere = sql`${appointments.status} = ${CANCELLED_STATUS}`;
+  } else if (apptSegment === "today") {
+    apptWhere = and(
+      sql`${appointments.scheduledAt} >= ${startOfToday}`,
+      sql`${appointments.scheduledAt} < ${endOfToday}`,
+      sql`${appointments.status} != ${CANCELLED_STATUS}`
+    )!;
+  } else if (apptSegment === "upcoming") {
+    apptWhere = and(
+      sql`${appointments.scheduledAt} >= ${now}`,
+      sql`${appointments.status} != ${CANCELLED_STATUS}`
+    )!;
+  } else if (apptSegment === "past") {
+    apptWhere = and(
+      sql`${appointments.scheduledAt} < ${now}`,
+      sql`${appointments.status} != ${CANCELLED_STATUS}`
+    )!;
+  } else {
+    apptWhere = sql`true`;
+  }
+
+  const apptRows = await db
+    .select({
+      email: users.email,
+      fullName: users.name,
+    })
+    .from(appointments)
+    .innerJoin(users, eq(users.id, appointments.userId))
+    .where(apptWhere)
+    .limit(limit);
+
+  const combined: Recipient[] = [
+    ...reqRows.map((r) => ({ email: normalizeEmail(r.email), fullName: r.fullName })),
+    ...apptRows.map((r) => ({ email: normalizeEmail(r.email), fullName: r.fullName })),
+  ].filter((r) => r.email);
+
+  return dedupeRecipients(combined).slice(0, limit);
+}
+
+// =========================
+// Action
+// =========================
+export async function createAndSendCampaignAction(formData: FormData): Promise<void> {
   const parsed = SendCampaignSchema.safeParse({
     name: fdOptionalString(formData, "name"),
     segment: fdString(formData, "segment"),
+
+    listTags: fdOptionalString(formData, "listTags"),
+    apptSegment: fdOptionalString(formData, "apptSegment") as ApptSegment | undefined,
+    manualEmails: fdOptionalString(formData, "manualEmails"),
+
     limit: formData.get("limit"),
     subject: formData.get("subject"),
     htmlBody: formData.get("htmlBody"),
@@ -120,42 +358,72 @@ export async function createAndSendCampaignAction(
   });
 
   if (!parsed.success) {
-    // ✅ better error so you see WHICH field failed
     const details = parsed.error.issues
       .map((i) => `${i.path.join(".") || "field"}: ${i.message}`)
       .join(" | ");
     throw new Error(details || "Invalid input.");
   }
 
-
   const {
     name,
     segment,
+    listTags,
+    apptSegment,
+    manualEmails,
     limit,
     subject: subjectRaw,
     htmlBody: htmlBodyRaw,
     textBody: textBodyRaw,
   } = parsed.data;
 
-  // 1) Create campaign
+  // ✅ segment validation
+  if (segment === "appointments" && !apptSegment) {
+    throw new Error("apptSegment: Please select an appointments segment.");
+  }
+  if (segment === "manual") {
+    const manualParsed = parseManualRecipients(manualEmails, limit);
+    if (!manualParsed.length) throw new Error("manualEmails: Paste at least 1 valid email.");
+  }
+
   const [campaign] = await db
     .insert(emailCampaigns)
     .values({
       name: name?.trim() || "Campaign",
       segment,
+
+      // listId not used anymore (keep null)
+      listId: null,
+
+      // store appt segment if used
+      apptSegment: segment === "appointments" ? (apptSegment as any) : null,
+
+      // store tags for audit (optional)
+      manualRecipientsRaw: segment === "email_list" ? (listTags ?? "").trim() : segment === "manual" ? (manualEmails ?? "").trim() : null,
+
       status: "sending",
       subject: subjectRaw,
       htmlBody: htmlBodyRaw,
-      textBody: textBodyRaw,
+      textBody: (textBodyRaw ?? "").trim().length ? textBodyRaw : null,
       updatedAt: new Date(),
     })
     .returning({ id: emailCampaigns.id });
 
-  // 2) Load emails
-  const emailsRaw = await loadSegmentEmails(segment, limit);
-  const emails = [...new Set(emailsRaw)].filter(Boolean);
+  // 2) recipients
+  let recipients: Recipient[] = [];
 
-  if (!emails.length) {
+  if (segment === "manual") {
+    recipients = parseManualRecipients(manualEmails, limit);
+  } else if (segment === "email_list") {
+    recipients = await loadEmailListRecipientsByTags(listTags, limit);
+  } else if (segment === "appointments") {
+    recipients = await loadAppointmentRecipients(apptSegment as ApptSegment, limit);
+  } else {
+    recipients = await loadWaitlistRecipients(segment, limit);
+  }
+
+  recipients = dedupeRecipients(recipients);
+
+  if (!recipients.length) {
     await db
       .update(emailCampaigns)
       .set({ status: "sent", sentAt: new Date(), updatedAt: new Date() })
@@ -165,26 +433,34 @@ export async function createAndSendCampaignAction(
     return;
   }
 
-  // 3) Global unsubscribes
+  const emails = recipients.map((r) => r.email);
+
+  // 3) unsubscribes
   const unsubRows = await db
     .select({ email: emailUnsubscribes.email })
     .from(emailUnsubscribes)
     .where(inArray(emailUnsubscribes.email, emails));
 
-  const unsubSet = new Set(unsubRows.map((r) => r.email.toLowerCase().trim()));
+  const unsubSet = new Set(unsubRows.map((r) => normalizeEmail(r.email)));
 
-  // 4) Template footer behavior (check RAW template)
-  const templateHasFooterHtml = htmlBodyRaw.includes("{{footer_html}}");
-  const templateHasFooterText = textBodyRaw.includes("{{footer_text}}");
+  // 4) footer placeholders detection (Handlebars + partial footer support)
+  const templateHasFooterHtml =
+    htmlBodyRaw.includes("{{footer_html}}") ||
+    htmlBodyRaw.includes("{{{footer_html}}}") ||
+    htmlBodyRaw.includes("{{> footer}}");
+
+  const templateHasFooterText =
+    (textBodyRaw ?? "").includes("{{footer_text}}") ||
+    (textBodyRaw ?? "").includes("{{{footer_text}}}") ||
+    (textBodyRaw ?? "").includes("{{> footer}}");
 
   let sentCount = 0;
   let failedCount = 0;
 
-  for (const email of emails) {
-    const normalized = email.toLowerCase().trim();
+  for (const r of recipients) {
+    const normalized = normalizeEmail(r.email);
     if (!normalized) continue;
 
-    // If globally unsubscribed, log and skip
     if (unsubSet.has(normalized)) {
       await db
         .insert(emailRecipients)
@@ -197,11 +473,9 @@ export async function createAndSendCampaignAction(
           updatedAt: new Date(),
         })
         .onConflictDoNothing();
-
       continue;
     }
 
-    // ✅ insert recipient row if missing
     const insertedToken = makeToken();
 
     await db
@@ -215,7 +489,6 @@ export async function createAndSendCampaignAction(
       })
       .onConflictDoNothing();
 
-    // ✅ always load the row that exists (new or previous)
     const [rec] = await db
       .select({
         id: emailRecipients.id,
@@ -223,15 +496,9 @@ export async function createAndSendCampaignAction(
         unsubToken: emailRecipients.unsubToken,
       })
       .from(emailRecipients)
-      .where(
-        and(
-          eq(emailRecipients.campaignId, campaign.id),
-          eq(emailRecipients.email, normalized)
-        )
-      )
+      .where(and(eq(emailRecipients.campaignId, campaign.id), eq(emailRecipients.email, normalized)))
       .limit(1);
 
-    // If it already exists and isn't queued, don't re-send
     if (!rec?.id || rec.status !== "queued") continue;
 
     const { pageUrl, oneClickUrl } = buildUnsubUrls(rec.unsubToken);
@@ -252,55 +519,73 @@ export async function createAndSendCampaignAction(
       unsubUrl: pageUrl,
     });
 
-    const vars = {
+    const vars: Record<string, any> = {
       company_name: "SW Tax Service",
       waitlist_link: "https://www.swtaxservice.com/waitlist",
       support_email: "support@swtaxservice.com",
       website: "https://www.swtaxservice.com",
-      first_name: "there",
+
+      first_name: firstNameFrom(r.fullName),
       signature_name: "SW Tax Service Team",
 
       unsubscribe_link: pageUrl,
       one_click_unsub_url: oneClickUrl,
 
-      footer_html: footerHtml,
+      footer_html: safeHtml ? safeHtml(footerHtml) : footerHtml,
       footer_text: footerText,
     };
 
-    const subject = renderTemplate(subjectRaw, vars);
+    let renderedSubject = "";
+    let renderedHtml = "";
+    let renderedText = "";
 
-    let htmlBody = renderTemplate(htmlBodyRaw, vars);
-    let textBody = renderTemplate(textBodyRaw, vars);
+    // ===== render (Handlebars -> optional MJML -> text) =====
+    try {
+      renderedSubject = renderHandlebars(subjectRaw, vars, EMAIL_PARTIALS);
 
-    // ✅ If template didn't include {{footer_*}}, append automatically
-    if (!templateHasFooterHtml) htmlBody = `${htmlBody}\n\n${footerHtml}`;
-    if (!templateHasFooterText) textBody = `${textBody}\n\n${footerText}`;
+      const renderedSource = renderHandlebars(htmlBodyRaw, vars, EMAIL_PARTIALS);
+      renderedHtml = isMjml(renderedSource)
+        ? await compileMjmlToHtml(renderedSource)
+        : renderedSource;
 
-    // ✅ never send raw tokens
-    if (
-      hasUnrenderedTokens(htmlBody) ||
-      hasUnrenderedTokens(textBody) ||
-      hasUnrenderedTokens(subject)
-    ) {
+      if ((textBodyRaw ?? "").trim().length) {
+        renderedText = renderHandlebars(textBodyRaw ?? "", vars, EMAIL_PARTIALS);
+      } else {
+        renderedText = htmlToText(renderedHtml, { wordwrap: 90 });
+      }
+
+      if (!templateHasFooterHtml) renderedHtml = `${renderedHtml}\n\n${footerHtml}`;
+      if (!templateHasFooterText) renderedText = `${renderedText}\n\n${footerText}`;
+    } catch (e: any) {
       failedCount++;
       await db
         .update(emailRecipients)
         .set({
           status: "failed",
-          error:
-            "Template contains unknown {{tokens}}. Fix template variables.",
+          error: String(e?.message ?? e),
           updatedAt: new Date(),
         })
         .where(eq(emailRecipients.id, rec.id));
       continue;
     }
 
+    // ✅ save preview fields (so /admin/email/logs/[recipientId] can render them)
+    await db
+      .update(emailRecipients)
+      .set({
+        renderedSubject,
+        renderedHtml,
+        renderedText,
+        updatedAt: new Date(),
+      })
+      .where(eq(emailRecipients.id, rec.id));
+
     try {
       await sendEmail({
         to: normalized,
-        subject,
-        htmlBody,
-        textBody,
+        subject: renderedSubject,
+        htmlBody: renderedHtml,
+        textBody: renderedText,
         replyTo: "support@swtaxservice.com",
         headers: {
           "List-Unsubscribe": `<${oneClickUrl}>`,
@@ -333,7 +618,6 @@ export async function createAndSendCampaignAction(
     }
   }
 
-  // 5) finalize campaign status
   const finalStatus = sentCount === 0 && failedCount > 0 ? "failed" : "sent";
 
   await db

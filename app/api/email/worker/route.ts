@@ -8,8 +8,21 @@ import {
 } from "@/drizzle/schema";
 import { and, eq, inArray } from "drizzle-orm";
 import { sendEmail } from "@/lib/email/sendEmail";
-import { renderTemplate, hasUnrenderedTokens } from "@/lib/email/renderTemplate";
-import { buildEmailFooterHTML, buildEmailFooterText } from "@/lib/email/footer";
+import {
+  renderTemplate,
+  hasUnrenderedTokens,
+} from "@/lib/email/renderTemplate";
+import {
+  renderHandlebars,
+  isMjml,
+  compileMjmlToHtml,
+} from "@/lib/email/templateEngine";
+
+import {
+  buildEmailFooterHTML,
+  buildEmailFooterText,
+  buildEmailFooterMJML,
+} from "@/lib/email/footer";
 
 function getAppUrl() {
   return (process.env.APP_URL ?? "http://localhost:3000").replace(/\/$/, "");
@@ -43,8 +56,9 @@ export async function POST(req: Request) {
   try {
     assertWorkerAuth(req);
 
-    const body = await req.json().catch(() => ({} as any));
-    const campaignId = typeof body?.campaignId === "string" ? body.campaignId : undefined;
+    const body = await req.json().catch(() => ({}) as any);
+    const campaignId =
+      typeof body?.campaignId === "string" ? body.campaignId : undefined;
     const limit = Number(body?.limit ?? 50);
 
     // 1) find campaigns that are "sending" (or a single campaign)
@@ -91,7 +105,12 @@ export async function POST(req: Request) {
           unsubToken: emailRecipients.unsubToken,
         })
         .from(emailRecipients)
-        .where(and(eq(emailRecipients.campaignId, c.id), eq(emailRecipients.status, "queued")))
+        .where(
+          and(
+            eq(emailRecipients.campaignId, c.id),
+            eq(emailRecipients.status, "queued")
+          )
+        )
         .limit(limit);
 
       if (!recipients.length) {
@@ -103,7 +122,9 @@ export async function POST(req: Request) {
         continue;
       }
 
-      const emails = recipients.map((r) => r.email.toLowerCase().trim()).filter(Boolean);
+      const emails = recipients
+        .map((r) => r.email.toLowerCase().trim())
+        .filter(Boolean);
 
       // 3) global unsub blocklist
       const unsubRows = await db
@@ -111,11 +132,15 @@ export async function POST(req: Request) {
         .from(emailUnsubscribes)
         .where(inArray(emailUnsubscribes.email, emails));
 
-      const unsubSet = new Set(unsubRows.map((r) => r.email.toLowerCase().trim()));
+      const unsubSet = new Set(
+        unsubRows.map((r) => r.email.toLowerCase().trim())
+      );
 
       // 4) send each queued recipient
       const templateHasFooterHtml = c.htmlBody.includes("{{footer_html}}");
-      const templateHasFooterText = (c.textBody ?? "").includes("{{footer_text}}");
+      const templateHasFooterText = (c.textBody ?? "").includes(
+        "{{footer_text}}"
+      );
 
       for (const r of recipients) {
         const to = r.email.toLowerCase().trim();
@@ -154,6 +179,14 @@ export async function POST(req: Request) {
           unsubUrl: pageUrl,
         });
 
+        const footerMjml = buildEmailFooterMJML("marketing", {
+          companyName: "SW Tax Service",
+          addressLine: "Las Vegas, NV",
+          supportEmail: "support@swtaxservice.com",
+          website: "https://www.swtaxservice.com",
+          unsubUrl: pageUrl,
+        });
+
         const vars = {
           company_name: "SW Tax Service",
           waitlist_link: "https://www.swtaxservice.com/waitlist",
@@ -165,16 +198,45 @@ export async function POST(req: Request) {
           one_click_unsub_url: oneClickUrl,
           footer_html: footerHtml,
           footer_text: footerText,
+          logo_url:
+            "https://www.swtaxservice.com/swtax-favicon-pack/android-chrome-512x512.png",
+          logo_alt: "SW Tax Service",
+          logo_link: "https://www.swtaxservice.com",
+          logo_width: "72px",
         };
 
         const subject = renderTemplate(c.subject, vars);
-        let htmlBody = renderTemplate(c.htmlBody, vars);
-        let textBody = renderTemplate(c.textBody ?? "", vars);
 
-        if (!templateHasFooterHtml) htmlBody = `${htmlBody}\n\n${footerHtml}`;
+        // 1) First pass render (to detect MJML)
+        const firstPass = renderHandlebars(c.htmlBody, vars);
+        const isBodyMjml = isMjml(firstPass);
+
+        // 2) Choose the correct footer format
+        const footerForTemplate = isBodyMjml ? footerMjml : footerHtml;
+
+        // 3) Rebuild vars using the correct footer_html, then final render
+        const vars2 = { ...vars, footer_html: footerForTemplate };
+
+        const rendered = renderHandlebars(c.htmlBody, vars2);
+
+        // 4) Compile if MJML
+        let htmlBody = isMjml(rendered)
+          ? compileMjmlToHtml(rendered)
+          : rendered;
+
+        // Text render
+        let textBody = renderTemplate(c.textBody ?? "", vars2);
+
+        // Append only when the stored campaign body is NOT MJML
+        if (!isBodyMjml && !templateHasFooterHtml)
+          htmlBody = `${htmlBody}\n\n${footerHtml}`;
         if (!templateHasFooterText) textBody = `${textBody}\n\n${footerText}`;
 
-        if (hasUnrenderedTokens(subject) || hasUnrenderedTokens(htmlBody) || hasUnrenderedTokens(textBody)) {
+        if (
+          hasUnrenderedTokens(subject) ||
+          hasUnrenderedTokens(htmlBody) ||
+          hasUnrenderedTokens(textBody)
+        ) {
           totalFailed++;
           await db
             .update(emailRecipients)
