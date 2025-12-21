@@ -8,6 +8,13 @@ import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { parsePhoneNumberFromString } from "libphonenumber-js";
 
+// small helpers
+const optTrim = (v: unknown) => (typeof v === "string" ? v.trim() : "");
+const optOrUndef = (v: unknown) => {
+  const s = optTrim(v);
+  return s.length ? s : undefined;
+};
+
 const WaitlistInput = z
   .object({
     fullName: z.string().trim().min(2, "Please enter your full name."),
@@ -43,6 +50,55 @@ const WaitlistInput = z
       .trim()
       .optional()
       .transform((v) => (v && v.length ? v : undefined)),
+
+    // ✅ Tracking fields (match your DB columns)
+    utmSource: z
+      .string()
+      .trim()
+      .optional()
+      .transform((v) => (v && v.length ? v : undefined)),
+    utmMedium: z
+      .string()
+      .trim()
+      .optional()
+      .transform((v) => (v && v.length ? v : undefined)),
+    utmCampaign: z
+      .string()
+      .trim()
+      .optional()
+      .transform((v) => (v && v.length ? v : undefined)),
+    utmContent: z
+      .string()
+      .trim()
+      .optional()
+      .transform((v) => (v && v.length ? v : undefined)),
+    utmTerm: z
+      .string()
+      .trim()
+      .optional()
+      .transform((v) => (v && v.length ? v : undefined)),
+
+    gclid: z
+      .string()
+      .trim()
+      .optional()
+      .transform((v) => (v && v.length ? v : undefined)),
+    fbclid: z
+      .string()
+      .trim()
+      .optional()
+      .transform((v) => (v && v.length ? v : undefined)),
+
+    landingPath: z
+      .string()
+      .trim()
+      .optional()
+      .transform((v) => (v && v.length ? v : undefined)),
+    referrer: z
+      .string()
+      .trim()
+      .optional()
+      .transform((v) => (v && v.length ? v : undefined)),
   })
   .strict();
 
@@ -59,13 +115,38 @@ export async function joinWaitlist(data: {
   notes?: string;
   roleType?: "taxpayer" | "business" | "other";
   agencyId?: string;
+  utmSource?: string;
+  utmMedium?: string;
+  utmCampaign?: string;
+  utmContent?: string;
+  utmTerm?: string;
+  gclid?: string;
+  fbclid?: string;
+  landingPath?: string;
+  referrer?: string;
 }) {
   const parsed = WaitlistInput.safeParse(data);
   if (!parsed.success) {
     throw new Error(parsed.error.issues[0]?.message ?? "Invalid form data.");
   }
 
-  const { fullName, plan, notes, roleType, agencyId } = parsed.data;
+  const {
+    fullName,
+    plan,
+    notes,
+    roleType,
+    agencyId,
+
+    utmSource,
+    utmMedium,
+    utmCampaign,
+    utmContent,
+    utmTerm,
+    gclid,
+    fbclid,
+    landingPath,
+    referrer,
+  } = parsed.data;
 
   // ✅ normalize email
   const email = parsed.data.email.trim().toLowerCase();
@@ -110,6 +191,19 @@ export async function joinWaitlist(data: {
       if ((!existing.notes || existing.notes.length === 0) && notes)
         updates.notes = notes;
       if (!existing.agencyId && agencyId) updates.agencyId = agencyId;
+      if (!existing.utmSource && utmSource) updates.utmSource = utmSource;
+      if (!existing.utmMedium && utmMedium) updates.utmMedium = utmMedium;
+      if (!existing.utmCampaign && utmCampaign)
+        updates.utmCampaign = utmCampaign;
+      if (!existing.utmContent && utmContent) updates.utmContent = utmContent;
+      if (!existing.utmTerm && utmTerm) updates.utmTerm = utmTerm;
+
+      if (!existing.gclid && gclid) updates.gclid = gclid;
+      if (!existing.fbclid && fbclid) updates.fbclid = fbclid;
+
+      if (!existing.landingPath && landingPath)
+        updates.landingPath = landingPath;
+      if (!existing.referrer && referrer) updates.referrer = referrer;
 
       let row = existing;
       if (Object.keys(updates).length) {
@@ -140,6 +234,15 @@ export async function joinWaitlist(data: {
         notes: notes ?? null,
         agencyId: agencyId ?? null,
         status: "pending",
+         utmSource: utmSource ?? null,
+        utmMedium: utmMedium ?? null,
+        utmCampaign: utmCampaign ?? null,
+        utmContent: utmContent ?? null,
+        utmTerm: utmTerm ?? null,
+        gclid: gclid ?? null,
+        fbclid: fbclid ?? null,
+        landingPath: landingPath ?? null,
+        referrer: referrer ?? null,
       })
       .returning();
 

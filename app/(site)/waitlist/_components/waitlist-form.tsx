@@ -9,6 +9,64 @@ import { joinWaitlist } from "../actions"; // 🔑 your server action
 // Toggle this to switch behavior
 const USE_REDIRECT_AFTER_SUBMIT = true; // set to false for in-page success
 
+type Tracking = {
+  agency?: string;
+  plan?: string;
+
+  utm_source?: string;
+  utm_medium?: string;
+  utm_campaign?: string;
+  utm_term?: string;
+  utm_content?: string;
+
+  gclid?: string;
+  fbclid?: string;
+
+  ref?: string; // optional custom param
+};
+
+const TRACKING_STORE_KEY = "swts_waitlist_tracking_v1";
+
+function safeTrim(v?: string | null) {
+  const s = (v ?? "").trim();
+  return s.length ? s : undefined;
+}
+
+function isValidEmail(v: string) {
+  const email = v.trim();
+  if (email.length > 254) return false;
+  if (/\s/.test(email)) return false;
+  if (email.includes("..")) return false;
+  if (email.endsWith(".")) return false;
+  return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email);
+}
+
+function isValidPhone(v: string) {
+  const digits = v.replace(/\D/g, "");
+  return digits.length === 10;
+}
+
+function readStoredTracking(): Tracking {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = sessionStorage.getItem(TRACKING_STORE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Tracking;
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeStoredTracking(next: Tracking) {
+  if (typeof window === "undefined") return;
+  try {
+    sessionStorage.setItem(TRACKING_STORE_KEY, JSON.stringify(next));
+  } catch {
+    // ignore
+  }
+}
+
 export default function WaitlistForm() {
   const router = useRouter();
   const params = useSearchParams();
@@ -19,53 +77,82 @@ export default function WaitlistForm() {
   const [error, setError] = useState<string | null>(null);
   const [ok, setOk] = useState(false); // used for in-page success
 
-  const tracking = useMemo(() => {
-    const pluck = (k: string) => params.get(k) || undefined;
+  // landing context
+  const [landingPath, setLandingPath] = useState<string>("");
+  const [referrer, setReferrer] = useState<string>("");
+
+  // 1) Read from URL
+  const urlTracking = useMemo<Tracking>(() => {
+    const pluck = (k: string) => safeTrim(params.get(k));
+
     return {
       agency: pluck("agency"),
       plan: pluck("plan"),
+
       utm_source: pluck("utm_source"),
       utm_medium: pluck("utm_medium"),
       utm_campaign: pluck("utm_campaign"),
       utm_term: pluck("utm_term"),
       utm_content: pluck("utm_content"),
+
+      gclid: pluck("gclid"),
+      fbclid: pluck("fbclid"),
+
       ref: pluck("ref"),
     };
   }, [params]);
 
-  const pageSource = useMemo(() => {
-    const url = typeof window !== "undefined" ? window.location.href : "";
-    const parts = [
-      `landing:/waitlist`,
-      tracking.agency ? `agency=${tracking.agency}` : "",
-      tracking.plan ? `plan=${tracking.plan}` : "",
-      tracking.utm_source ? `utm_source=${tracking.utm_source}` : "",
-      tracking.utm_medium ? `utm_medium=${tracking.utm_medium}` : "",
-      tracking.utm_campaign ? `utm_campaign=${tracking.utm_campaign}` : "",
-      tracking.utm_term ? `utm_term=${tracking.utm_term}` : "",
-      tracking.utm_content ? `utm_content=${tracking.utm_content}` : "",
-      tracking.ref ? `ref=${tracking.ref}` : "",
-      url ? `url=${encodeURIComponent(url)}` : "",
-    ]
-      .filter(Boolean)
-      .join("&");
-    return parts;
+  // 2) Merge with sessionStorage (persist UTMs even if query params disappear)
+  const tracking = useMemo<Tracking>(() => {
+    const stored = readStoredTracking();
+    const merged: Tracking = {
+      ...stored,
+      ...Object.fromEntries(
+        Object.entries(urlTracking).filter(([, v]) => !!v)
+      ),
+    } as Tracking;
+
+    return merged;
+  }, [urlTracking]);
+
+  // 3) Persist merged tracking on mount / when params change
+  useEffect(() => {
+    // only store if we have something meaningful
+    const hasAny = Object.values(tracking).some(Boolean);
+    if (hasAny) writeStoredTracking(tracking);
   }, [tracking]);
 
-  function isValidEmail(v: string) {
-    const email = v.trim();
-    if (email.length > 254) return false;
-    if (/\s/.test(email)) return false;
-    if (email.includes("..")) return false;
-    if (email.endsWith(".")) return false;
+  // 4) Capture landingPath + referrer
+  useEffect(() => {
+    setLandingPath(window.location.pathname || "");
+    setReferrer(document.referrer || "");
+  }, []);
 
-    return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email);
-  }
+  const pageSource = useMemo(() => {
+  const url = typeof window !== "undefined" ? window.location.href : "";
 
-  function isValidPhone(v: string) {
-    const digits = v.replace(/\D/g, "");
-    return digits.length === 10;
-  }
+  const parts = [
+    `landing:${landingPath || "/waitlist"}`,
+    tracking.agency ? `agency=${tracking.agency}` : "",
+    tracking.plan ? `plan=${tracking.plan}` : "",
+
+    tracking.utm_source ? `utm_source=${tracking.utm_source}` : "",
+    tracking.utm_medium ? `utm_medium=${tracking.utm_medium}` : "",
+    tracking.utm_campaign ? `utm_campaign=${tracking.utm_campaign}` : "",
+    tracking.utm_term ? `utm_term=${tracking.utm_term}` : "",
+    tracking.utm_content ? `utm_content=${tracking.utm_content}` : "",
+
+    tracking.gclid ? `gclid=${tracking.gclid}` : "",
+    tracking.fbclid ? `fbclid=${tracking.fbclid}` : "",
+
+    tracking.ref ? `ref=${tracking.ref}` : "",
+    referrer ? `referrer=${encodeURIComponent(referrer)}` : "",
+    url ? `url=${encodeURIComponent(url)}` : "",
+  ].filter(Boolean);
+
+  return parts.join(" | ");
+}, [tracking, landingPath, referrer]);
+
 
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -96,7 +183,9 @@ export default function WaitlistForm() {
     if (!email || !isValidEmail(email))
       return setError("Please enter a valid email address.");
     if (phone && !isValidPhone(phone))
-      return setError("Please enter a valid 10-digit phone number or leave it blank.");
+      return setError(
+        "Please enter a valid 10-digit phone number or leave it blank."
+      );
 
     if (taxYear !== undefined) {
       if (!Number.isInteger(taxYear))
@@ -110,7 +199,9 @@ export default function WaitlistForm() {
       contactMethod ? `Preferred contact: ${contactMethod}` : "",
       taxYear ? `Tax year: ${taxYear}` : "",
       lastPreparer ? `Last preparer: ${lastPreparer}` : "",
-      priorTaxReturnsLabel ? `Needs prior-year returns: ${priorTaxReturnsLabel}` : "",
+      priorTaxReturnsLabel
+        ? `Needs prior-year returns: ${priorTaxReturnsLabel}`
+        : "",
       pageSource ? `Source: ${pageSource}` : "",
     ]
       .filter(Boolean)
@@ -125,9 +216,24 @@ export default function WaitlistForm() {
         fullName: name,
         email,
         phone: phone || undefined,
+
         plan: tracking.plan, // from ?plan=
         notes,
         roleType: "taxpayer",
+
+        // ✅ NEW: attribution fields (match your DB columns)
+        utmSource: tracking.utm_source,
+        utmMedium: tracking.utm_medium,
+        utmCampaign: tracking.utm_campaign,
+        utmContent: tracking.utm_content,
+        utmTerm: tracking.utm_term,
+
+        gclid: tracking.gclid,
+        fbclid: tracking.fbclid,
+
+        landingPath: landingPath || "/waitlist",
+        referrer: referrer || undefined,
+
         // agencyId: if you later map agency slug -> firm UUID, set it here
       });
 
@@ -264,7 +370,6 @@ export default function WaitlistForm() {
                 placeholder="Jane Doe"
                 minLength={2}
                 maxLength={80}
-                // If you want business names too, loosen this pattern.
                 pattern="^[A-Za-z][A-Za-z\s.'-]{1,79}$"
                 title="Enter your full name (letters, spaces, apostrophes, hyphens)."
                 className="w-full rounded-xl border border-input bg-background px-10 py-3 text-sm outline-none transition
@@ -368,7 +473,8 @@ export default function WaitlistForm() {
                 step={1}
                 placeholder="2024"
                 onKeyDown={(e) => {
-                  if (["e", "E", "+", "-", "."].includes(e.key)) e.preventDefault();
+                  if (["e", "E", "+", "-", "."].includes(e.key))
+                    e.preventDefault();
                 }}
                 className="w-full rounded-xl border border-input bg-background px-3 py-3 text-sm outline-none transition
                        focus:ring-2 focus:ring-ring"
@@ -435,7 +541,11 @@ export default function WaitlistForm() {
           >
             {loading ? (
               <span className="inline-flex items-center gap-2">
-                <svg className="h-5 w-5 animate-spin" viewBox="0 0 24 24" fill="none">
+                <svg
+                  className="h-5 w-5 animate-spin"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                >
                   <circle
                     className="opacity-25"
                     cx="12"
