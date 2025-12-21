@@ -73,7 +73,7 @@ export async function cancelSocialPostAction(formData: FormData): Promise<void> 
 
   await db
     .update(socialPosts)
-    .set({ status: "canceled", updatedAt: new Date() })
+    .set({ status: "cancelled", updatedAt: new Date() })
     .where(eq(socialPosts.id, id));
 
   reval();

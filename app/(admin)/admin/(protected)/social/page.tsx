@@ -42,7 +42,7 @@ export default async function AdminSocialPage() {
         </p>
 
         <div className="mt-3 flex flex-wrap gap-2 text-xs">
-          {["queued", "sending", "sent", "failed", "canceled"].map((s) => (
+          {["queued", "sending", "sent", "failed", "cancelled"].map((s) => (
             <span key={s} className="rounded-full border bg-white px-3 py-1 text-gray-700">
               {s}: <span className="font-semibold">{counts[s] ?? 0}</span>
             </span>
