@@ -1,7 +1,8 @@
-// app/layout.tsx
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import Script from "next/script";
 import "./globals.css";
+
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -23,10 +24,7 @@ export const metadata: Metadata = {
 
   icons: {
     icon: [
-      // ✅ fallback for browsers that request /favicon.ico
       { url: "/favicon.ico" },
-
-      // ✅ favicon pack sizes (served from /public)
       {
         url: "/swtax-favicon-pack/favicon-16x16.png",
         sizes: "16x16",
@@ -46,7 +44,6 @@ export const metadata: Metadata = {
     apple: "/swtax-favicon-pack/apple-touch-icon.png",
   },
 
-  // ✅ Android/Chrome icons should be referenced in the manifest
   manifest: "/swtax-favicon-pack/site.webmanifest",
 };
 
@@ -59,6 +56,9 @@ export default function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
+  const clarityId = process.env.NEXT_PUBLIC_CLARITY_ID;
+  const gaId = process.env.NEXT_PUBLIC_GA_ID;
+
   return (
     <html lang="en">
       <body
@@ -71,6 +71,41 @@ export default function RootLayout({
           "text-slate-900",
         ].join(" ")}
       >
+        {/* =========================
+            Microsoft Clarity
+        ========================= */}
+        {clarityId ? (
+          <Script id="ms-clarity" strategy="afterInteractive">
+            {`
+              (function(c,l,a,r,i,t,y){
+                  c[a]=c[a]||function(){(c[a].q=c[a].q||[]).push(arguments)};
+                  t=l.createElement(r);t.async=1;t.src="https://www.clarity.ms/tag/"+i;
+                  y=l.getElementsByTagName(r)[0];y.parentNode.insertBefore(t,y);
+              })(window, document, "clarity", "script", "${clarityId}");
+            `}
+          </Script>
+        ) : null}
+
+        {/* =========================
+            Google Analytics (GA4)
+        ========================= */}
+        {gaId ? (
+          <>
+            <Script
+              src={`https://www.googletagmanager.com/gtag/js?id=${gaId}`}
+              strategy="afterInteractive"
+            />
+            <Script id="ga4" strategy="afterInteractive">
+              {`
+                window.dataLayer = window.dataLayer || [];
+                function gtag(){dataLayer.push(arguments);}
+                gtag('js', new Date());
+                gtag('config', '${gaId}', { send_page_view: true });
+              `}
+            </Script>
+          </>
+        ) : null}
+
         {children}
       </body>
     </html>

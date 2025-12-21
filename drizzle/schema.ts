@@ -145,6 +145,15 @@ export const waitlist = pgTable("waitlist", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).$onUpdate(
     () => new Date()
   ),
+  utmSource: text("utm_source"),
+  utmMedium: text("utm_medium"),
+  utmCampaign: text("utm_campaign"),
+  utmContent: text("utm_content"),
+  utmTerm: text("utm_term"),
+  gclid: text("gclid"),
+  fbclid: text("fbclid"),
+  landingPath: text("landing_path"),
+  referrer: text("referrer"),
 });
 
 // =========================
@@ -183,7 +192,14 @@ export const emailCampaignSegment = pgEnum("email_campaign_segment", [
   "waitlist_approved",
   "waitlist_all",
   "manual",
+  "email_list",
+  "appointments",
 ]);
+
+export const appointmentAudienceSegment = pgEnum(
+  "appointment_audience_segment",
+  ["upcoming", "today", "past", "cancelled", "all"]
+);
 
 // =========================
 // EMAIL CAMPAIGNS
@@ -194,13 +210,23 @@ export const emailCampaigns = pgTable("email_campaigns", {
   segment: emailCampaignSegment("segment")
     .default("waitlist_pending")
     .notNull(),
+  listId: uuid("list_id").references(() => emailLists.id, {
+    onDelete: "set null",
+  }),
+  apptSegment: appointmentAudienceSegment("appt_segment"),
+  manualRecipientsRaw: text("manual_recipients_raw"),
+
+  // delivery lifecycle
   status: emailCampaignStatus("status").default("draft").notNull(),
   scheduledAt: timestamp("scheduled_at", { withTimezone: true }),
   schedulerName: text("scheduler_name"),
   sentAt: timestamp("sent_at", { withTimezone: true }),
+
+  // content
   subject: text("subject").notNull(),
   htmlBody: text("html_body").notNull(),
   textBody: text("text_body"),
+
   createdAt: timestamp("created_at", { withTimezone: true })
     .defaultNow()
     .notNull(),
@@ -221,8 +247,15 @@ export const emailRecipients = pgTable(
     status: emailRecipientStatus("status").default("queued").notNull(),
     error: text("error"),
     sentAt: timestamp("sent_at", { withTimezone: true }),
-    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+    renderedSubject: text("rendered_subject"),
+    renderedHtml: text("rendered_html"),
+    renderedText: text("rendered_text"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
   },
   (t) => ({
     emailIdx: index("email_recipients_email_idx").on(t.email),
@@ -232,6 +265,43 @@ export const emailRecipients = pgTable(
     // ✅ prevents duplicates per campaign
     campaignEmailUq: uniqueIndex("email_recipients_campaign_email_uq").on(
       t.campaignId,
+      t.email
+    ),
+  })
+);
+
+export const emailLists = pgTable("email_lists", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  name: text("name").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+});
+
+export const emailListMembers = pgTable(
+  "email_list_members",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    listId: uuid("list_id")
+      .notNull()
+      .references(() => emailLists.id, { onDelete: "cascade" }),
+    email: text("email").notNull(),
+    fullName: text("full_name"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => ({
+    listIdx: index("email_list_members_list_idx").on(t.listId),
+    emailIdx: index("email_list_members_email_idx").on(t.email),
+    listEmailUq: uniqueIndex("email_list_members_list_email_uq").on(
+      t.listId,
       t.email
     ),
   })
@@ -250,8 +320,8 @@ export const appSettings = pgTable("app_settings", {
   key: text("key").primaryKey(),
   value: text("value").notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true })
-  .notNull()
-  .defaultNow(),
+    .notNull()
+    .defaultNow(),
 });
 
 // =========================
@@ -384,9 +454,19 @@ export const appointmentRequests = pgTable("appointment_requests", {
   scheduledAt: timestamp("scheduled_at", { withTimezone: true }).notNull(),
 
   status: text("status").default("requested").notNull(), // requested/confirmed/cancelled
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+  utmSource: text("utm_source"),
+  utmMedium: text("utm_medium"),
+  utmCampaign: text("utm_campaign"),
+  utmContent: text("utm_content"),
+  utmTerm: text("utm_term"),
+  gclid: text("gclid"),
+  fbclid: text("fbclid"),
+  landingPath: text("landing_path"),
+  referrer: text("referrer"),
 });
-
 
 // --- Dependents ---
 export const dependents = pgTable(
@@ -785,7 +865,7 @@ export const socialPostStatus = pgEnum("social_post_status", [
   "sending",
   "sent",
   "failed",
-  "canceled",
+  "cancelled",
 ]);
 
 export const socialAccounts = pgTable(
