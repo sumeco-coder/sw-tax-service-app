@@ -7,9 +7,8 @@ import { usePathname } from "next/navigation";
 const tabs = [
   { label: "Campaigns", href: "/admin/email" },
   { label: "Logs", href: "/admin/email/logs" },
-
+  { label: "List", href: "/admin/email/list" }, // ✅ add this
   // later:
-  { label: "Lists", href: "/admin/email/lists", disabled: true },
   { label: "Unsubscribes", href: "/admin/email/unsubscribes", disabled: true },
 ];
 
