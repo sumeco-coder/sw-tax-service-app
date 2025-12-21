@@ -201,11 +201,10 @@ export async function duplicateCampaign(formData: FormData): Promise<void> {
       name: `${existing.name} (Copy)`,
       subject: existing.subject,
       htmlBody: existing.htmlBody,
-      textBody: (existing as any).textBody ?? null,
-      segment:
-        (existing as any).segment ?? ("waitlist_pending" as CampaignSegment),
+      textBody: existing.textBody ?? null,
+      segment: existing.segment ?? ("waitlist_pending" as CampaignSegment),
       status: "draft" as CampaignStatus,
-      createdAt: safeDate((existing as any).createdAt),
+      createdAt: safeDate(existing.createdAt),
       updatedAt: new Date(),
     })
     .returning({ id: emailCampaigns.id });
@@ -260,9 +259,15 @@ export async function applyTemplateToCampaign(
     EMAIL_DEFAULTS
   );
 
-  const subject = renderString(t.subject, vars);
+  // ✅ keep templates strict: HTML is required; text is optional
+  const subjectTpl = t.subject ?? "";
+  if (!t.html) {
+    throw new Error(`Template "${templateId}" is missing required "html" content.`);
+  }
+
+  const subject = renderString(subjectTpl, vars);
   const htmlBody = renderString(t.html, vars);
-  const textBody = renderString(t.text, vars);
+  const textBody = renderString(t.text ?? "", vars);
 
   await db
     .update(emailCampaigns)
