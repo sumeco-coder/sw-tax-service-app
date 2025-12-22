@@ -1,5 +1,6 @@
 // lib/helper/render-template.ts
-import type { TemplateVars } from "@/types/email";
+import type { TemplateVars } from "../../types/email";
+
 
 /**
  * Replaces {{key}} tokens with vars[key].
