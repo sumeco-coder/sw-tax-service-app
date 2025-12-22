@@ -1,5 +1,6 @@
-import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
+
+export const runtime = "nodejs";
 
 export async function POST(req: Request) {
   const body = await req.json().catch(() => null);
@@ -10,28 +11,28 @@ export async function POST(req: Request) {
   if (!accessToken || !idToken) {
     return NextResponse.json(
       { ok: false, message: "Missing tokens" },
-      { status: 400 }
+      { status: 400, headers: { "Cache-Control": "no-store" } }
     );
   }
 
-  const cookieStore = await cookies();
   const secure = process.env.NODE_ENV === "production";
 
-  cookieStore.set("accessToken", accessToken, {
+  const cookieOptions = {
     httpOnly: true,
     secure,
-    sameSite: "lax",
+    sameSite: "lax" as const,
     path: "/",
     maxAge: 60 * 60 * 24 * 7, // 7 days
-  });
+  };
 
-  cookieStore.set("idToken", idToken, {
-    httpOnly: true,
-    secure,
-    sameSite: "lax",
-    path: "/",
-    maxAge: 60 * 60 * 24 * 7,
-  });
+  const res = NextResponse.json(
+    { ok: true },
+    { headers: { "Cache-Control": "no-store" } }
+  );
 
-  return NextResponse.json({ ok: true });
+  // ✅ Set cookies on the RESPONSE in route handlers
+  res.cookies.set("accessToken", accessToken, cookieOptions);
+  res.cookies.set("idToken", idToken, cookieOptions);
+
+  return res;
 }

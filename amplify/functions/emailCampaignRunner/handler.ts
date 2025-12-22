@@ -1,87 +1,70 @@
 // amplify/functions/emailCampaignRunner/handler.ts
-import { Resend } from "resend";
 import pg from "pg";
-import { SchedulerClient, CreateScheduleCommand } from "@aws-sdk/client-scheduler";
+
+import { sendEmail } from "../../../lib/email/sendEmail";
+
+import {
+  renderTemplate,
+  hasUnrenderedTokens,
+} from "../../../lib/helper/render-template";
+import {
+  renderHandlebars,
+  isMjml,
+  compileMjmlToHtml,
+} from "../../../lib/email/templateEngine";
+import {
+  buildEmailFooterHTML,
+  buildEmailFooterText,
+  buildEmailFooterMJML,
+} from "../../../lib/email/footer";
 
 const { Pool } = pg;
 
-// ✅ Default sender (Resend verified domain/address required)
-const RESEND_FROM =
-  process.env.RESEND_FROM_EMAIL ?? "SW Tax Service <no-reply@swtaxservice.com>";
+/**
+ * ENV you should have:
+ * - DATABASE_URL
+ * - RESEND_API_KEY (needed for Resend, and also SES fallback)
+ * - RESEND_FROM_EMAIL (optional, used by lib/email/resend.ts)
+ * - EMAIL_PROVIDER (optional) "resend" (default) or "ses"
+ *
+ * - SITE_URL (optional, used for unsubscribe links)
+ * - EMAIL_SEND_BATCH_SIZE (optional)
+ * - EMAIL_RUNNER_MAX_MS (optional)
+ * - EMAIL_STALE_SENDING_MINUTES (optional)
+ *
+ * Cheapest mode:
+ * - schedule this function "every 5m"
+ * - NO AWS Scheduler continuation logic
+ */
 
 // ✅ Batch settings
 const BATCH_SIZE = Number(process.env.EMAIL_SEND_BATCH_SIZE ?? 50);
 
 // ✅ Safety (don’t run forever)
 const MAX_MS = Number(process.env.EMAIL_RUNNER_MAX_MS ?? 10 * 60 * 1000); // 10 min
-const CONTINUATION_IN_MS = Number(process.env.EMAIL_CONTINUATION_DELAY_MS ?? 60_000); // 1 min
 
-// ✅ If a Lambda crashes mid-batch, recipients can be left in "sending".
-// This resets them back to "queued" if they are stale (older than X minutes).
-const STALE_SENDING_MINUTES = Number(process.env.EMAIL_STALE_SENDING_MINUTES ?? 30);
+// ✅ Crash recovery: reset stale "sending" recipients back to "queued"
+const STALE_SENDING_MINUTES = Number(
+  process.env.EMAIL_STALE_SENDING_MINUTES ?? 30
+);
 
-function resendClient() {
-  const key = process.env.RESEND_API_KEY;
-  if (!key) throw new Error("RESEND_API_KEY missing");
-  return new Resend(key);
+const REPLY_TO = "support@swtaxservice.com";
+
+function getSiteUrl() {
+  const base =
+    process.env.SITE_URL ??
+    process.env.APP_URL ??
+    "https://www.swtaxservice.com";
+  return String(base).replace(/\/$/, "");
 }
 
-function schedulerClient() {
-  // In Lambda, AWS_REGION is always set (use that)
-  const region = process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION;
-  if (!region) throw new Error("AWS_REGION is not set");
-  return new SchedulerClient({ region });
+function buildUnsubUrls(token: string) {
+  const base = getSiteUrl();
+  return {
+    pageUrl: `${base}/unsubscribe?token=${encodeURIComponent(token)}`,
+    oneClickUrl: `${base}/api/unsubscribe?token=${encodeURIComponent(token)}`,
+  };
 }
-
-function toAtExpression(d: Date) {
-  // Scheduler "at()" wants: at(YYYY-MM-DDTHH:MM:SS) (no milliseconds)
-  const isoNoMs = d.toISOString().slice(0, 19);
-  return `at(${isoNoMs})`;
-}
-
-async function scheduleContinuation(campaignId: string, runAt: Date) {
-  const lambdaArn = process.env.EMAIL_CAMPAIGN_RUNNER_LAMBDA_ARN;
-  const roleArn = process.env.SCHEDULER_INVOKE_ROLE_ARN;
-
-  if (!lambdaArn || !roleArn) {
-    throw new Error(
-      "Missing EMAIL_CAMPAIGN_RUNNER_LAMBDA_ARN or SCHEDULER_INVOKE_ROLE_ARN"
-    );
-  }
-
-  // Keep schedule name <= 64 chars (safe)
-  const short = String(campaignId).replace(/[^a-zA-Z0-9-]/g, "").slice(0, 8);
-  const name = `camp-${short}-cont-${Date.now()}`;
-
-  const scheduler = schedulerClient();
-  await scheduler.send(
-    new CreateScheduleCommand({
-      Name: name,
-      GroupName: "default",
-      FlexibleTimeWindow: { Mode: "OFF" },
-      ScheduleExpression: toAtExpression(runAt),
-      ScheduleExpressionTimezone: "UTC",
-      ActionAfterCompletion: "DELETE", // ✅ auto cleanup
-      Target: {
-        Arn: lambdaArn,
-        RoleArn: roleArn,
-        Input: JSON.stringify({ campaignId }),
-      },
-    })
-  );
-
-  return name;
-}
-
-/**
- * IMPORTANT DB REQUIREMENTS (for this runner to be safe under concurrency)
- *
- * 1) email_campaigns.status enum includes: draft, scheduled, sending, sent, failed
- * 2) email_campaigns has columns: scheduled_at (timestamptz), scheduler_name (text, optional)
- * 3) email_recipients.status enum includes: queued, sending, sent, failed, unsubscribed
- *
- * If you don't add recipient status "sending", concurrency can cause duplicate sends.
- */
 
 export const handler = async (event: any = {}) => {
   const dbUrl = process.env.DATABASE_URL;
@@ -97,7 +80,7 @@ export const handler = async (event: any = {}) => {
     // ✅ 0) Reset stale "sending" recipients back to queued (crash recovery)
     await pool.query(
       `update email_recipients
-       set status = 'queued', updated_at = now(), error = coalesce(error,'') 
+       set status = 'queued', updated_at = now(), error = coalesce(error,'')
        where status = 'sending'
          and updated_at < (now() - ($1 || ' minutes')::interval)`,
       [String(STALE_SENDING_MINUTES)]
@@ -114,6 +97,15 @@ export const handler = async (event: any = {}) => {
 
     // Loop until we hit time budget
     while (Date.now() - started < MAX_MS) {
+      // ✅ If we're close to timeout, stop.
+      // Next scheduled run (every 5m) will continue where we left off.
+      if (Date.now() - started > MAX_MS - 60_000) {
+        return {
+          ok: true,
+          message: "Near timeout, exiting (will continue next schedule tick)",
+        };
+      }
+
       // ✅ 2) Get a campaign that is currently sending
       const campaignRes = requestedCampaignId
         ? await pool.query(
@@ -172,19 +164,39 @@ export const handler = async (event: any = {}) => {
           return { ok: true, message: "Campaign completed" };
         }
 
-        // otherwise, keep looping to see if another campaign is sending
         continue;
       }
 
-      const resend = resendClient();
-      const siteUrl = (process.env.SITE_URL ?? "https://www.swtaxservice.com").replace(
-        /\/$/,
-        ""
+      // ---- Bulk unsub lookup (fast) ----
+      const emails = claimRes.rows
+        .map((r: any) => String(r.email ?? "").toLowerCase().trim())
+        .filter(Boolean);
+
+      const unsubSet = new Set<string>();
+      if (emails.length) {
+        const unsubRes = await pool.query(
+          `select lower(email) as email
+           from email_unsubscribes
+           where lower(email) = any($1::text[])`,
+          [emails]
+        );
+
+        for (const row of unsubRes.rows) {
+          if (row?.email) unsubSet.add(String(row.email));
+        }
+      }
+
+      // Detect footer tokens in stored templates
+      const templateHasFooterHtml = String(campaign.html_body ?? "").includes(
+        "{{footer_html}}"
+      );
+      const templateHasFooterText = String(campaign.text_body ?? "").includes(
+        "{{footer_text}}"
       );
 
       for (const r of claimRes.rows) {
-        const email = String(r.email).toLowerCase().trim();
-        if (!email) {
+        const to = String(r.email ?? "").toLowerCase().trim();
+        if (!to) {
           await pool.query(
             `update email_recipients
              set status = 'failed', updated_at = now(), error = 'Missing email'
@@ -194,13 +206,8 @@ export const handler = async (event: any = {}) => {
           continue;
         }
 
-        // unsubscribe check
-        const unsub = await pool.query(
-          `select 1 from email_unsubscribes where email = $1 limit 1`,
-          [email]
-        );
-
-        if ((unsub.rowCount ?? 0) > 0) {
+        // skip unsubscribed
+        if (unsubSet.has(to)) {
           await pool.query(
             `update email_recipients
              set status = 'unsubscribed', updated_at = now(), error = 'Skipped (unsubscribed)'
@@ -210,24 +217,128 @@ export const handler = async (event: any = {}) => {
           continue;
         }
 
-        const unsubUrl = `${siteUrl}/unsubscribe?token=${encodeURIComponent(
-          r.unsub_token
-        )}`;
+        const token = String(r.unsub_token ?? "");
+        if (!token) {
+          await pool.query(
+            `update email_recipients
+             set status = 'failed', updated_at = now(), error = 'Missing unsubscribe token'
+             where id = $1`,
+            [r.id]
+          );
+          continue;
+        }
 
-        const html = `${campaign.html_body}
-<hr />
-<p style="font-size:12px;color:#666">
-  <a href="${unsubUrl}">Unsubscribe</a>
-</p>`;
+        const { pageUrl, oneClickUrl } = buildUnsubUrls(token);
+
+        // Build footers (HTML/Text/MJML)
+        const footerHtml = buildEmailFooterHTML("marketing", {
+          companyName: "SW Tax Service",
+          addressLine: "Las Vegas, NV",
+          supportEmail: "support@swtaxservice.com",
+          website: "https://www.swtaxservice.com",
+          unsubUrl: pageUrl,
+        });
+
+        const footerText = buildEmailFooterText("marketing", {
+          companyName: "SW Tax Service",
+          addressLine: "Las Vegas, NV",
+          supportEmail: "support@swtaxservice.com",
+          website: "https://www.swtaxservice.com",
+          unsubUrl: pageUrl,
+        });
+
+        const footerMjml = buildEmailFooterMJML("marketing", {
+          companyName: "SW Tax Service",
+          addressLine: "Las Vegas, NV",
+          supportEmail: "support@swtaxservice.com",
+          website: "https://www.swtaxservice.com",
+          unsubUrl: pageUrl,
+        });
+
+        // Vars available in templates
+        const vars = {
+          company_name: "SW Tax Service",
+          waitlist_link: "https://www.swtaxservice.com/waitlist",
+          support_email: "support@swtaxservice.com",
+          website: "https://www.swtaxservice.com",
+          first_name: "there",
+          signature_name: "SW Tax Service Team",
+          unsubscribe_link: pageUrl,
+          one_click_unsub_url: oneClickUrl,
+
+          footer_html: footerHtml,
+          footer_text: footerText,
+
+          logo_url:
+            "https://www.swtaxservice.com/swtax-favicon-pack/android-chrome-512x512.png",
+          logo_alt: "SW Tax Service",
+          logo_link: "https://www.swtaxservice.com",
+          logo_width: "72px",
+        };
+
+        // Subject render
+        const subject = renderTemplate(String(campaign.subject ?? ""), vars);
+
+        // 1) First-pass render (to detect MJML)
+        const firstPass = renderHandlebars(
+          String(campaign.html_body ?? ""),
+          vars
+        );
+        const bodyIsMjml = isMjml(firstPass);
+
+        // 2) Choose correct footer format for {{footer_html}}
+        const footerForTemplate = bodyIsMjml ? footerMjml : footerHtml;
+
+        // 3) Final render with correct footer format
+        const vars2 = { ...vars, footer_html: footerForTemplate };
+        const rendered = renderHandlebars(
+          String(campaign.html_body ?? ""),
+          vars2
+        );
+
+        // 4) Compile if MJML
+        let htmlBody = isMjml(rendered) ? compileMjmlToHtml(rendered) : rendered;
+
+        // Text render
+        let textBody = renderTemplate(String(campaign.text_body ?? ""), vars2);
+
+        // Append footers only when stored campaign body is NOT MJML
+        // (MJML needs structural insertion; prefer using {{footer_html}} in MJML templates.)
+        if (!bodyIsMjml && !templateHasFooterHtml) {
+          htmlBody = `${htmlBody}\n\n${footerHtml}`;
+        }
+        if (!templateHasFooterText) {
+          textBody = `${textBody}\n\n${footerText}`;
+        }
+
+        // Token safety
+        if (
+          hasUnrenderedTokens(subject) ||
+          hasUnrenderedTokens(htmlBody) ||
+          hasUnrenderedTokens(textBody)
+        ) {
+          await pool.query(
+            `update email_recipients
+             set status = 'failed', updated_at = now(), error = 'Template contains unknown {{tokens}}.'
+             where id = $1`,
+            [r.id]
+          );
+          continue;
+        }
 
         try {
-          await resend.emails.send({
-            from: RESEND_FROM,
-            to: email,
-            subject: campaign.subject,
-            html,
-            text: campaign.text_body ?? undefined,
-          } as any);
+          // ✅ Option A: Unified sender (SES-first if EMAIL_PROVIDER=ses, else Resend)
+          await sendEmail({
+            to,
+            subject,
+            htmlBody,
+            textBody: textBody || undefined,
+            replyTo: REPLY_TO,
+            headers: {
+              "List-Unsubscribe": `<${oneClickUrl}>`,
+              "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+            },
+          });
 
           await pool.query(
             `update email_recipients
@@ -243,30 +354,6 @@ export const handler = async (event: any = {}) => {
             [r.id, String(e?.message ?? e)]
           );
         }
-      }
-
-      // ✅ 4) If we’re close to timeout, schedule continuation and exit
-      if (Date.now() - started > MAX_MS - 60_000) {
-        const runAt = new Date(Date.now() + CONTINUATION_IN_MS);
-        const schedName = await scheduleContinuation(campaign.id, runAt);
-
-        // Optional visibility (requires scheduler_name column)
-        try {
-          await pool.query(
-            `update email_campaigns
-             set scheduler_name = $2, updated_at = now()
-             where id = $1`,
-            [campaign.id, schedName]
-          );
-        } catch {
-          // ignore if column doesn't exist yet
-        }
-
-        return {
-          ok: true,
-          message: "Scheduled continuation",
-          scheduled: schedName,
-        };
       }
     }
 

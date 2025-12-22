@@ -8,6 +8,7 @@ import {
   Mail,
   Megaphone,
   Settings,
+  CalendarClock, // ✅ add this
 } from "lucide-react";
 
 const BRAND = {
@@ -19,8 +20,12 @@ const nav = [
   { label: "Dashboard", href: "/admin", icon: LayoutDashboard },
   { label: "Waitlist", href: "/admin/waitlist", icon: Users },
   { label: "Email", href: "/admin/email", icon: Mail },
+  { label: "Scheduler", href: "/admin/email/scheduler", icon: CalendarClock }, // ✅ keep here (near Email)
   { label: "Social", href: "/admin/social", icon: Megaphone },
   { label: "Settings", href: "/admin/settings", icon: Settings },
+  { label: "Campaigns", href: "/admin/email/campaigns", icon: Mail },
+  { label: "Analytics", href: "/admin/analytics", icon: Mail }
+
 ];
 
 function isActivePath(pathname: string, href: string) {

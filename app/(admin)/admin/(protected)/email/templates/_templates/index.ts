@@ -5,5 +5,5 @@ import { template as t04 } from "./waitlist/04-next-steps";
 import { template as t05 } from "./waitlist/05-docs-checklist";
 import { template as t06 } from "./waitlist/06-why-us";
 import { template as t07 } from "./waitlist/07-last-call";
-
-export const ALL_TEMPLATES = [t01, t02, t03, t04, t05, t06, t07];
+import { template as t08 } from "./waitlist/08-mjml-test";
+export const ALL_TEMPLATES = [t01, t02, t03, t04, t05, t06, t07, t08];

@@ -1,8 +1,11 @@
-// app/(admin)/admin/(protected)/email/capaigns/[campaignId]/recipient-picker.tsx
+// app/(admin)/admin/(protected)/email/campaigns/[campaignId]/_components/recipient-picker.tsx
 "use client";
 
-import { useMemo, useState } from "react";
-import { addSelectedToCampaign } from "./../actions/actions";
+import { useMemo, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
+
+// ✅ correct: pulls from [campaignId]/actions.ts
+import { addSelectedToCampaign } from "../actions";
 
 type Sub = {
   id: string;
@@ -21,35 +24,38 @@ export default function RecipientPicker({
   subscribers: Sub[];
   existingEmails: string[];
 }) {
+  const router = useRouter();
   const [q, setQ] = useState("");
   const [selected, setSelected] = useState<Record<string, boolean>>({});
-  const [loading, setLoading] = useState(false);
+  const [isPending, startTransition] = useTransition();
 
-  const existingSet = useMemo(() => new Set(existingEmails.map((e) => e.toLowerCase().trim())), [existingEmails]);
+  const existingSet = useMemo(
+    () => new Set(existingEmails.map((e) => e.toLowerCase().trim())),
+    [existingEmails]
+  );
 
   const filtered = useMemo(() => {
     const query = q.trim().toLowerCase();
     if (!query) return subscribers;
 
     return subscribers.filter((s) => {
-      return (
-        s.email.toLowerCase().includes(query) ||
-        (s.fullName ?? "").toLowerCase().includes(query) ||
-        (s.tags ?? "").toLowerCase().includes(query)
-      );
+      const email = String(s.email ?? "").toLowerCase();
+      const name = String(s.fullName ?? "").toLowerCase();
+      const tags = String(s.tags ?? "").toLowerCase();
+      return email.includes(query) || name.includes(query) || tags.includes(query);
     });
   }, [q, subscribers]);
 
   const selectedIds = Object.keys(selected).filter((id) => selected[id]);
 
-  async function queueSelected() {
-    setLoading(true);
-    try {
+  function queueSelected() {
+    if (!selectedIds.length) return;
+
+    startTransition(async () => {
       await addSelectedToCampaign({ campaignId, subscriberIds: selectedIds });
       setSelected({});
-    } finally {
-      setLoading(false);
-    }
+      router.refresh();
+    });
   }
 
   return (
@@ -65,11 +71,11 @@ export default function RecipientPicker({
         <button
           type="button"
           onClick={queueSelected}
-          disabled={loading || selectedIds.length === 0}
+          disabled={isPending || selectedIds.length === 0}
           className="rounded-2xl px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
           style={{ background: "linear-gradient(90deg, #E00040, #B04020)" }}
         >
-          {loading ? "Adding…" : `Add selected (${selectedIds.length})`}
+          {isPending ? "Adding…" : `Add selected (${selectedIds.length})`}
         </button>
       </div>
 
@@ -92,7 +98,7 @@ export default function RecipientPicker({
 
         <div className="divide-y">
           {filtered.map((s) => {
-            const email = s.email.toLowerCase().trim();
+            const email = String(s.email ?? "").toLowerCase().trim();
             const alreadyAdded = existingSet.has(email);
             const canSelect = s.status === "subscribed" && !alreadyAdded;
 
@@ -134,7 +140,8 @@ export default function RecipientPicker({
       </div>
 
       <p className="mt-3 text-xs text-[#202030]/60">
-        Only <b>subscribed</b> users can be selected. “Already added” means they’re already queued/sent/failed in this campaign.
+        Only <b>subscribed</b> users can be selected. “Already added” means they’re already in this
+        campaign (queued/sent/failed/unsubscribed).
       </p>
     </section>
   );

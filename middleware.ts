@@ -1,3 +1,4 @@
+// middleware.ts
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
@@ -15,33 +16,46 @@ export function middleware(req: NextRequest) {
   const url = req.nextUrl;
   const res = NextResponse.next();
 
-  const hasAny = KEYS.some((k) => url.searchParams.get(k));
+  const secure = process.env.NODE_ENV === "production";
+  const maxAge = 60 * 60 * 24 * 30; // 30 days
+
+  // Only act if at least one tracking param exists
+  const hasAny = KEYS.some((k) => url.searchParams.has(k));
   if (!hasAny) return res;
 
-  // 30 days
-  const maxAge = 60 * 60 * 24 * 30;
-
+  // ✅ Set param cookies (first-touch: don't overwrite if already set)
   for (const k of KEYS) {
     const v = url.searchParams.get(k);
-    if (v) {
-      res.cookies.set(k, v, {
-        path: "/",
-        maxAge,
-        sameSite: "lax",
-      });
-    }
+    if (!v) continue;
+
+    const already = req.cookies.get(k)?.value;
+    if (already) continue; // keep first-touch attribution
+
+    res.cookies.set(k, encodeURIComponent(v), {
+      path: "/",
+      maxAge,
+      sameSite: "lax",
+      secure,
+    });
   }
 
-  // extra useful context
-  res.cookies.set("landing_path", url.pathname, { path: "/", maxAge, sameSite: "lax" });
-
-  // NOTE: you cannot reliably read full referrer in middleware.
-  // We'll capture referrer in the client form and submit it.
+  // ✅ Landing path (first-touch)
+  const hasLanding = req.cookies.get("landing_path")?.value;
+  if (!hasLanding) {
+    res.cookies.set("landing_path", url.pathname, {
+      path: "/",
+      maxAge,
+      sameSite: "lax",
+      secure,
+    });
+  }
 
   return res;
 }
 
-// run on all pages except static assets
+// ✅ Run on all pages except API + static assets
 export const config = {
-  matcher: ["/((?!_next|favicon.ico|robots.txt|sitemap.xml).*)"],
+  matcher: [
+    "/((?!api|_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml).*)",
+  ],
 };

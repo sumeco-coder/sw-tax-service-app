@@ -1,8 +1,10 @@
 // app/(admin)/admin/(protected)/email/page.tsx
 import Link from "next/link";
 import { db } from "@/drizzle/db";
-import { emailCampaigns } from "@/drizzle/schema";
-import { desc } from "drizzle-orm";
+import { emailCampaigns, emailRecipients } from "@/drizzle/schema";
+import { desc, eq, sql } from "drizzle-orm";
+
+import DateTimeLocalIsoField from "./_components/DateTimeLocalIsoField";
 
 import { createAndSendCampaignAction } from "./actions";
 import { ALL_TEMPLATES } from "./templates/_templates";
@@ -12,12 +14,27 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 export default async function AdminEmailPage() {
-  // ✅ campaigns table
+  // ✅ campaigns table (recent)
   const campaigns = await db
     .select()
     .from(emailCampaigns)
     .orderBy(desc(emailCampaigns.createdAt))
     .limit(20);
+
+  // ✅ scheduled campaigns (DB-only scheduling panel)
+  const scheduled = await db
+    .select({
+      id: emailCampaigns.id,
+      name: emailCampaigns.name,
+      subject: emailCampaigns.subject,
+      status: emailCampaigns.status,
+      scheduledAt: emailCampaigns.scheduledAt,
+      createdAt: emailCampaigns.createdAt,
+    })
+    .from(emailCampaigns)
+    .where(eq(emailCampaigns.status, "scheduled" as any))
+    .orderBy(desc(emailCampaigns.scheduledAt))
+    .limit(25);
 
   // ✅ templates (always array)
   const templates = (ALL_TEMPLATES ?? []).map((t) => ({
@@ -25,7 +42,7 @@ export default async function AdminEmailPage() {
     name: t.name,
     category: t.category,
     subject: t.subject,
-    html: (t.mjml ?? t.html ?? ""),
+    html: t.mjml ?? t.html ?? "",
     text: t.text ?? "",
   }));
 
@@ -39,13 +56,87 @@ export default async function AdminEmailPage() {
    */
   const lists: { id: string; name: string }[] = [];
 
+  /* =========================
+     Server actions (DB-only schedule/cancel)
+     ========================= */
+
+  async function scheduleCampaignAction(formData: FormData) {
+    "use server";
+
+    const campaignId = String(formData.get("campaignId") ?? "").trim();
+    if (!campaignId) throw new Error("Pick a campaign.");
+
+    const sendAtIso = String(formData.get("sendAt") ?? "").trim(); // ✅ ISO from hidden input
+    const sendAtLocal = String(formData.get("sendAtLocal") ?? "").trim(); // optional debug
+
+    if (!sendAtIso) throw new Error("Pick a send time.");
+
+    const sendAt = new Date(sendAtIso);
+    if (Number.isNaN(sendAt.getTime())) {
+      throw new Error(
+        `Invalid date/time. (local="${sendAtLocal}", iso="${sendAtIso}")`
+      );
+    }
+
+    // ✅ Safety: require at least 1 minute in the future
+    if (sendAt.getTime() < Date.now() + 60_000) {
+      throw new Error("Send time must be at least 1 minute in the future.");
+    }
+
+    // ✅ safety: require queued recipients
+    const [q] = await db
+      .select({
+        queued: sql<number>`sum(case when ${emailRecipients.status} = 'queued' then 1 else 0 end)::int`,
+      })
+      .from(emailRecipients)
+      .where(eq(emailRecipients.campaignId, campaignId));
+
+    const queued = q?.queued ?? 0;
+    if (queued <= 0) {
+      throw new Error(
+        "No queued recipients for this campaign. Open the campaign and add/build recipients first."
+      );
+    }
+
+    // ✅ DB-only scheduling (cheapest)
+    // Runner (every 5m) will promote scheduled_at <= now() to "sending"
+    await db
+      .update(emailCampaigns)
+      .set({
+        status: "scheduled" as any,
+        scheduledAt: sendAt,
+        schedulerName: null, // ✅ no AWS Scheduler
+        updatedAt: new Date(),
+      } as any)
+      .where(eq(emailCampaigns.id, campaignId));
+  }
+
+  async function cancelCampaignScheduleAction(formData: FormData) {
+    "use server";
+
+    const campaignId = String(formData.get("campaignId") ?? "").trim();
+    if (!campaignId) throw new Error("Missing campaignId");
+
+    // ✅ DB-only cancel
+    await db
+      .update(emailCampaigns)
+      .set({
+        status: "draft" as any,
+        scheduledAt: null,
+        schedulerName: null,
+        updatedAt: new Date(),
+      } as any)
+      .where(eq(emailCampaigns.id, campaignId));
+  }
+
   return (
     <main className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-[#202030]">Email</h1>
           <p className="text-sm text-[#202030]/70">
-            Create campaigns, send to waitlist/manual recipients, and review logs.
+            Create campaigns, send to waitlist/manual recipients, and schedule
+            delivery.
           </p>
         </div>
 
@@ -73,20 +164,133 @@ export default async function AdminEmailPage() {
         </div>
       </div>
 
+      {/* ✅ DB-only schedule panel */}
+      <section className="rounded-3xl border bg-white p-5 shadow-sm">
+        <div className="flex flex-col gap-1">
+          <h2 className="text-lg font-semibold text-[#202030]">Schedule</h2>
+          <p className="text-sm text-[#202030]/70">
+            Cheapest mode: this only writes <code>scheduledAt</code> to the DB.
+            The runner checks every 5 minutes, so it may start sending 0–5
+            minutes after your selected time. (Recipients must already be
+            queued.)
+          </p>
+        </div>
+
+        <form
+          action={scheduleCampaignAction}
+          className="mt-4 grid gap-3 sm:grid-cols-[1fr_1fr_auto] sm:items-end"
+        >
+          <label className="grid gap-1 text-xs font-semibold text-[#202030]/70">
+            Campaign
+            <select
+              name="campaignId"
+              className="cursor-pointer rounded-2xl border px-3 py-2 text-sm"
+              required
+              defaultValue=""
+            >
+              <option value="" disabled>
+                — Select a campaign —
+              </option>
+              {campaigns.map((c: any) => (
+                <option key={String(c.id)} value={String(c.id)}>
+                  {String(c.name)} ({String(c.status)})
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <DateTimeLocalIsoField isoName="sendAt" localName="sendAtLocal" />
+
+          <button
+            type="submit"
+            className="cursor-pointer h-[38px] rounded-2xl px-4 text-sm font-semibold text-white shadow-sm hover:opacity-95"
+            style={{ background: "linear-gradient(90deg, #E00040, #B04020)" }}
+          >
+            Schedule
+          </button>
+        </form>
+
+        {/* Scheduled list */}
+        <div className="mt-5 overflow-hidden rounded-2xl border">
+          <div className="grid grid-cols-12 bg-black/[0.02] px-4 py-3 text-xs font-semibold uppercase tracking-wide text-[#202030]/60">
+            <div className="col-span-6">Campaign</div>
+            <div className="col-span-4">Scheduled</div>
+            <div className="col-span-2 text-right"> </div>
+          </div>
+
+          <div className="divide-y">
+            {scheduled.map((c: any) => (
+              <div
+                key={String(c.id)}
+                className="grid grid-cols-12 items-center px-4 py-3 text-sm"
+              >
+                <div className="col-span-6">
+                  <Link
+                    href={`/admin/email/campaigns/${c.id}`}
+                    className="font-semibold text-[#202030] hover:underline"
+                  >
+                    {String(c.name)}
+                  </Link>
+                  <div className="mt-1 text-xs text-[#202030]/60">
+                    {String(c.subject)}
+                  </div>
+                </div>
+
+                <div className="col-span-4 text-xs text-[#202030]/70">
+                  {c.scheduledAt
+                    ? new Date(c.scheduledAt as any).toLocaleString()
+                    : "—"}
+                </div>
+
+                <div className="col-span-2 flex justify-end">
+                  <form action={cancelCampaignScheduleAction}>
+                    <input
+                      type="hidden"
+                      name="campaignId"
+                      value={String(c.id)}
+                    />
+                    <button
+                      type="submit"
+                      className="cursor-pointer rounded-xl border px-2 py-1 text-xs font-semibold hover:bg-black/5"
+                      title="Cancel schedule"
+                    >
+                      Cancel
+                    </button>
+                  </form>
+                </div>
+              </div>
+            ))}
+
+            {scheduled.length === 0 ? (
+              <div className="px-4 py-8 text-center text-sm text-[#202030]/60">
+                No scheduled campaigns yet.
+              </div>
+            ) : null}
+          </div>
+        </div>
+
+        <p className="mt-3 text-xs text-[#202030]/60">
+          Tip: Build recipients on the campaign page:
+          <span className="ml-1 font-semibold">
+            Campaigns → click campaign → Build recipients → Schedule
+          </span>
+        </p>
+      </section>
+
       {/* Send a campaign */}
       <section className="rounded-xl border bg-white p-4">
         <h2 className="text-sm font-semibold text-gray-900">Send a campaign</h2>
 
         <SendCampaignForm
-          templates={templates} // ✅ always array
-          lists={lists}         // ✅ always array (empty until you create email_lists table)
+          templates={templates}
+          lists={lists}
           action={createAndSendCampaignAction}
         />
 
         {lists.length === 0 ? (
           <p className="mt-3 text-xs text-gray-500">
-            Note: “Email List” dropdown is disabled until you add an <code>email_lists</code> table.
-            You can still manage subscribers at{" "}
+            Note: “Email List” dropdown is disabled until you add an{" "}
+            <code>email_lists</code> table. You can still manage subscribers at{" "}
             <Link className="font-semibold underline" href="/admin/email/list">
               /admin/email/list
             </Link>
@@ -105,20 +309,30 @@ export default async function AdminEmailPage() {
         </div>
 
         <div className="divide-y">
-          {campaigns.map((c) => (
-            <div key={c.id} className="grid grid-cols-12 items-center px-5 py-3 text-sm">
+          {campaigns.map((c: any) => (
+            <div
+              key={String(c.id)}
+              className="grid grid-cols-12 items-center px-5 py-3 text-sm"
+            >
               <div className="col-span-5 font-semibold text-[#202030]">
-                <Link href={`/admin/email/campaigns/${c.id}`} className="hover:underline">
-                  {c.name}
+                <Link
+                  href={`/admin/email/campaigns/${c.id}`}
+                  className="hover:underline"
+                >
+                  {String(c.name)}
                 </Link>
-                <div className="mt-1 text-xs text-[#202030]/60">{c.subject}</div>
+                <div className="mt-1 text-xs text-[#202030]/60">
+                  {String(c.subject)}
+                </div>
               </div>
 
-              <div className="col-span-3 text-xs text-[#202030]/70">{c.segment}</div>
+              <div className="col-span-3 text-xs text-[#202030]/70">
+                {String(c.segment)}
+              </div>
 
               <div className="col-span-2">
                 <span className="rounded-full border px-2 py-1 text-xs font-semibold">
-                  {c.status}
+                  {String(c.status)}
                 </span>
               </div>
 

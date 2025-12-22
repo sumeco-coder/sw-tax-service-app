@@ -1,12 +1,15 @@
+// lib/email/sendEmail.ts
 "use server";
 
 import { sendSesEmail } from "./ses";
-import { sendResendEmail } from "./resend";
+import { sendResendEmail, type ResendAttachment } from "./resend";
 
 export type EmailAttachment = {
   filename: string;
-  content: string; // raw string (ex: ICS text). Provider will encode as needed.
-  contentType?: string; // ex: "text/calendar; charset=utf-8"
+  content?: string; // base64
+  path?: string; // public URL
+  contentId?: string;
+  contentType?: string; // optional metadata
 };
 
 export type SendEmailArgs = {
@@ -17,28 +20,71 @@ export type SendEmailArgs = {
 
   replyTo?: string;
   headers?: Record<string, string>;
-
-  // ✅ NEW
   attachments?: EmailAttachment[];
 };
 
+// ✅ Resend-first (default)
 const provider = (process.env.EMAIL_PROVIDER || "resend").toLowerCase();
 
 /**
  * Unified email sender for the whole app.
  *
- * - If EMAIL_PROVIDER=ses → try SES, fall back to Resend on failure
- * - Otherwise → use Resend
+ * Resend-first:
+ * - If EMAIL_PROVIDER=resend → send with Resend, optionally fall back to SES if configured
+ * - If EMAIL_PROVIDER=ses → send with SES first (only if you ever choose that)
  */
 export async function sendEmail(args: SendEmailArgs): Promise<void> {
-  if (provider === "ses") {
+  const hasAttachments = Boolean(args.attachments?.length);
+
+  // ✅ If attachments exist, ALWAYS use Resend (SES raw builder doesn’t attach files yet)
+  if (hasAttachments) {
+    const attachments: ResendAttachment[] = (args.attachments ?? []).map((a) => ({
+      filename: a.filename,
+      content: a.content,
+      path: a.path,
+      contentId: a.contentId,
+    }));
+
+    await sendResendEmail({
+      to: args.to,
+      subject: args.subject,
+      htmlBody: args.htmlBody,
+      textBody: args.textBody,
+      replyTo: args.replyTo,
+      headers: args.headers,
+      attachments,
+    });
+
+    return;
+  }
+
+  // ✅ Resend-first behavior
+  if (provider !== "ses") {
+    try {
+      await sendResendEmail({
+        to: args.to,
+        subject: args.subject,
+        htmlBody: args.htmlBody,
+        textBody: args.textBody,
+        replyTo: args.replyTo,
+        headers: args.headers,
+      });
+      return;
+    } catch (err) {
+      console.error("Resend send failed, falling back to SES:", err);
+      // fallthrough to SES
+    }
+
+    // SES fallback only if SES env vars exist
     try {
       await sendSesEmail(args);
       return;
     } catch (err) {
-      console.error("SES send failed, falling back to Resend:", err);
+      console.error("SES fallback failed too:", err);
+      throw err;
     }
   }
 
-  await sendResendEmail(args);
+  // If you ever set EMAIL_PROVIDER=ses intentionally:
+  await sendSesEmail(args);
 }

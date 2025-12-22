@@ -3,150 +3,131 @@ import type { EmailTemplate } from "@/types/email";
 
 export const template: EmailTemplate = {
   id: "waitlist/02-launch",
-  name: "Waitlist Launch",
+  name: "Launch Day",
   category: "waitlist",
-
-  // You can keep this, or swap to one of the subject variants below.
-  subject: "It’s open ✅ Join the SW Tax Service waitlist",
+  subject: "The waitlist is open — join for priority access ✅",
 
   mjml: `
 <mjml>
   <mj-head>
     <mj-preview>
-      Waitlist is open — get the right prep checklist + first access to booking.
+      Waitlist is open — priority access + the right prep checklist.
     </mj-preview>
+
     <mj-attributes>
       <mj-all font-family="Inter, -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Helvetica, Arial, sans-serif" />
-      <mj-text font-size="16px" line-height="26px" color="#111827" />
-      <mj-button font-size="14px" font-weight="800" border-radius="12px" padding="14px 18px" />
+      <mj-text font-size="16px" line-height="26px" color="#E5E7EB" />
+      <mj-button font-size="14px" font-weight="800" border-radius="14px" />
     </mj-attributes>
+
+    <mj-style inline="inline">
+      .muted { color:#9CA3AF; }
+      .link { color:#FCA5A5; text-decoration: underline; font-weight: 700; }
+      .h1 { font-size: 22px; line-height: 30px; font-weight: 900; color:#F9FAFB; }
+    </mj-style>
   </mj-head>
 
-  <mj-body background-color="#f5f7fb">
-    <!-- Header with logo -->
-    <mj-section padding="18px 16px 10px" background-color="#f5f7fb">
-      <mj-column>
-        <mj-image
-          src="{{logo_url}}"
-          width="{{logo_width}}"
-          href="{{logo_link}}"
-          alt="{{logo_alt}}"
-          align="left"
-          padding="0"
-        />
-      </mj-column>
-    </mj-section>
+  <mj-body background-color="#0B0F1A">
 
-    <!-- Main card -->
-    <mj-section padding="0 16px 16px" background-color="#f5f7fb">
-      <mj-column padding="0">
-        <mj-wrapper padding="0" background-color="#ffffff" border-radius="18px">
+    <!-- Outer padding -->
+    <mj-wrapper padding="24px 0" background-color="#0B0F1A">
 
-          <!-- Intro -->
-          <mj-section padding="22px 22px 12px" background-color="#ffffff" border-radius="18px 18px 0 0">
-            <mj-column>
-              <mj-text padding="0 0 10px">
-                Hi {{first_name}},
-              </mj-text>
+      <!-- Logo row -->
+      <mj-section background-color="#0B0F1A" padding="0 16px 12px">
+        <mj-column>
+          <mj-image
+            src="{{logo_url}}"
+            width="{{logo_width}}"
+            href="{{logo_link}}"
+            alt="{{logo_alt}}"
+            align="left"
+            padding="0"
+          />
+        </mj-column>
+      </mj-section>
 
-              <mj-text font-size="22px" font-weight="900" line-height="30px" padding="0 0 10px">
-                The <span style="font-weight:900;">{{company_name}} waitlist is officially open</span>.
-              </mj-text>
+      <!-- CARD (one section, one column, no nested sections) -->
+      <mj-section
+        background-color="#0B1220"
+        border-radius="20px"
+        padding="22px"
+      >
+        <mj-column>
 
-              <mj-text font-size="15px" line-height="24px" color="#374151" padding="0 0 10px">
-                Join if you want your taxes handled with structure (not last-minute panic).
-                We cap spots so every account gets proper attention.
-              </mj-text>
+          <mj-text padding="0 0 10px">
+            Hi {{first_name}},
+          </mj-text>
 
-              <mj-text font-size="15px" line-height="24px" color="#374151" padding="0 0 16px">
-                You’ll get the right prep checklist + first access to booking when we open.
-              </mj-text>
+          <mj-text css-class="h1" padding="0 0 12px">
+            {{company_name}} is opening the waitlist today.
+          </mj-text>
 
-              <mj-button
-                href="{{waitlist_link}}"
-                background-color="#111827"
-                color="#ffffff"
-                border-radius="12px"
-                inner-padding="12px 18px"
-                padding="0"
-                align="left"
-              >
-                Join SW Tax Service Waitlist
-              </mj-button>
+          <mj-text padding="0 0 14px">
+            This is for people who want to get organized <strong>before</strong> tax season gets stressful and rushed.
+          </mj-text>
 
-              <mj-text font-size="13px" line-height="20px" color="#6b7280" padding="10px 0 0">
-                Or copy/paste this link: {{waitlist_link}}
-              </mj-text>
-            </mj-column>
-          </mj-section>
+          <mj-text padding="0 0 6px">
+            You’ll get:
+          </mj-text>
 
-          <!-- Who this is for -->
-          <mj-section padding="8px 22px 6px" background-color="#ffffff">
-            <mj-column>
-              <mj-divider border-width="1px" border-style="solid" border-color="#e5e7eb" padding="10px 0 16px" />
+          <mj-text padding="0 0 12px">
+            • Priority access to booking when spots open<br/>
+            • A simple prep checklist so you can start gathering what you need<br/>
+            • Clear next steps (no confusion)
+          </mj-text>
 
-              <mj-text font-size="16px" font-weight="900" padding="0 0 10px">
-                Who this is for
-              </mj-text>
+          <mj-button
+            href="{{waitlist_link}}"
+            background-color="#E00040"
+            color="#ffffff"
+            inner-padding="12px 18px"
+            padding="4px 0 0"
+            align="left"
+          >
+            Join the waitlist
+          </mj-button>
 
-              <mj-text font-size="15px" line-height="24px" padding="0 0 6px">
-                • Individuals & families (W-2, dependents, credits)
-              </mj-text>
-              <mj-text font-size="15px" line-height="24px" padding="0 0 6px">
-                • 1099 / self-employed (write-offs, mileage, tracking)
-              </mj-text>
-              <mj-text font-size="15px" line-height="24px" padding="0">
-                • Small businesses (clean numbers, organized records)
-              </mj-text>
-            </mj-column>
-          </mj-section>
+          <mj-text font-size="13px" line-height="20px" css-class="muted" padding="10px 0 0">
+            Prefer the link? <a class="link" href="{{waitlist_link}}">Join the waitlist</a>
+          </mj-text>
 
-          <!-- PS + signature -->
-          <mj-section padding="8px 22px 18px" background-color="#ffffff">
-            <mj-column>
-              <mj-divider border-width="1px" border-style="solid" border-color="#e5e7eb" padding="10px 0 16px" />
+          <mj-divider border-width="1px" border-style="solid" border-color="#1F2937" padding="18px 0" />
 
-              <mj-text font-size="14px" line-height="22px" color="#374151" padding="0 0 12px">
-                <strong>P.S.</strong> Reply with <strong>W-2</strong>, <strong>1099</strong>, or <strong>Business</strong>
-                and I’ll send the right prep checklist.
-              </mj-text>
+          <mj-text padding="0 0 10px">
+            <strong>P.S.</strong> We limit spots so every client gets real attention.
+          </mj-text>
 
-              <mj-text padding="0 0 4px">
-                {{signature_name}}
-              </mj-text>
+          <mj-text padding="0 0 2px">
+            {{signature_name}}
+          </mj-text>
 
-              <mj-text font-size="12px" line-height="18px" color="#6b7280" padding="8px 0 0">
-                {{company_name}}<br/>
-                Support: {{support_email}}<br/>
-                Website: {{website}}
-              </mj-text>
-            </mj-column>
-          </mj-section>
+          <mj-text font-size="12px" line-height="18px" css-class="muted" padding="10px 0 0">
+            {{company_name}}<br/>
+            Support: <a class="link" href="mailto:{{support_email}}">{{support_email}}</a><br/>
+            Website: <a class="link" href="{{website}}">{{website}}</a>
+          </mj-text>
 
-          <!-- Footer (recommended to centralize compliance/unsubscribe here) -->
-          <mj-section padding="0 22px 22px" background-color="#ffffff" border-radius="0 0 18px 18px">
-            <mj-column>
-              {{#if footer_html}}
-                <mj-text font-size="12px" line-height="18px" color="#6b7280" padding="0">
-                  {{safe footer_html}}
-                </mj-text>
-              {{else}}
-                <mj-text font-size="12px" line-height="18px" color="#6b7280" padding="0">
-                  {{footer_text}}
-                </mj-text>
-              {{/if}}
+          <mj-divider border-width="1px" border-style="solid" border-color="#1F2937" padding="18px 0 12px" />
 
-              {{#if unsubscribe_link}}
-                <mj-text font-size="12px" line-height="18px" color="#6b7280" padding="10px 0 0">
-                  <a href="{{unsubscribe_link}}" style="color:#6b7280; text-decoration:underline;">Unsubscribe</a>
-                </mj-text>
-              {{/if}}
-            </mj-column>
-          </mj-section>
+          <!-- Footer (render-time injection) -->
+          {{#if footer_html}}
+            {{{footer_html}}}
+          {{else}}
+            <mj-text font-size="12px" line-height="18px" css-class="muted" padding="0">
+              {{footer_text}}
+            </mj-text>
+          {{/if}}
 
-        </mj-wrapper>
-      </mj-column>
-    </mj-section>
+          {{#if unsubscribe_link}}
+            <mj-text font-size="12px" line-height="18px" css-class="muted" padding="10px 0 0">
+              <a class="link" href="{{unsubscribe_link}}">Unsubscribe</a>
+            </mj-text>
+          {{/if}}
+
+        </mj-column>
+      </mj-section>
+
+    </mj-wrapper>
   </mj-body>
 </mjml>
   `.trim(),
@@ -154,20 +135,19 @@ export const template: EmailTemplate = {
   text: `
 Hi {{first_name}},
 
-The {{company_name}} waitlist is officially open.
+{{company_name}} is opening the waitlist today.
 
-Join if you want your taxes handled with structure (not last-minute panic).
-We cap spots so every account gets proper attention.
+This is for people who want to get organized BEFORE tax season gets stressful and rushed.
 
-Join now:
+You’ll get:
+- Priority access to booking when spots open
+- A simple prep checklist so you can start gathering what you need
+- Clear next steps (no confusion)
+
+Join the waitlist:
 {{waitlist_link}}
 
-Who this is for:
-- Individuals & families (W-2, dependents, credits)
-- 1099 / self-employed (write-offs, mileage, tracking)
-- Small businesses (clean numbers, organized records)
-
-P.S. Reply with W-2, 1099, or Business and I’ll send the right prep checklist.
+P.S. We limit spots so every client gets real attention.
 
 {{signature_name}}
 
@@ -185,12 +165,10 @@ Website: {{website}}
     "signature_name",
     "support_email",
     "website",
-
     "logo_url",
     "logo_alt",
     "logo_link",
     "logo_width",
-
     "footer_html",
     "footer_text",
     "unsubscribe_link",

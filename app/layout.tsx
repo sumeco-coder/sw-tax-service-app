@@ -91,10 +91,7 @@ export default function RootLayout({
         ========================= */}
         {gaId ? (
           <>
-            <Script
-              src={`https://www.googletagmanager.com/gtag/js?id=${gaId}`}
-              strategy="afterInteractive"
-            />
+            <script async src="https://www.googletagmanager.com/gtag/js?id=G-G0QHL2JC6N"></script>
             <Script id="ga4" strategy="afterInteractive">
               {`
                 window.dataLayer = window.dataLayer || [];

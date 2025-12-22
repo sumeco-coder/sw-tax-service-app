@@ -61,6 +61,7 @@
     "@aws-amplify/backend": "^1.16.1",
     "@aws-amplify/backend-cli": "^1.8.0",
     "@tailwindcss/postcss": "^4",
+    "@types/handlebars": "^4.0.40",
     "@types/html-to-text": "^9.0.4",
     "@types/mjml": "^4.7.4",
     "@types/node": "^20",

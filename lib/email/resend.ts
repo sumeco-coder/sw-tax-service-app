@@ -5,6 +5,13 @@ import { Resend } from "resend";
 const defaultFrom =
   process.env.RESEND_FROM_EMAIL ?? "SW Tax Service <no-reply@swtaxservice.com>";
 
+export type ResendAttachment = {
+  filename: string;
+  content?: string; // base64
+  path?: string; // public URL
+  contentId?: string;
+};
+
 export type ResendEmailInput = {
   to: string | string[];
   subject: string;
@@ -12,9 +19,9 @@ export type ResendEmailInput = {
   htmlBody?: string;
   from?: string;
 
-  // ✅ extras
   replyTo?: string;
   headers?: Record<string, string>;
+  attachments?: ResendAttachment[];
 };
 
 function getResendClient() {
@@ -35,5 +42,11 @@ export async function sendResendEmail(input: ResendEmailInput) {
     html: input.htmlBody,
     reply_to: input.replyTo,
     headers: input.headers,
+    attachments: input.attachments?.map((a) => ({
+      filename: a.filename,
+      content: a.content,
+      path: a.path,
+      contentId: a.contentId,
+    })),
   } as any);
 }

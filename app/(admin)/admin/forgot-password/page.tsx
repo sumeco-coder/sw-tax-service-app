@@ -1,8 +1,9 @@
 // app/(admin)/admin/forgot-password/page.tsx
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useCallback } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { resetPassword, confirmResetPassword } from "aws-amplify/auth";
 import { configureAmplify } from "@/lib/amplifyClient";
 
@@ -11,57 +12,79 @@ configureAmplify();
 type Step = "request" | "confirm";
 
 export default function AdminForgotPasswordPage() {
+  const router = useRouter();
+
   const [step, setStep] = useState<Step>("request");
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
   const [newPassword, setNewPassword] = useState("");
+
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState("");
 
   const username = useMemo(() => email.trim().toLowerCase(), [email]);
 
-  async function sendCode(e: React.FormEvent) {
-    e.preventDefault();
-    setMsg("");
-    setLoading(true);
+  const sendCode = useCallback(
+    async (e?: React.FormEvent) => {
+      e?.preventDefault();
+      setMsg("");
+      setLoading(true);
 
-    try {
-      const out = await resetPassword({ username });
+      try {
+        const out = await resetPassword({ username });
 
-      if (out.nextStep?.resetPasswordStep === "CONFIRM_RESET_PASSWORD_WITH_CODE") {
-        const dest = out.nextStep.codeDeliveryDetails?.destination;
-        setMsg(dest ? `Reset code sent to ${dest}.` : "Reset code sent. Check your email.");
+        if (
+          out.nextStep?.resetPasswordStep === "CONFIRM_RESET_PASSWORD_WITH_CODE"
+        ) {
+          const dest = out.nextStep.codeDeliveryDetails?.destination;
+          setMsg(dest ? `Reset code sent to ${dest}.` : "Reset code sent. Check your email.");
+        } else {
+          // Cognito often responds generically; keep it generic to avoid account enumeration
+          setMsg("If the account exists, a reset code has been sent.");
+        }
+
         setStep("confirm");
-      } else {
-        setMsg("If the account exists, a reset code has been sent.");
-        setStep("confirm");
+      } catch (err: any) {
+        setMsg(String(err?.message ?? "Could not send reset code."));
+      } finally {
+        setLoading(false);
       }
-    } catch (err: any) {
-      setMsg(String(err?.message ?? "Could not send reset code."));
-    } finally {
-      setLoading(false);
+    },
+    [username]
+  );
+
+  const resendCode = useCallback(async () => {
+    if (!username) {
+      setMsg("Enter your email first.");
+      setStep("request");
+      return;
     }
-  }
+    await sendCode(); // re-use same logic, but without an event
+  }, [sendCode, username]);
 
-  async function confirm(e: React.FormEvent) {
-    e.preventDefault();
-    setMsg("");
-    setLoading(true);
+  const confirm = useCallback(
+    async (e: React.FormEvent) => {
+      e.preventDefault();
+      setMsg("");
+      setLoading(true);
 
-    try {
-      await confirmResetPassword({
-        username,
-        confirmationCode: code.trim(),
-        newPassword,
-      });
+      try {
+        await confirmResetPassword({
+          username,
+          confirmationCode: code.trim(),
+          newPassword,
+        });
 
-      setMsg("Password updated. You can sign in now.");
-    } catch (err: any) {
-      setMsg(String(err?.message ?? "Could not reset password."));
-    } finally {
-      setLoading(false);
-    }
-  }
+        setMsg("Password updated. Redirecting to admin sign-in…");
+        setTimeout(() => router.replace("/admin/sign-in"), 700);
+      } catch (err: any) {
+        setMsg(String(err?.message ?? "Could not reset password."));
+      } finally {
+        setLoading(false);
+      }
+    },
+    [username, code, newPassword, router]
+  );
 
   return (
     <div className="min-h-[calc(100vh-140px)] flex items-center justify-center px-4 py-10">
@@ -151,6 +174,9 @@ export default function AdminForgotPasswordPage() {
                 autoComplete="new-password"
                 required
               />
+              <p className="mt-1 text-xs text-slate-500">
+                Tip: Use 8+ chars with a mix of upper/lowercase, a number, and a symbol (depending on your pool policy).
+              </p>
             </label>
 
             <button
@@ -164,12 +190,9 @@ export default function AdminForgotPasswordPage() {
             <div className="mt-2 flex items-center justify-between text-sm">
               <button
                 type="button"
-                onClick={() => {
-                  setStep("request");
-                  setCode("");
-                  setMsg("");
-                }}
-                className="text-slate-600 hover:underline"
+                disabled={loading}
+                onClick={resendCode}
+                className="text-slate-600 hover:underline disabled:opacity-60"
               >
                 Resend code
               </button>
