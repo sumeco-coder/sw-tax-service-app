@@ -36,7 +36,6 @@ function isAdminFromPayload(payload: any) {
 
 function friendlyError(err: any) {
   const msg = String(err?.message ?? "Sign-in failed.");
-  // Optional: map common errors to nicer text
   if (msg.includes("Incorrect username or password")) return "Invalid email or password.";
   if (msg.includes("User does not exist")) return "No account found for that email.";
   if (msg.includes("User is disabled")) return "This account is disabled.";
@@ -61,17 +60,14 @@ async function syncServerCookiesFromSession() {
 }
 
 async function hardSignOut() {
-  // Local sign out first (faster)
   try {
     await signOut();
   } catch {}
 
-  // Attempt to clear server cookies too
   try {
     await fetch("/api/auth/logout", { method: "POST" });
   } catch {}
 
-  // If a stuck global session happens, fall back
   try {
     await signOut({ global: true });
   } catch {}
@@ -120,10 +116,8 @@ export default function SignInAdmin() {
     async (nextStep: any) => {
       const step = nextStep?.signInStep;
 
-      // Some pools require you to choose first factor (email otp, etc.)
       if (step === "CONTINUE_SIGN_IN_WITH_FIRST_FACTOR_SELECTION") {
         const { nextStep: ns } = await confirmSignIn({
-          // choose email otp by default if supported
           challengeResponse: "EMAIL_OTP" as any,
         });
         return applyNextStep(ns);
@@ -141,7 +135,6 @@ export default function SignInAdmin() {
         return;
       }
 
-      // Optional: if your pool ever requires setup steps
       if (step === "CONTINUE_SIGN_IN_WITH_EMAIL_SETUP") {
         setPhase("setup-email");
         setMsg("Enter the email address to receive one-time codes.");
@@ -166,14 +159,13 @@ export default function SignInAdmin() {
     [finishAdminLogin]
   );
 
-  // On load: if session exists, sync cookies -> if admin go /admin, else sign out
   useEffect(() => {
     let cancelled = false;
 
     (async () => {
       setPhase("checking");
       try {
-        await getCurrentUser(); // throws if not signed in
+        await getCurrentUser();
         const session = await syncServerCookiesFromSession();
         const payload: any = session?.tokens?.idToken?.payload ?? {};
 
@@ -185,7 +177,6 @@ export default function SignInAdmin() {
           return;
         }
 
-        // signed in but not admin -> clear
         await hardSignOut();
       } catch {
         // not signed in
@@ -206,14 +197,11 @@ export default function SignInAdmin() {
       setLoading(true);
 
       try {
-        // Clear any existing session before signing in
         await hardSignOut();
 
         const { nextStep } = await signIn({
           username: normalizeUsername(email),
           password,
-          // Optional: if you WANT admin to prefer email OTP
-          // options: { preferredChallenge: "EMAIL_OTP" as any },
         });
 
         await applyNextStep(nextStep);
@@ -306,14 +294,13 @@ export default function SignInAdmin() {
               />
             </label>
 
+            {/* ✅ Option 1: disable forgot password until SES approved */}
             <div className="flex items-center justify-between">
               <span className="text-xs text-slate-500">Having trouble signing in?</span>
-              <Link
-                href="/admin/forgot-password"
-                className="text-xs font-medium text-slate-700 hover:underline"
-              >
-                Forgot password?
-              </Link>
+              <span className="text-xs text-slate-600">
+                Reset disabled — contact{" "}
+                <span className="font-medium">support@swtaxservice.com</span>
+              </span>
             </div>
 
             <button
@@ -373,12 +360,12 @@ export default function SignInAdmin() {
               >
                 Back
               </button>
-              <Link
-                href="/admin/forgot-password"
-                className="text-sm font-semibold text-slate-700 hover:underline"
-              >
-                Forgot password?
-              </Link>
+
+              {/* ✅ remove forgot-password link here too */}
+              <span className="text-sm text-slate-600">
+                Reset disabled — contact{" "}
+                <span className="font-medium">support@swtaxservice.com</span>
+              </span>
             </div>
           </form>
         )}
