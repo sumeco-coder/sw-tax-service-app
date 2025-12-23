@@ -1,5 +1,5 @@
 // lib/email/templatePlaceholders.ts
-import "server-only";
+
 import { EMAIL_PLACEHOLDERS, type EmailPlaceholder } from "@/types/email";
 
 export function extractPlaceholders(input: string): EmailPlaceholder[] {

@@ -1,6 +1,5 @@
 // lib/email/appointments.ts
-// lib/email/appointments.ts
-import "server-only";
+
 
 import { sendEmail } from "./sendEmail";
 

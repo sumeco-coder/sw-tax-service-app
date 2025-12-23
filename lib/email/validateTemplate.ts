@@ -1,5 +1,5 @@
 // lib/email/validateTemplate.ts
-import "server-only";
+
 import { extractPlaceholders } from "@/lib/email/templatePlaceholders";
 import { EMAIL_PLACEHOLDERS, type EmailPlaceholder } from "@/types/email";
 

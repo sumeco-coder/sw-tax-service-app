@@ -28,24 +28,48 @@ export default function AdminForgotPasswordPage() {
     async (e?: React.FormEvent) => {
       e?.preventDefault();
       setMsg("");
+
+      if (!username) {
+        setMsg("Enter your email first.");
+        return;
+      }
+
       setLoading(true);
 
       try {
+        console.log("[forgot-password] calling resetPassword with:", username);
+
         const out = await resetPassword({ username });
+
+        console.log("[forgot-password] resetPassword result:", out);
 
         if (
           out.nextStep?.resetPasswordStep === "CONFIRM_RESET_PASSWORD_WITH_CODE"
         ) {
           const dest = out.nextStep.codeDeliveryDetails?.destination;
-          setMsg(dest ? `Reset code sent to ${dest}.` : "Reset code sent. Check your email.");
-        } else {
-          // Cognito often responds generically; keep it generic to avoid account enumeration
-          setMsg("If the account exists, a reset code has been sent.");
+          setMsg(
+            dest
+              ? `Reset code sent to ${dest}.`
+              : "Reset code sent. Check your email."
+          );
+          setStep("confirm");
+          return;
         }
 
+        // Some configs can return DONE or other steps
+        setMsg("If the account exists, a reset code has been sent.");
         setStep("confirm");
       } catch (err: any) {
-        setMsg(String(err?.message ?? "Could not send reset code."));
+        console.error("[forgot-password] resetPassword error:", err);
+        console.error(
+          "[forgot-password] full error:",
+          JSON.stringify(err, null, 2)
+        );
+
+        // Show something useful (temporarily)
+        const name = err?.name || err?.__type;
+        const message = err?.message || "Could not send reset code.";
+        setMsg(`${name ? `${name}: ` : ""}${message}`);
       } finally {
         setLoading(false);
       }
@@ -93,7 +117,9 @@ export default function AdminForgotPasswordPage() {
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
             SW Tax Service • Admin
           </p>
-          <h1 className="mt-1 text-2xl font-bold text-slate-900">Reset Password</h1>
+          <h1 className="mt-1 text-2xl font-bold text-slate-900">
+            Reset Password
+          </h1>
           <p className="mt-1 text-sm text-slate-600">
             {step === "request"
               ? "Enter your admin email to receive a reset code."
@@ -130,7 +156,10 @@ export default function AdminForgotPasswordPage() {
             </button>
 
             <div className="mt-2 flex items-center justify-between text-sm">
-              <Link href="/admin/sign-in" className="text-slate-600 hover:underline">
+              <Link
+                href="/admin/sign-in"
+                className="text-slate-600 hover:underline"
+              >
                 Back to admin sign-in
               </Link>
               <Link href="/" className="text-slate-600 hover:underline">
@@ -153,7 +182,9 @@ export default function AdminForgotPasswordPage() {
             </label>
 
             <label className="block">
-              <span className="text-sm font-medium text-slate-700">Reset code</span>
+              <span className="text-sm font-medium text-slate-700">
+                Reset code
+              </span>
               <input
                 className="mt-1 w-full rounded-xl border px-3 py-2 text-sm"
                 value={code}
@@ -165,7 +196,9 @@ export default function AdminForgotPasswordPage() {
             </label>
 
             <label className="block">
-              <span className="text-sm font-medium text-slate-700">New password</span>
+              <span className="text-sm font-medium text-slate-700">
+                New password
+              </span>
               <input
                 className="mt-1 w-full rounded-xl border px-3 py-2 text-sm"
                 type="password"
@@ -175,7 +208,8 @@ export default function AdminForgotPasswordPage() {
                 required
               />
               <p className="mt-1 text-xs text-slate-500">
-                Tip: Use 8+ chars with a mix of upper/lowercase, a number, and a symbol (depending on your pool policy).
+                Tip: Use 8+ chars with a mix of upper/lowercase, a number, and a
+                symbol (depending on your pool policy).
               </p>
             </label>
 
@@ -197,7 +231,10 @@ export default function AdminForgotPasswordPage() {
                 Resend code
               </button>
 
-              <Link href="/admin/sign-in" className="text-slate-600 hover:underline">
+              <Link
+                href="/admin/sign-in"
+                className="text-slate-600 hover:underline"
+              >
                 Back to admin sign-in
               </Link>
             </div>

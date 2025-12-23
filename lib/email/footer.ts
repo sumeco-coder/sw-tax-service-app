@@ -1,5 +1,4 @@
 // app/lib/email/footer.ts (or lib/email/footer.ts)
-import "server-only";
 
 export type FooterMode = "marketing" | "transactional" | "tax_advice";
 

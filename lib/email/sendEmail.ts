@@ -1,6 +1,4 @@
 // lib/email/sendEmail.ts
-"use server";
-
 import { sendSesEmail } from "./ses";
 import { sendResendEmail, type ResendAttachment } from "./resend";
 

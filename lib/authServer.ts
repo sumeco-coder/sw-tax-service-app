@@ -2,7 +2,7 @@
 // ❗ UI-only — NOT for authorization
 
 import { cookies } from "next/headers";
-import { db } from "@/drizzle/client";
+import { db } from "@/drizzle/client-core";
 import { users } from "@/drizzle/schema";
 import { eq } from "drizzle-orm";
 

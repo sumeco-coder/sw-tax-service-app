@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { db } from "@/drizzle/client";
+import { db } from "@/drizzle/client-core";
 import { courses, modules } from "@/drizzle/schema";
 import { eq, and, desc } from "drizzle-orm";
 import { z } from "zod";

@@ -1,4 +1,3 @@
-import "server-only";
 
 export const DEFAULT_EMAIL_VARS = {
   company_name: "SW Tax Service",

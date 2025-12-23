@@ -1,7 +1,7 @@
 // app/api/lms/modules/[moduleId]/lessons/route.ts
 
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/drizzle/client";
+import { db } from "@/drizzle/client-core";
 import { modules, lessons, courses } from "@/drizzle/schema";
 import { eq, and, desc } from "drizzle-orm";
 import { z } from "zod";

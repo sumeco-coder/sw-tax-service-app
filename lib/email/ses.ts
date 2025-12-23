@@ -1,5 +1,3 @@
-"use server";
-
 import {
   SESv2Client,
   SendEmailCommand,

@@ -1,6 +1,6 @@
 // app/api/lms/sop/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/drizzle/client";
+import { db } from "@/drizzle/client-core";
 import { sopFiles } from "@/drizzle/schema";
 import { z } from "zod";
 import { getLmsUser } from "@/lib/lms/getUser";

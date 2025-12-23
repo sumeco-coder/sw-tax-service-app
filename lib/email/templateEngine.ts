@@ -1,5 +1,4 @@
 // lib/email/templateEngine.ts
-import "server-only";
 
 // ✅ Use the dist build to avoid the webpack warning about require.extensions
 import Handlebars from "handlebars";
