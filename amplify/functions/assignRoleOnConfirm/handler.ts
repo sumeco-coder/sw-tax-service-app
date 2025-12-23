@@ -5,7 +5,7 @@ import {
   AdminUpdateUserAttributesCommand,
 } from "@aws-sdk/client-cognito-identity-provider";
 
-import { env } from "$amplify/env/assignRoleOnConfirm";
+const env = process.env;
 
 const cognito = new CognitoIdentityProviderClient({});
 
