@@ -1,6 +1,7 @@
 {
   "name": "emailCampaignRunner",
   "private": true,
+  "type": "module",
   "dependencies": {
     "mjml": "^4.15.3",
     "uglify-js": "^3.19.3",
