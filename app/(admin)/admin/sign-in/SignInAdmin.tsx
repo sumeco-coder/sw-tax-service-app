@@ -1,7 +1,7 @@
 // app/(admin)/admin/sign-in/SignInAdmin.tsx
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { configureAmplify } from "@/lib/amplifyClient";
@@ -15,12 +15,33 @@ import {
 
 configureAmplify();
 
-type Phase = "signin" | "mfa-email" | "mfa-totp" | "done";
+type Phase =
+  | "checking"
+  | "signin"
+  | "mfa-email"
+  | "mfa-totp"
+  | "setup-email"
+  | "setup-totp"
+  | "done";
+
+function normalizeUsername(email: string) {
+  return email.trim().toLowerCase();
+}
 
 function isAdminFromPayload(payload: any) {
   const role = payload?.["custom:role"];
   const groups: string[] = payload?.["cognito:groups"] ?? [];
   return role === "admin" || groups.includes("admin");
+}
+
+function friendlyError(err: any) {
+  const msg = String(err?.message ?? "Sign-in failed.");
+  // Optional: map common errors to nicer text
+  if (msg.includes("Incorrect username or password")) return "Invalid email or password.";
+  if (msg.includes("User does not exist")) return "No account found for that email.";
+  if (msg.includes("User is disabled")) return "This account is disabled.";
+  if (msg.includes("Too many failed attempts")) return "Too many attempts. Try again later.";
+  return msg;
 }
 
 async function syncServerCookiesFromSession() {
@@ -40,67 +61,48 @@ async function syncServerCookiesFromSession() {
 }
 
 async function hardSignOut() {
+  // Local sign out first (faster)
   try {
-    await signOut({ global: true });
-  } catch {
-    try {
-      await signOut();
-    } catch {}
-  }
+    await signOut();
+  } catch {}
+
+  // Attempt to clear server cookies too
   try {
     await fetch("/api/auth/logout", { method: "POST" });
   } catch {}
+
+  // If a stuck global session happens, fall back
+  try {
+    await signOut({ global: true });
+  } catch {}
+
   await new Promise((r) => setTimeout(r, 150));
 }
 
-export default function SignInClient() {
+export default function SignInAdmin() {
   const router = useRouter();
 
-  const [phase, setPhase] = useState<Phase>("signin");
+  const [phase, setPhase] = useState<Phase>("checking");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
+  const [totpUri, setTotpUri] = useState<string | null>(null);
 
-  const [checking, setChecking] = useState(true);
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState("");
 
-  // On load:
-  // - if a session exists, sync cookies -> if admin go /admin, else sign out
-  useEffect(() => {
-    let cancelled = false;
-
-    (async () => {
-      try {
-        await getCurrentUser(); // throws if not signed in
-        const session = await syncServerCookiesFromSession();
-        const payload: any = session?.tokens?.idToken?.payload ?? {};
-
-        if (cancelled) return;
-
-        if (isAdminFromPayload(payload)) {
-          router.replace("/admin");
-          router.refresh();
-          return;
-        }
-
-        // signed in but not admin -> clear
-        await hardSignOut();
-      } catch {
-        // not signed in
-      } finally {
-        if (!cancelled) setChecking(false);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [router]);
+  const canSubmit = useMemo(() => !loading, [loading]);
 
   const finishAdminLogin = useCallback(async () => {
     const session = await syncServerCookiesFromSession();
     const payload: any = session?.tokens?.idToken?.payload ?? {};
+
+    if (!session) {
+      await hardSignOut();
+      setMsg("Session missing. Please sign in again.");
+      setPhase("signin");
+      return;
+    }
 
     if (!isAdminFromPayload(payload)) {
       await hardSignOut();
@@ -114,6 +116,89 @@ export default function SignInClient() {
     router.refresh();
   }, [router]);
 
+  const applyNextStep = useCallback(
+    async (nextStep: any) => {
+      const step = nextStep?.signInStep;
+
+      // Some pools require you to choose first factor (email otp, etc.)
+      if (step === "CONTINUE_SIGN_IN_WITH_FIRST_FACTOR_SELECTION") {
+        const { nextStep: ns } = await confirmSignIn({
+          // choose email otp by default if supported
+          challengeResponse: "EMAIL_OTP" as any,
+        });
+        return applyNextStep(ns);
+      }
+
+      if (step === "CONFIRM_SIGN_IN_WITH_EMAIL_CODE") {
+        setPhase("mfa-email");
+        setMsg("Enter the code sent to your email.");
+        return;
+      }
+
+      if (step === "CONFIRM_SIGN_IN_WITH_TOTP_CODE") {
+        setPhase("mfa-totp");
+        setMsg("Enter the 6-digit code from your authenticator app.");
+        return;
+      }
+
+      // Optional: if your pool ever requires setup steps
+      if (step === "CONTINUE_SIGN_IN_WITH_EMAIL_SETUP") {
+        setPhase("setup-email");
+        setMsg("Enter the email address to receive one-time codes.");
+        return;
+      }
+
+      if (step === "CONTINUE_SIGN_IN_WITH_TOTP_SETUP") {
+        const uri = (nextStep as any)?.totpSetupDetails?.getSetupUri?.() ?? null;
+        if (uri) setTotpUri(uri);
+        setPhase("setup-totp");
+        setMsg("Scan the QR / use the key, then enter a 6-digit code.");
+        return;
+      }
+
+      if (step === "DONE") {
+        await finishAdminLogin();
+        return;
+      }
+
+      setMsg(step ? `Additional step required: ${step}` : "Sign-in incomplete.");
+    },
+    [finishAdminLogin]
+  );
+
+  // On load: if session exists, sync cookies -> if admin go /admin, else sign out
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      setPhase("checking");
+      try {
+        await getCurrentUser(); // throws if not signed in
+        const session = await syncServerCookiesFromSession();
+        const payload: any = session?.tokens?.idToken?.payload ?? {};
+
+        if (cancelled) return;
+
+        if (session && isAdminFromPayload(payload)) {
+          router.replace("/admin");
+          router.refresh();
+          return;
+        }
+
+        // signed in but not admin -> clear
+        await hardSignOut();
+      } catch {
+        // not signed in
+      } finally {
+        if (!cancelled) setPhase("signin");
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [router]);
+
   const handleSignIn = useCallback(
     async (e?: React.FormEvent) => {
       e?.preventDefault();
@@ -125,44 +210,23 @@ export default function SignInClient() {
         await hardSignOut();
 
         const { nextStep } = await signIn({
-          username: email.trim().toLowerCase(),
+          username: normalizeUsername(email),
           password,
-          // keep default, or force email OTP if your pool is configured that way:
+          // Optional: if you WANT admin to prefer email OTP
           // options: { preferredChallenge: "EMAIL_OTP" as any },
         });
 
-        const step = nextStep?.signInStep;
-
-        if (step === "CONFIRM_SIGN_IN_WITH_EMAIL_CODE") {
-          setPhase("mfa-email");
-          setMsg("Enter the code sent to your email.");
-          return;
-        }
-
-        if (step === "CONFIRM_SIGN_IN_WITH_TOTP_CODE") {
-          setPhase("mfa-totp");
-          setMsg("Enter the 6-digit code from your authenticator app.");
-          return;
-        }
-
-        if (step === "DONE") {
-          await finishAdminLogin();
-          return;
-        }
-
-        // If your pool ever returns other steps, show it (so you can handle later)
-        setMsg(step ? `Additional step required: ${step}` : "Sign-in incomplete.");
+        await applyNextStep(nextStep);
       } catch (err: any) {
-        const message = String(err?.message ?? "Sign-in failed.");
-        setMsg(message);
+        setMsg(friendlyError(err));
       } finally {
         setLoading(false);
       }
     },
-    [email, password, finishAdminLogin]
+    [email, password, applyNextStep]
   );
 
-  const handleConfirmMfa = useCallback(
+  const handleConfirm = useCallback(
     async (e?: React.FormEvent) => {
       e?.preventDefault();
       setMsg("");
@@ -170,25 +234,26 @@ export default function SignInClient() {
 
       try {
         const { nextStep } = await confirmSignIn({
-          challengeResponse: code.trim(),
+          challengeResponse:
+            phase === "setup-email" ? normalizeUsername(email) : code.trim(),
         });
 
-        if (nextStep?.signInStep === "DONE") {
-          await finishAdminLogin();
-          return;
-        }
-
-        setMsg(nextStep?.signInStep ? `Next: ${nextStep.signInStep}` : "Try again.");
+        await applyNextStep(nextStep);
       } catch (err: any) {
-        setMsg(String(err?.message ?? "Invalid code."));
+        setMsg(friendlyError(err));
       } finally {
         setLoading(false);
       }
     },
-    [code, finishAdminLogin]
+    [phase, code, email, applyNextStep]
   );
 
-  if (checking) return null;
+  const resetToSignin = useCallback(() => {
+    setPhase("signin");
+    setCode("");
+    setTotpUri(null);
+    setMsg("");
+  }, []);
 
   return (
     <div className="min-h-[calc(100vh-140px)] flex items-center justify-center px-4 py-10">
@@ -208,6 +273,12 @@ export default function SignInClient() {
             {msg}
           </div>
         ) : null}
+
+        {phase === "checking" && (
+          <div className="rounded-xl border bg-slate-50 px-3 py-3 text-sm text-slate-700">
+            Checking session…
+          </div>
+        )}
 
         {phase === "signin" && (
           <form onSubmit={handleSignIn} className="space-y-3">
@@ -235,7 +306,6 @@ export default function SignInClient() {
               />
             </label>
 
-            {/* ✅ Forgot password */}
             <div className="flex items-center justify-between">
               <span className="text-xs text-slate-500">Having trouble signing in?</span>
               <Link
@@ -248,7 +318,7 @@ export default function SignInClient() {
 
             <button
               type="submit"
-              disabled={loading}
+              disabled={!canSubmit}
               className="w-full rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
             >
               {loading ? "Signing in..." : "Sign in"}
@@ -257,11 +327,14 @@ export default function SignInClient() {
             <button
               type="button"
               onClick={async () => {
+                setLoading(true);
                 await hardSignOut();
                 router.refresh();
+                setLoading(false);
                 setMsg("Signed out.");
               }}
-              className="w-full rounded-xl border px-4 py-2 text-sm font-semibold text-slate-700"
+              disabled={!canSubmit}
+              className="w-full rounded-xl border px-4 py-2 text-sm font-semibold text-slate-700 disabled:opacity-60"
             >
               Force sign out
             </button>
@@ -269,7 +342,7 @@ export default function SignInClient() {
         )}
 
         {(phase === "mfa-email" || phase === "mfa-totp") && (
-          <form onSubmit={handleConfirmMfa} className="space-y-3">
+          <form onSubmit={handleConfirm} className="space-y-3">
             <label className="block">
               <span className="text-sm font-medium text-slate-700">
                 {phase === "mfa-email" ? "Email code" : "Authenticator code"}
@@ -286,7 +359,7 @@ export default function SignInClient() {
 
             <button
               type="submit"
-              disabled={loading}
+              disabled={!canSubmit}
               className="w-full rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
             >
               {loading ? "Confirming..." : "Confirm"}
@@ -295,17 +368,11 @@ export default function SignInClient() {
             <div className="flex items-center justify-between">
               <button
                 type="button"
-                onClick={() => {
-                  setPhase("signin");
-                  setCode("");
-                  setMsg("");
-                }}
+                onClick={resetToSignin}
                 className="text-sm font-semibold text-slate-700 hover:underline"
               >
                 Back
               </button>
-
-              {/* ✅ Forgot password also visible during MFA if needed */}
               <Link
                 href="/admin/forgot-password"
                 className="text-sm font-semibold text-slate-700 hover:underline"
@@ -314,6 +381,63 @@ export default function SignInClient() {
               </Link>
             </div>
           </form>
+        )}
+
+        {(phase === "setup-email" || phase === "setup-totp") && (
+          <form onSubmit={handleConfirm} className="space-y-3">
+            {phase === "setup-totp" && totpUri ? (
+              <div className="text-xs p-3 rounded bg-slate-50 break-all border">
+                <div className="font-medium mb-1">Provisioning URI</div>
+                <div>{totpUri}</div>
+              </div>
+            ) : null}
+
+            {phase === "setup-email" ? (
+              <label className="block">
+                <span className="text-sm font-medium text-slate-700">Email for codes</span>
+                <input
+                  className="mt-1 w-full rounded-xl border px-3 py-2 text-sm"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  inputMode="email"
+                  required
+                />
+              </label>
+            ) : (
+              <label className="block">
+                <span className="text-sm font-medium text-slate-700">6-digit code</span>
+                <input
+                  className="mt-1 w-full rounded-xl border px-3 py-2 text-sm"
+                  value={code}
+                  onChange={(e) => setCode(e.target.value)}
+                  inputMode="numeric"
+                  required
+                />
+              </label>
+            )}
+
+            <button
+              type="submit"
+              disabled={!canSubmit}
+              className="w-full rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
+            >
+              {loading ? "Continuing..." : "Continue"}
+            </button>
+
+            <button
+              type="button"
+              onClick={resetToSignin}
+              className="text-sm font-semibold text-slate-700 hover:underline"
+            >
+              Back
+            </button>
+          </form>
+        )}
+
+        {phase === "done" && (
+          <div className="mt-2 rounded-xl border bg-green-50 px-3 py-3 text-sm text-green-800">
+            Signed in successfully. Redirecting…
+          </div>
         )}
 
         <div className="mt-5 flex items-center justify-between text-sm">

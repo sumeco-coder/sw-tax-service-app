@@ -1,5 +1,4 @@
 // types/email.ts
-import "server-only";
 
 export const EMAIL_PLACEHOLDERS = [
   "company_name",
@@ -22,6 +21,9 @@ export type EmailPlaceholder = (typeof EMAIL_PLACEHOLDERS)[number];
 export type TemplateVars = Partial<
   Record<EmailPlaceholder, string | number | null | undefined>
 >;
+
+// ✅ basic recipient shape used by helpers/actions
+export type Recipient = { email: string };
 
 // ✅ Allow either MJML or HTML (MJML gets compiled to HTML)
 export type EmailTemplate = {

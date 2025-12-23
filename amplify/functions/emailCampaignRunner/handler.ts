@@ -6,7 +6,7 @@ import { sendEmail } from "../../../lib/email/sendEmail";
 import {
   renderTemplate,
   hasUnrenderedTokens,
-} from "../../../lib/helper/render-template";
+} from "../../../lib/helpers/render-template";
 import {
   renderHandlebars,
   isMjml,

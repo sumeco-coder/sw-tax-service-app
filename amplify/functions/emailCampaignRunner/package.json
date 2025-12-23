@@ -1,0 +1,11 @@
+{
+  "name": "emailCampaignRunner",
+  "private": true,
+  "dependencies": {
+    "mjml": "^4.15.3",
+    "uglify-js": "^3.19.3",
+    "pg": "^8.11.5",
+    "resend": "^4.0.0",
+    "@aws-sdk/client-sesv2": "^3.0.0"
+  }
+}

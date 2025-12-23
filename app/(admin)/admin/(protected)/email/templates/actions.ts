@@ -2,7 +2,7 @@
 
 import { ALL_TEMPLATES } from "./_templates";
 import { EMAIL_DEFAULTS } from "@/lib/constants/email-defaults";
-import { renderString, withDefaults } from "@/lib/helper/render-template";
+import { renderString, withDefaults } from "@/lib/helpers/render-template";
 import type { TemplateVars } from "@/types/email";
 
 // ✅ add these
