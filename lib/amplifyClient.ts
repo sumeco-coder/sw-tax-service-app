@@ -1,17 +1,11 @@
 // lib/amplifyClient.ts
 import { Amplify } from "aws-amplify";
-import outputs from "@/amplify_outputs.json";
+import outputs from "../amplify_outputs.json"; // path from project root
 
 let configured = false;
-
 export function configureAmplify() {
-  if (configured) return;
-
-  // TEMP DEBUG (remove after verifying live)
-  if (typeof window !== "undefined") {
-    console.log("amplify_outputs.auth", outputs?.auth);
+  if (!configured) {
+    Amplify.configure(outputs);
+    configured = true;
   }
-
-  Amplify.configure(outputs, { ssr: true });
-  configured = true;
 }
