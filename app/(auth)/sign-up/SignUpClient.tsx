@@ -1,20 +1,21 @@
 // app/(auth)/sign-up/SignUpClient.tsx
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { signUp, confirmSignUp } from "aws-amplify/auth";
-import { configureAmplify } from "@/lib/amplifyClient";
 import Link from "next/link";
-
-configureAmplify();
+import { signUp, confirmSignUp, resendSignUpCode } from "aws-amplify/auth";
+import { configureAmplify } from "@/lib/amplifyClient";
 
 export default function SignUpClient() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  // Invite token from the URL: /taxpayer/onboarding-sign-up?token=ABC123
-  const inviteToken = searchParams.get("token") ?? "";
+  useEffect(() => {
+    configureAmplify();
+  }, []);
+
+  const inviteToken = useMemo(() => searchParams.get("token") ?? "", [searchParams]);
   const hasInviteToken = Boolean(inviteToken);
 
   const [email, setEmail] = useState("");
@@ -24,24 +25,35 @@ export default function SignUpClient() {
   const [msg, setMsg] = useState("");
   const [loading, setLoading] = useState(false);
 
+  const disabledForInvalidToken = !hasInviteToken;
+
+  const cleanEmail = (v: string) => v.trim().toLowerCase();
+
   async function handleSignUp(e: React.FormEvent) {
     e.preventDefault();
     setMsg("");
 
     if (!hasInviteToken) {
-      setMsg(
-        "This onboarding link is invalid or has expired. Please contact support."
-      );
+      setMsg("This onboarding link is invalid or has expired. Please contact support.");
       return;
     }
+
+    const u = cleanEmail(email);
 
     setLoading(true);
     try {
       const { isSignUpComplete, nextStep } = await signUp({
-        username: email,
+        username: u,
         password,
         options: {
-          userAttributes: { email, "custom:inviteToken": inviteToken },
+          userAttributes: {
+            email: u,
+            "custom:inviteToken": inviteToken,
+          },
+          // ✅ so your PostConfirmation trigger can read inviteCode
+          clientMetadata: {
+            inviteCode: inviteToken,
+          },
         },
       });
 
@@ -49,11 +61,15 @@ export default function SignUpClient() {
         setPhase("confirm");
         setMsg(
           `Verification code sent to ${
-            nextStep.codeDeliveryDetails?.destination ?? email
+            nextStep.codeDeliveryDetails?.destination ?? u
           }.`
         );
       } else if (isSignUpComplete) {
         setMsg("Sign-up complete! You can now sign in.");
+        router.push("/sign-in");
+      } else {
+        setPhase("confirm");
+        setMsg("Please check your email for a verification code.");
       }
     } catch (err: any) {
       setMsg(err?.message ?? "Sign-up failed. Try again.");
@@ -66,8 +82,13 @@ export default function SignUpClient() {
     e.preventDefault();
     setMsg("");
     setLoading(true);
+
     try {
-      await confirmSignUp({ username: email, confirmationCode: code.trim() });
+      await confirmSignUp({
+        username: cleanEmail(email),
+        confirmationCode: code.trim(),
+      });
+
       setMsg("Account confirmed! Redirecting to your onboarding...");
       router.push("/onboarding"); // or "/taxpayer/onboarding"
     } catch (err: any) {
@@ -77,7 +98,18 @@ export default function SignUpClient() {
     }
   }
 
-  const disabledForInvalidToken = !hasInviteToken;
+  async function handleResend() {
+    setMsg("");
+    setLoading(true);
+    try {
+      await resendSignUpCode({ username: cleanEmail(email) });
+      setMsg("A new verification code has been sent.");
+    } catch (err: any) {
+      setMsg(err?.message ?? "Could not resend code.");
+    } finally {
+      setLoading(false);
+    }
+  }
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-100">
@@ -86,14 +118,12 @@ export default function SignUpClient() {
           Complete Your Tax Onboarding
         </h2>
         <p className="mt-2 text-center text-sm text-gray-700">
-          You’re off the waitlist 🎉 Create your account to start your SW Tax
-          onboarding.
+          You’re off the waitlist 🎉 Create your account to start your SW Tax onboarding.
         </p>
 
         {!hasInviteToken && (
           <div className="mt-4 text-sm text-red-600 text-center">
-            This onboarding link is invalid or has expired. Please reach out to
-            support to request a new invite.
+            This onboarding link is invalid or has expired. Please reach out to support to request a new invite.
           </div>
         )}
 
@@ -107,6 +137,7 @@ export default function SignUpClient() {
               type="email"
               required
               disabled={disabledForInvalidToken}
+              autoComplete="email"
             />
             <input
               className="w-full px-4 py-2 border rounded-lg"
@@ -116,6 +147,7 @@ export default function SignUpClient() {
               onChange={(e) => setPassword(e.target.value)}
               required
               disabled={disabledForInvalidToken}
+              autoComplete="new-password"
             />
             <button
               type="submit"
@@ -127,10 +159,7 @@ export default function SignUpClient() {
 
             <div className="text-center mt-2 text-sm">
               Already have an account?{" "}
-              <Link
-                href="/sign-in"
-                className="text-blue-700 hover:underline font-semibold"
-              >
+              <Link href="/sign-in" className="text-blue-700 hover:underline font-semibold">
                 Sign in
               </Link>
             </div>
@@ -145,6 +174,7 @@ export default function SignUpClient() {
               inputMode="numeric"
               pattern="[0-9]*"
               required
+              autoComplete="one-time-code"
             />
             <button
               type="submit"
@@ -154,19 +184,25 @@ export default function SignUpClient() {
               {loading ? "Confirming..." : "Confirm Account"}
             </button>
 
+            <button
+              type="button"
+              onClick={handleResend}
+              className="w-full py-2 border rounded-lg hover:bg-gray-50 disabled:opacity-60"
+              disabled={loading}
+            >
+              {loading ? "Sending..." : "Resend code"}
+            </button>
+
             <div className="text-center mt-2 text-sm">
               Already confirmed?{" "}
-              <Link
-                href="/sign-in"
-                className="text-blue-700 hover:underline font-semibold"
-              >
+              <Link href="/sign-in" className="text-blue-700 hover:underline font-semibold">
                 Sign in
               </Link>
             </div>
           </form>
         )}
 
-        <div className="text-sm mt-3 text-gray-700">{msg}</div>
+        {msg && <div className="text-sm mt-3 text-gray-700">{msg}</div>}
       </div>
     </div>
   );

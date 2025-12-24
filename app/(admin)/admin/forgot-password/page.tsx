@@ -7,8 +7,6 @@ import { useRouter } from "next/navigation";
 import { resetPassword, confirmResetPassword } from "aws-amplify/auth";
 import { configureAmplify } from "@/lib/amplifyClient";
 
-configureAmplify();
-
 type Step = "request" | "confirm";
 
 function normalizeEmail(v: string) {
@@ -38,6 +36,11 @@ function friendlyError(err: any) {
 export default function AdminForgotPasswordPage() {
   const router = useRouter();
 
+  // ✅ Configure Amplify on the client after mount (safer than module-level)
+  useEffect(() => {
+    configureAmplify();
+  }, []);
+
   const [step, setStep] = useState<Step>("request");
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
@@ -66,7 +69,8 @@ export default function AdminForgotPasswordPage() {
   // focus code input when moving to confirm step
   useEffect(() => {
     if (step !== "confirm") return;
-    setTimeout(() => codeRef.current?.focus(), 50);
+    const t = setTimeout(() => codeRef.current?.focus(), 50);
+    return () => clearTimeout(t);
   }, [step]);
 
   // cooldown timer

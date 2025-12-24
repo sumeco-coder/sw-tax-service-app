@@ -1,3 +1,4 @@
+// app(client)/profile/_components/PasswordSection.tsx
 "use client";
 
 import React, { useState } from "react";

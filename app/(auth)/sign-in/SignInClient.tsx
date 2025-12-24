@@ -1,606 +1,293 @@
-// app/(auth)/sign-in/page.tsx
+// app/(auth)/sign-in/SigninClient.tsx
 "use client";
 
-import { configureAmplify } from "@/lib/amplifyClient";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { getClientRole } from "@/lib/auth/roleClient";
-import { useRouter } from "next/navigation";
-import React, { useCallback, useState, useEffect, FormEvent } from "react";
-import {
-  signIn,
-  confirmSignIn,
-  resetPassword,
-  confirmResetPassword,
-  getCurrentUser,
-  fetchAuthSession,
-  signOut,
-} from "aws-amplify/auth";
+import { useRouter, useSearchParams } from "next/navigation";
+import { signIn, confirmSignIn, confirmSignUp, resendSignUpCode } from "aws-amplify/auth";
+import { configureAmplify } from "@/lib/amplifyClient";
+import ForgotPasswordForm from "@/components/auth/ForgotPasswordForm";
 
-configureAmplify();
+type View = "signin" | "confirmSignIn" | "confirmSignUp" | "forgot";
 
-type Phase =
-  | "signin"
-  | "mfa-email" // CONFIRM_SIGN_IN_WITH_EMAIL_CODE
-  | "mfa-totp" // CONFIRM_SIGN_IN_WITH_TOTP_CODE
-  | "setup-email" // CONTINUE_SIGN_IN_WITH_EMAIL_SETUP
-  | "setup-totp" // CONTINUE_SIGN_IN_WITH_TOTP_SETUP
-  | "forgot-start"
-  | "forgot-confirm"
-  | "done";
+function cleanEmail(v: string) {
+  return v.trim().toLowerCase();
+}
 
-export default function SignInPage() {
+function getErrMsg(e: unknown) {
+  if (e && typeof e === "object" && "message" in e) {
+    const msg = (e as any).message;
+    if (typeof msg === "string") return msg;
+  }
+  return "Something went wrong. Please try again.";
+}
+
+export default function SigninClient() {
   const router = useRouter();
-  const [phase, setPhase] = useState<Phase>("signin");
+  const searchParams = useSearchParams();
+
+  useEffect(() => {
+    configureAmplify();
+  }, []);
+
+  const redirectTo = useMemo(
+    () => searchParams.get("redirect") ?? "/dashboard",
+    [searchParams]
+  );
+
+  const [view, setView] = useState<View>("signin");
+
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+
   const [code, setCode] = useState("");
-  const [newPassword, setNewPassword] = useState("");
-  const [totpUri, setTotpUri] = useState<string | null>(null);
-  const [msg, setMsg] = useState("");
+
   const [loading, setLoading] = useState(false);
+  const [msg, setMsg] = useState("");
 
-  // Central helper: where to send user after successful sign-in
+  const username = cleanEmail(email);
 
-  const redirectAfterLogin = useCallback(async () => {
+  function backToSignIn() {
+    setView("signin");
+    setMsg("");
+    setCode("");
+  }
+
+  async function handleSignIn(e: React.FormEvent) {
+    e.preventDefault();
+    setMsg("");
+    setLoading(true);
+
     try {
-      const info = await getClientRole(); // may be null / unknown
-      const role = info?.role ?? "unknown";
+      const res = await signIn({ username, password });
 
-      // Treat unknown as taxpayer for now
-      if (role === "taxpayer" || role === "unknown") {
-        // Get Cognito user + email
-        const u = await getCurrentUser();
-        const session = await fetchAuthSession();
-
-        const tokenEmail =
-          (session.tokens?.idToken?.payload["email"] as string | undefined) ??
-          "";
-
-        const finalEmail =
-          tokenEmail || (u.signInDetails?.loginId as string | undefined) || "";
-
-        // Ensure we have a user row + onboardingStep
-        const res = await fetch("/api/me", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            cognitoSub: u.userId,
-            email: finalEmail,
-          }),
-        });
-
-        let onboardingStep: string = "PROFILE";
-        if (res.ok) {
-          const data = await res.json();
-          onboardingStep = data.user?.onboardingStep ?? "PROFILE";
-        }
-
-        // ✅ If DONE → dashboard
-        if (onboardingStep === "DONE") {
-          router.replace("/dashboard");
-          return;
-        }
-
-        // ✅ If SUBMITTED → final confirmation page
-        if (onboardingStep === "SUBMITTED") {
-          router.replace("/onboarding/complete");
-          return;
-        }
-
-        // Map onboardingStep → correct route
-        let nextPath = "/onboarding/profile";
-        
-        switch (onboardingStep) {
-          case "PROFILE":
-            nextPath = "/onboarding/profile";
-            break;
-          case "DOCUMENTS":
-            nextPath = "/onboarding/documents";
-            break;
-          case "QUESTIONS":
-            nextPath = "/onboarding/questions";
-            break;
-          case "SCHEDULE":
-            nextPath = "/onboarding/schedule";
-            break;
-          case "SUMMARY":
-            // if you prefer them to land on summary instead, change this
-            nextPath = "/onboarding/summary";
-            break;
-          default:
-            nextPath = "/onboarding/profile";
-        }
-
-        router.replace(nextPath);
+      if (res.isSignedIn) {
+        router.push(redirectTo);
         return;
       }
 
-      // LMS / admin roles
-      if (role === "lms-preparer" || role === "lms-admin") {
-        router.replace("/lms/dashboard");
-      } else if (role === "admin") {
-        router.replace("/admin/dashboard");
-      } else {
-        // ultimate fallback
-        router.replace("/dashboard");
+      const step = res.nextStep?.signInStep;
+
+      if (
+        step === "CONFIRM_SIGN_IN_WITH_SMS_CODE" ||
+        step === "CONFIRM_SIGN_IN_WITH_EMAIL_CODE" ||
+        step === "CONFIRM_SIGN_IN_WITH_TOTP_CODE"
+      ) {
+        setView("confirmSignIn");
+        setMsg("Enter the verification code you received.");
+        return;
       }
-    } catch (e) {
-      console.error("redirectAfterLogin error", e);
-      // If something goes wrong, safest to drop taxpayer into onboarding
-      router.replace("/onboarding/profile");
+
+      if (step === "CONFIRM_SIGN_UP") {
+        setView("confirmSignUp");
+        setMsg("Your account isn’t confirmed yet. Enter your confirmation code.");
+        return;
+      }
+
+      // Some other step (rare) — show confirm screen
+      setView("confirmSignIn");
+      setMsg(step ? `Additional sign-in step required: ${step}` : "Continue sign-in.");
+    } catch (e: unknown) {
+      setMsg(getErrMsg(e));
+    } finally {
+      setLoading(false);
     }
-  }, [router]);
+  }
 
-  useEffect(() => {
-    (async () => {
-      try {
-        await getCurrentUser(); // throws if not signed in
-        // Already signed in → just redirect based on role + onboarding
-        await redirectAfterLogin();
-      } catch {
-        // Not signed in → show normal sign-in form
+  async function handleConfirmSignIn(e: React.FormEvent) {
+    e.preventDefault();
+    setMsg("");
+    setLoading(true);
+
+    try {
+      const res = await confirmSignIn({ challengeResponse: code.trim() });
+      if (res.isSignedIn) {
+        router.push(redirectTo);
+        return;
       }
-    })();
-  }, [redirectAfterLogin]);
+      setMsg("Not signed in yet. Please try again.");
+    } catch (e: unknown) {
+      setMsg(getErrMsg(e));
+    } finally {
+      setLoading(false);
+    }
+  }
 
-  // === 1) SIGN IN ===
-  const handleSignIn = useCallback(
-    async (e?: React.FormEvent) => {
-      e?.preventDefault();
-      setMsg("");
-      setLoading(true);
-      try {
-        const { nextStep: signInNextStep } = await signIn({
-          username: email.trim(),
-          password,
-          options: { preferredChallenge: "EMAIL_OTP" },
-        });
+  async function handleConfirmSignUp(e: React.FormEvent) {
+    e.preventDefault();
+    setMsg("");
+    setLoading(true);
 
-        if (
-          signInNextStep.signInStep ===
-          "CONTINUE_SIGN_IN_WITH_FIRST_FACTOR_SELECTION"
-        ) {
-          const { nextStep: confirmSignInNextStep } = await confirmSignIn({
-            challengeResponse: "EMAIL_OTP",
-          });
+    try {
+      await confirmSignUp({ username, confirmationCode: code.trim() });
+      setMsg("Confirmed! Please sign in.");
+      setCode("");
+      setView("signin");
+    } catch (e: unknown) {
+      setMsg(getErrMsg(e));
+    } finally {
+      setLoading(false);
+    }
+  }
 
-          // Continue with whatever Cognito returns
-          (signInNextStep as any).signInStep = confirmSignInNextStep.signInStep;
-        }
+  async function handleResendSignUpCode() {
+    setMsg("");
+    setLoading(true);
 
-        if (
-          signInNextStep.signInStep === "CONFIRM_SIGN_IN_WITH_EMAIL_CODE" ||
-          signInNextStep.signInStep === "CONFIRM_SIGN_IN_WITH_TOTP_CODE"
-        ) {
-          // Go to MFA entry depending on factor
-          setPhase(
-            signInNextStep.signInStep === "CONFIRM_SIGN_IN_WITH_EMAIL_CODE"
-              ? "mfa-email"
-              : "mfa-totp"
-          );
-          setMsg(
-            signInNextStep.signInStep === "CONFIRM_SIGN_IN_WITH_EMAIL_CODE"
-              ? "Enter the code sent to your email."
-              : "Enter the 6‑digit code from your authenticator app."
-          );
-        } else if (
-          signInNextStep.signInStep === "CONTINUE_SIGN_IN_WITH_EMAIL_SETUP"
-        ) {
-          // Ask user for an email to bind for OTP codes
-          setPhase("setup-email");
-          setMsg("Enter the email address to use for one‑time codes.");
-        } else if (
-          signInNextStep.signInStep === "CONTINUE_SIGN_IN_WITH_TOTP_SETUP"
-        ) {
-          // Provide provisioning URI if available
-          const uri =
-            (signInNextStep as any)?.totpSetupDetails?.getSetupUri?.() ?? null;
-          if (uri) setTotpUri(uri);
-          setPhase("setup-totp");
-          setMsg("Scan the QR / use the key, then enter a 6‑digit code.");
-        } else if (signInNextStep.signInStep === "DONE") {
-          setPhase("done");
-          setMsg("Sign in successful!");
-          await redirectAfterLogin();
-        } else {
-          setMsg(`Unexpected step: ${signInNextStep.signInStep}`);
-        }
-      } catch (err: any) {
-        console.error(err);
-        if (err?.name === "UserAlreadyAuthenticatedException") {
-          setMsg("You are already signed in. Redirecting…");
-          await redirectAfterLogin();
-        } else {
-          setMsg(err?.message ?? "Sign-in failed. Try again.");
-        }
-      } finally {
-        setLoading(false);
-      }
-    },
-    [email, password, router, redirectAfterLogin]
-  );
-
-  // === 2) CONFIRM MFA (EMAIL OTP or TOTP) ===
-  const handleConfirmMfa = useCallback(
-    async (e?: React.FormEvent) => {
-      e?.preventDefault();
-      setMsg("");
-      setLoading(true);
-      try {
-        const { nextStep: confirmSignInNextStep } = await confirmSignIn({
-          challengeResponse: code.trim(),
-        });
-
-        if (confirmSignInNextStep.signInStep === "DONE") {
-          setPhase("done");
-          setMsg("Sign in successful!");
-          await redirectAfterLogin();
-        } else if (
-          confirmSignInNextStep.signInStep ===
-            "CONFIRM_SIGN_IN_WITH_EMAIL_CODE" ||
-          confirmSignInNextStep.signInStep === "CONFIRM_SIGN_IN_WITH_TOTP_CODE"
-        ) {
-          setMsg("That code didn't work. Try again.");
-        } else if (
-          confirmSignInNextStep.signInStep ===
-          "CONTINUE_SIGN_IN_WITH_TOTP_SETUP"
-        ) {
-          // Sometimes Amplify wants another fresh TOTP after setup
-          setPhase("setup-totp");
-          setMsg("Enter a fresh 6‑digit code to finish setup.");
-        } else {
-          setMsg(`Unexpected step: ${confirmSignInNextStep.signInStep}`);
-        }
-      } catch (err: any) {
-        console.error(err);
-        setMsg(err?.message ?? "Invalid code. Try again.");
-      } finally {
-        setLoading(false);
-      }
-    },
-    [code, redirectAfterLogin]
-  );
-
-  // === 3) CONTINUE WITH EMAIL SETUP ===
-  const handleConfirmEmailSetup = useCallback(
-    async (e?: React.FormEvent) => {
-      e?.preventDefault();
-      setMsg("");
-      setLoading(true);
-      try {
-        const { nextStep: confirmSignInNextStep } = await confirmSignIn({
-          challengeResponse: email.trim(),
-        });
-
-        if (
-          confirmSignInNextStep.signInStep === "CONFIRM_SIGN_IN_WITH_EMAIL_CODE"
-        ) {
-          setPhase("mfa-email");
-          setMsg("We sent a 6‑digit code to your email. Enter it below.");
-        } else if (confirmSignInNextStep.signInStep === "DONE") {
-          setPhase("done");
-          setMsg("Sign in successful!");
-          await redirectAfterLogin();
-        } else {
-          setMsg(`Next step: ${confirmSignInNextStep.signInStep}`);
-        }
-      } catch (err: any) {
-        console.error(err);
-        setMsg(err?.message ?? "Email setup failed.");
-      } finally {
-        setLoading(false);
-      }
-    },
-    [email, redirectAfterLogin]
-  );
-
-  // === 4) CONTINUE WITH TOTP SETUP ===
-  const handleConfirmTotpSetup = useCallback(
-    async (e?: React.FormEvent) => {
-      e?.preventDefault();
-      setMsg("");
-      setLoading(true);
-      try {
-        const { nextStep: confirmSignInNextStep } = await confirmSignIn({
-          challengeResponse: code.trim(),
-        });
-
-        if (confirmSignInNextStep.signInStep === "DONE") {
-          setPhase("done");
-          setMsg("TOTP verified. Signed in.");
-          await redirectAfterLogin();
-        } else if (
-          confirmSignInNextStep.signInStep === "CONFIRM_SIGN_IN_WITH_TOTP_CODE"
-        ) {
-          setPhase("mfa-totp");
-          setMsg("Enter a fresh 6‑digit code from your authenticator app.");
-        } else {
-          setMsg(`Next step: ${confirmSignInNextStep.signInStep}`);
-        }
-      } catch (err: any) {
-        console.error(err);
-        setMsg(err?.message ?? "TOTP setup confirmation failed.");
-      } finally {
-        setLoading(false);
-      }
-    },
-    [code, redirectAfterLogin]
-  );
-
-  // === Forgot password (optional, kept on same page) ===
-  const handleForgotStart = useCallback(
-    async (e?: React.FormEvent) => {
-      e?.preventDefault();
-      setMsg("");
-      setLoading(true);
-      try {
-        await resetPassword({ username: email.trim() });
-        setPhase("forgot-confirm");
-        setMsg(
-          "We sent a reset code to your email. Enter it below with your new password."
-        );
-      } catch (err: any) {
-        console.error(err);
-        setMsg(err?.message ?? "Couldn't start password reset.");
-      } finally {
-        setLoading(false);
-      }
-    },
-    [email]
-  );
-
-  const handleForgotConfirm = useCallback(
-    async (e?: React.FormEvent) => {
-      e?.preventDefault();
-      setMsg("");
-      setLoading(true);
-      try {
-        await confirmResetPassword({
-          username: email.trim(),
-          confirmationCode: code.trim(),
-          newPassword,
-        });
-        setPhase("signin");
-        setMsg("Password updated. Please sign in with your new password.");
-        setPassword("");
-        setCode("");
-        setNewPassword("");
-      } catch (err: any) {
-        console.error(err);
-        setMsg(err?.message ?? "Reset failed. Check the code and try again.");
-      } finally {
-        setLoading(false);
-      }
-    },
-    [email, code, newPassword]
-  );
+    try {
+      await resendSignUpCode({ username });
+      setMsg("A new confirmation code has been sent.");
+    } catch (e: unknown) {
+      setMsg(getErrMsg(e));
+    } finally {
+      setLoading(false);
+    }
+  }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-100 px-4">
-      <div className="bg-white p-8 shadow-lg rounded-lg w-full max-w-md">
-        <h1 className="text-2xl font-bold text-center text-blue-900">
-          Sign In
+    <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
+      <div className="w-full max-w-md rounded-2xl bg-white p-8 shadow-lg">
+        <h1 className="text-2xl font-extrabold text-blue-900 text-center">
+          {view === "signin" ? "Sign in" : "Account access"}
         </h1>
 
-        {phase === "signin" && (
+        {view === "signin" && (
           <form onSubmit={handleSignIn} className="mt-6 space-y-4">
             <input
-              className="w-full px-4 py-2 border rounded-lg"
+              className="w-full rounded-lg border px-4 py-2"
               placeholder="Email"
+              type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              autoComplete="username"
-              type="email"
+              autoComplete="email"
               required
             />
+
             <input
-              className="w-full px-4 py-2 border rounded-lg"
-              type="password"
+              className="w-full rounded-lg border px-4 py-2"
               placeholder="Password"
+              type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               autoComplete="current-password"
               required
             />
+
             <button
               type="submit"
+              className="w-full rounded-lg bg-blue-600 py-2 text-white hover:bg-blue-500 disabled:opacity-60"
               disabled={loading}
-              className="w-full py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-500 disabled:opacity-60"
             >
-              {loading ? "Signing in..." : "Sign In"}
+              {loading ? "Signing in..." : "Sign in"}
             </button>
-            <div className="flex justify-between text-sm">
+
+            <div className="flex items-center justify-between text-sm">
               <button
                 type="button"
                 className="text-blue-700 hover:underline"
-                onClick={() => setPhase("forgot-start")}
+                onClick={() => {
+                  setMsg("");
+                  setView("forgot");
+                }}
               >
                 Forgot password?
               </button>
-              <div className="mt-2 text-sm text-center">
-                Don’t have an account?{" "}
-                <Link
-                  href="/sign-up"
-                  className="text-blue-700 hover:underline font-semibold"
-                >
-                  Sign up
-                </Link>
-              </div>
+
+              <Link href="/sign-up" className="text-blue-700 hover:underline font-semibold">
+                Create account
+              </Link>
             </div>
           </form>
         )}
 
-        {phase === "setup-email" && (
-          <form onSubmit={handleConfirmEmailSetup} className="mt-6 space-y-4">
-            <input
-              className="w-full px-4 py-2 border rounded-lg"
-              placeholder="Email for codes"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              type="email"
-              required
+        {view === "forgot" && (
+          <div className="mt-6">
+            <ForgotPasswordForm
+              initialEmail={email}
+              onBack={backToSignIn}
+              onDone={backToSignIn}
             />
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-500 disabled:opacity-60"
-            >
-              {loading ? "Submitting..." : "Continue"}
-            </button>
-          </form>
-        )}
-
-        {phase === "setup-totp" && (
-          <form onSubmit={handleConfirmTotpSetup} className="mt-6 space-y-4">
-            {totpUri && (
-              <div className="text-xs p-3 rounded bg-gray-50 break-all">
-                <div className="font-medium mb-1">Provisioning URI</div>
-                <div>{totpUri}</div>
-              </div>
-            )}
-            <input
-              className="border p-2 w-full"
-              placeholder="6‑digit code"
-              value={code}
-              onChange={(e) => setCode(e.target.value)}
-              inputMode="numeric"
-              pattern="[0-9]*"
-              required
-            />
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-500 disabled:opacity-60"
-            >
-              {loading ? "Verifying..." : "Verify"}
-            </button>
-          </form>
-        )}
-
-        {phase === "mfa-email" && (
-          <form onSubmit={handleConfirmMfa} className="mt-6 space-y-4">
-            <input
-              className="border p-2 w-full"
-              placeholder="6‑digit email code"
-              value={code}
-              onChange={(e) => setCode(e.target.value)}
-              inputMode="numeric"
-              pattern="[0-9]*"
-              required
-            />
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-500 disabled:opacity-60"
-            >
-              {loading ? "Confirming..." : "Confirm"}
-            </button>
-          </form>
-        )}
-
-        {phase === "mfa-totp" && (
-          <form onSubmit={handleConfirmMfa} className="mt-6 space-y-4">
-            <input
-              className="border p-2 w-full"
-              placeholder="6‑digit authenticator code"
-              value={code}
-              onChange={(e) => setCode(e.target.value)}
-              inputMode="numeric"
-              pattern="[0-9]*"
-              required
-            />
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-500 disabled:opacity-60"
-            >
-              {loading ? "Confirming..." : "Confirm"}
-            </button>
-          </form>
-        )}
-
-        {phase === "forgot-start" && (
-          <form onSubmit={handleForgotStart} className="mt-6 space-y-4">
-            <p className="text-sm text-gray-700">
-              Enter your account email and we'll send a reset code.
-            </p>
-            <input
-              className="w-full px-4 py-2 border rounded-lg"
-              placeholder="Email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              type="email"
-              required
-            />
-            <div className="flex gap-3">
-              <button
-                type="button"
-                className="px-4 py-2 border rounded-lg"
-                onClick={() => setPhase("signin")}
-                disabled={loading}
-              >
-                Back
-              </button>
-              <button
-                type="submit"
-                disabled={loading}
-                className="flex-1 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-500 disabled:opacity-60"
-              >
-                {loading ? "Sending..." : "Send code"}
-              </button>
-            </div>
-          </form>
-        )}
-
-        {phase === "forgot-confirm" && (
-          <form onSubmit={handleForgotConfirm} className="mt-6 space-y-4">
-            <p className="text-sm text-gray-700">
-              We emailed you a reset code. Enter it with your new password.
-            </p>
-            <input
-              className="w-full px-4 py-2 border rounded-lg"
-              placeholder="6‑digit code"
-              value={code}
-              onChange={(e) => setCode(e.target.value)}
-              inputMode="numeric"
-              pattern="[0-9]*"
-              required
-            />
-            <input
-              className="w-full px-4 py-2 border rounded-lg"
-              type="password"
-              placeholder="New password"
-              value={newPassword}
-              onChange={(e) => setNewPassword(e.target.value)}
-              required
-            />
-            <div className="flex gap-3">
-              <button
-                type="button"
-                className="px-4 py-2 border rounded-lg"
-                onClick={() => setPhase("signin")}
-                disabled={loading}
-              >
-                Back
-              </button>
-              <button
-                type="submit"
-                disabled={loading}
-                className="flex-1 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-500 disabled:opacity-60"
-              >
-                {loading ? "Resetting..." : "Reset password"}
-              </button>
-            </div>
-          </form>
-        )}
-
-        {phase === "done" && (
-          <div className="mt-6 text-center text-green-700 font-medium">
-            Signed in successfully.
           </div>
         )}
 
-        <div className="text-sm mt-3 min-h-6 text-gray-700">{msg}</div>
+        {view === "confirmSignIn" && (
+          <form onSubmit={handleConfirmSignIn} className="mt-6 space-y-4">
+            <input
+              className="w-full rounded-lg border px-4 py-2"
+              placeholder="Verification code"
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              inputMode="numeric"
+              pattern="[0-9]*"
+              autoComplete="one-time-code"
+              required
+            />
+
+            <button
+              type="submit"
+              className="w-full rounded-lg bg-blue-600 py-2 text-white hover:bg-blue-500 disabled:opacity-60"
+              disabled={loading}
+            >
+              {loading ? "Confirming..." : "Confirm"}
+            </button>
+
+            <button
+              type="button"
+              className="w-full rounded-lg border py-2 hover:bg-gray-50 disabled:opacity-60"
+              disabled={loading}
+              onClick={backToSignIn}
+            >
+              Back to sign in
+            </button>
+          </form>
+        )}
+
+        {view === "confirmSignUp" && (
+          <form onSubmit={handleConfirmSignUp} className="mt-6 space-y-4">
+            <div className="text-sm text-gray-700">
+              Your account isn’t confirmed yet. Enter the confirmation code sent to your email.
+            </div>
+
+            <input
+              className="w-full rounded-lg border px-4 py-2"
+              placeholder="Confirmation code"
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              inputMode="numeric"
+              pattern="[0-9]*"
+              autoComplete="one-time-code"
+              required
+            />
+
+            <button
+              type="submit"
+              className="w-full rounded-lg bg-blue-600 py-2 text-white hover:bg-blue-500 disabled:opacity-60"
+              disabled={loading}
+            >
+              {loading ? "Confirming..." : "Confirm account"}
+            </button>
+
+            <button
+              type="button"
+              className="w-full rounded-lg border py-2 hover:bg-gray-50 disabled:opacity-60"
+              disabled={loading}
+              onClick={handleResendSignUpCode}
+            >
+              {loading ? "Sending..." : "Resend code"}
+            </button>
+
+            <button
+              type="button"
+              className="w-full rounded-lg border py-2 hover:bg-gray-50 disabled:opacity-60"
+              disabled={loading}
+              onClick={backToSignIn}
+            >
+              Back to sign in
+            </button>
+          </form>
+        )}
+
+        {msg && <div className="mt-4 text-sm text-gray-700">{msg}</div>}
       </div>
     </div>
   );
