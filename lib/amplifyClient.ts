@@ -7,9 +7,11 @@ let configured = false;
 export function configureAmplify() {
   if (configured) return;
 
-  Amplify.configure(outputs, {
-    ssr: true, // ✅ recommended for Next.js (prevents some hydration/env issues)
-  });
+  // TEMP DEBUG (remove after verifying live)
+  if (typeof window !== "undefined") {
+    console.log("amplify_outputs.auth", outputs?.auth);
+  }
 
+  Amplify.configure(outputs, { ssr: true });
   configured = true;
 }
