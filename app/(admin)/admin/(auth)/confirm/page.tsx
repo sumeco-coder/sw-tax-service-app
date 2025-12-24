@@ -1,5 +1,5 @@
 import { Suspense } from "react";
-import ConfirmClient from "./ConfirmClient";
+import ConfirmClient from "../_components/ConfirmClient";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
