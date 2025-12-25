@@ -7,129 +7,138 @@ export const template: EmailTemplate = {
   category: "waitlist",
   subject: "The waitlist is open — join for priority access ✅",
 
-  mjml: `
-<mjml>
-  <mj-head>
-    <mj-preview>
+  html: `
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="x-apple-disable-message-reformatting" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="supported-color-schemes" content="dark" />
+    <title>{{company_name}} Waitlist</title>
+
+    <style>
+      @media (max-width: 600px) {
+        .container { width: 100% !important; }
+        .px { padding-left: 16px !important; padding-right: 16px !important; }
+        .card { border-radius: 16px !important; }
+      }
+    </style>
+  </head>
+
+  <body style="margin:0; padding:0; background:#0B0F1A;">
+    <!-- Preheader -->
+    <div style="display:none; font-size:1px; line-height:1px; max-height:0; max-width:0; opacity:0; overflow:hidden; mso-hide:all;">
       Waitlist is open — priority access + the right prep checklist.
-    </mj-preview>
+    </div>
 
-    <mj-attributes>
-      <mj-all font-family="Inter, -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Helvetica, Arial, sans-serif" />
-      <mj-text font-size="16px" line-height="26px" color="#E5E7EB" />
-      <mj-button font-size="14px" font-weight="800" border-radius="14px" />
-    </mj-attributes>
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#0B0F1A;">
+      <tr>
+        <td align="center" style="padding:24px 0;">
+          <table role="presentation" class="container" width="600" cellspacing="0" cellpadding="0" border="0" style="width:600px; max-width:600px;">
+            <!-- Logo row -->
+            <tr>
+              <td class="px" style="padding:0 16px 12px 16px;">
+                <a href="{{logo_link}}" style="text-decoration:none;">
+                  <img
+                    src="{{logo_url}}"
+                    width="{{logo_width}}"
+                    alt="{{logo_alt}}"
+                    border="0"
+                    style="display:block; width:{{logo_width}}px; max-width:100%; height:auto;"
+                  />
+                </a>
+              </td>
+            </tr>
 
-    <mj-style inline="inline">
-      .muted { color:#9CA3AF; }
-      .link { color:#FCA5A5; text-decoration: underline; font-weight: 700; }
-      .h1 { font-size: 22px; line-height: 30px; font-weight: 900; color:#F9FAFB; }
-    </mj-style>
-  </mj-head>
+            <!-- Card -->
+            <tr>
+              <td class="px" style="padding:0 16px;">
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#0B1220; border-radius:20px;" class="card">
+                  <tr>
+                    <td style="padding:22px; font-family:Inter, -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Helvetica, Arial, sans-serif; color:#E5E7EB; font-size:16px; line-height:26px;">
+                      <p style="margin:0 0 10px 0;">Hi {{first_name}},</p>
 
-  <mj-body background-color="#0B0F1A">
+                      <p style="margin:0 0 12px 0; font-size:22px; line-height:30px; font-weight:900; color:#F9FAFB;">
+                        {{company_name}} is opening the waitlist today.
+                      </p>
 
-    <!-- Outer padding -->
-    <mj-wrapper padding="24px 0" background-color="#0B0F1A">
+                      <p style="margin:0 0 14px 0;">
+                        This is for people who want to get organized <strong>before</strong> tax season gets stressful and rushed.
+                      </p>
 
-      <!-- Logo row -->
-      <mj-section background-color="#0B0F1A" padding="0 16px 12px">
-        <mj-column>
-          <mj-image
-            src="{{logo_url}}"
-            width="{{logo_width}}"
-            href="{{logo_link}}"
-            alt="{{logo_alt}}"
-            align="left"
-            padding="0"
-          />
-        </mj-column>
-      </mj-section>
+                      <p style="margin:0 0 6px 0;">You’ll get:</p>
 
-      <!-- CARD (one section, one column, no nested sections) -->
-      <mj-section
-        background-color="#0B1220"
-        border-radius="20px"
-        padding="22px"
-      >
-        <mj-column>
+                      <p style="margin:0 0 12px 0;">
+                        • Priority access to booking when spots open<br />
+                        • A simple prep checklist so you can start gathering what you need<br />
+                        • Clear next steps (no confusion)
+                      </p>
 
-          <mj-text padding="0 0 10px">
-            Hi {{first_name}},
-          </mj-text>
+                      <!-- Button -->
+                      <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin:4px 0 0 0;">
+                        <tr>
+                          <td style="background:#E00040; border-radius:14px;">
+                            <a
+                              href="{{waitlist_link}}"
+                              style="display:inline-block; padding:12px 18px; font-size:14px; font-weight:800; color:#ffffff; text-decoration:none; border-radius:14px;"
+                            >
+                              Join the waitlist
+                            </a>
+                          </td>
+                        </tr>
+                      </table>
 
-          <mj-text css-class="h1" padding="0 0 12px">
-            {{company_name}} is opening the waitlist today.
-          </mj-text>
+                      <p style="margin:10px 0 0 0; font-size:13px; line-height:20px; color:#9CA3AF;">
+                        Prefer the link?
+                        <a href="{{waitlist_link}}" style="color:#FCA5A5; text-decoration:underline; font-weight:700;">
+                          Join the waitlist
+                        </a>
+                      </p>
 
-          <mj-text padding="0 0 14px">
-            This is for people who want to get organized <strong>before</strong> tax season gets stressful and rushed.
-          </mj-text>
+                      <hr style="border:none; border-top:1px solid #1F2937; margin:18px 0;" />
 
-          <mj-text padding="0 0 6px">
-            You’ll get:
-          </mj-text>
+                      <p style="margin:0 0 10px 0;">
+                        <strong>P.S.</strong> We limit spots so every client gets real attention.
+                      </p>
 
-          <mj-text padding="0 0 12px">
-            • Priority access to booking when spots open<br/>
-            • A simple prep checklist so you can start gathering what you need<br/>
-            • Clear next steps (no confusion)
-          </mj-text>
+                      <p style="margin:0 0 2px 0;">{{signature_name}}</p>
 
-          <mj-button
-            href="{{waitlist_link}}"
-            background-color="#E00040"
-            color="#ffffff"
-            inner-padding="12px 18px"
-            padding="4px 0 0"
-            align="left"
-          >
-            Join the waitlist
-          </mj-button>
+                      <!-- ✅ Divider before footer injection -->
+                      <hr style="border:none; border-top:1px solid #1F2937; margin:18px 0 12px;" />
 
-          <mj-text font-size="13px" line-height="20px" css-class="muted" padding="10px 0 0">
-            Prefer the link? <a class="link" href="{{waitlist_link}}">Join the waitlist</a>
-          </mj-text>
+                      <!-- Footer (render-time injection) -->
+                      {{#if footer_html}}
+                        {{{footer_html}}}
+                      {{else}}
+                        <p style="margin:0; font-size:12px; line-height:18px; color:#9CA3AF;">
+                          {{footer_text}}
+                        </p>
+                      {{/if}}
 
-          <mj-divider border-width="1px" border-style="solid" border-color="#1F2937" padding="18px 0" />
+                      {{#if unsubscribe_link}}
+                        <p style="margin:10px 0 0 0; font-size:12px; line-height:18px; color:#9CA3AF;">
+                          <a href="{{unsubscribe_link}}" style="color:#FCA5A5; text-decoration:underline; font-weight:700;">
+                            Unsubscribe
+                          </a>
+                        </p>
+                      {{/if}}
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
 
-          <mj-text padding="0 0 10px">
-            <strong>P.S.</strong> We limit spots so every client gets real attention.
-          </mj-text>
-
-          <mj-text padding="0 0 2px">
-            {{signature_name}}
-          </mj-text>
-
-          <mj-text font-size="12px" line-height="18px" css-class="muted" padding="10px 0 0">
-            {{company_name}}<br/>
-            Support: <a class="link" href="mailto:{{support_email}}">{{support_email}}</a><br/>
-            Website: <a class="link" href="{{website}}">{{website}}</a>
-          </mj-text>
-
-          <mj-divider border-width="1px" border-style="solid" border-color="#1F2937" padding="18px 0 12px" />
-
-          <!-- Footer (render-time injection) -->
-          {{#if footer_html}}
-            {{{footer_html}}}
-          {{else}}
-            <mj-text font-size="12px" line-height="18px" css-class="muted" padding="0">
-              {{footer_text}}
-            </mj-text>
-          {{/if}}
-
-          {{#if unsubscribe_link}}
-            <mj-text font-size="12px" line-height="18px" css-class="muted" padding="10px 0 0">
-              <a class="link" href="{{unsubscribe_link}}">Unsubscribe</a>
-            </mj-text>
-          {{/if}}
-
-        </mj-column>
-      </mj-section>
-
-    </mj-wrapper>
-  </mj-body>
-</mjml>
+            <tr>
+              <td style="height:1px; line-height:1px; font-size:1px;">&nbsp;</td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>
   `.trim(),
 
   text: `

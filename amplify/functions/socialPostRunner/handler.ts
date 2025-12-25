@@ -1,4 +1,5 @@
-import "server-only";
+// amplify/functions/socialPostRunner/handler.ts
+
 import { db } from "../../../drizzle/db";
 import { socialPosts } from "../../../drizzle/schema";
 import { eq, inArray, sql } from "drizzle-orm";
@@ -67,7 +68,9 @@ async function postToInstagram(caption: string, mediaUrls: string[]) {
   });
 
   const createData = await createRes.json().catch(() => ({}));
-  if (!createRes.ok) throw new Error(`IG create error: ${createRes.status} ${JSON.stringify(createData)}`);
+  if (!createRes.ok) {
+    throw new Error(`IG create error: ${createRes.status} ${JSON.stringify(createData)}`);
+  }
 
   const creationId = createData?.id;
   if (!creationId) throw new Error(`IG create returned no id: ${JSON.stringify(createData)}`);
@@ -83,26 +86,27 @@ async function postToInstagram(caption: string, mediaUrls: string[]) {
   });
 
   const pubData = await pubRes.json().catch(() => ({}));
-  if (!pubRes.ok) throw new Error(`IG publish error: ${pubRes.status} ${JSON.stringify(pubData)}`);
+  if (!pubRes.ok) {
+    throw new Error(`IG publish error: ${pubRes.status} ${JSON.stringify(pubData)}`);
+  }
 
   return { id: pubData?.id ?? null, raw: { createData, pubData } };
 }
 
 // Backoff: 2m, 4m, 8m, 16m, 32m (cap 60m)
 function backoffMinutes(attempts: number) {
-  const mins = Math.min(60, Math.pow(2, Math.max(1, attempts)));
-  return mins;
+  return Math.min(60, Math.pow(2, Math.max(1, attempts)));
 }
 
 const BATCH = 10;
 const MAX_ATTEMPTS = 5;
 
 export const handler = async () => {
-  const now = new Date();
+  const started = Date.now();
+  console.log("[socialPostRunner] start", new Date().toISOString());
 
   // ✅ 1) Claim due rows safely using SKIP LOCKED
   const claimed = await db.transaction(async (tx) => {
-    // Select IDs due now or “post now” (scheduled_at IS NULL)
     const idsRes = await tx.execute<{ id: string }>(sql`
       select id
       from social_posts
@@ -116,7 +120,6 @@ export const handler = async () => {
     const ids = idsRes.rows.map((r) => r.id);
     if (ids.length === 0) return [];
 
-    // Mark them as sending + increment attempts (so even crashes count as an attempt)
     await tx
       .update(socialPosts)
       .set({
@@ -126,14 +129,25 @@ export const handler = async () => {
       })
       .where(inArray(socialPosts.id, ids));
 
-    // Fetch full rows to process
     return tx.select().from(socialPosts).where(inArray(socialPosts.id, ids));
   });
 
+  console.log("[socialPostRunner] claimed", claimed.length);
+
+  let sent = 0;
+  let failed = 0;
+
   for (const post of claimed) {
+    const provider = post.provider as Provider;
+
     try {
+      if (provider !== "x" && provider !== "facebook" && provider !== "instagram") {
+        throw new Error(`Unsupported provider: ${String(post.provider)}`);
+      }
+
+      console.log("[socialPostRunner] posting", { id: post.id, provider });
+
       let result: any = null;
-      const provider = post.provider as Provider;
 
       if (provider === "x") result = await postToX(post.textBody);
       if (provider === "facebook") result = await postToFacebookPage(post.textBody);
@@ -149,34 +163,45 @@ export const handler = async () => {
           updatedAt: new Date(),
         })
         .where(eq(socialPosts.id, post.id));
+
+      sent++;
     } catch (err: any) {
       const attempts = Number(post.attempts ?? 1); // already incremented when claimed
+      const errMsg = String(err?.message ?? err);
+
+      console.error("[socialPostRunner] error", { id: post.id, attempts, err: errMsg });
 
       if (attempts >= MAX_ATTEMPTS) {
         await db
           .update(socialPosts)
           .set({
             status: "failed",
-            error: String(err?.message ?? err),
+            error: errMsg,
             updatedAt: new Date(),
           })
           .where(eq(socialPosts.id, post.id));
+
+        failed++;
         continue;
       }
 
       const mins = backoffMinutes(attempts);
       const nextTry = new Date(Date.now() + mins * 60_000);
 
-      // ✅ retry later by putting it back to queued and setting scheduledAt
       await db
         .update(socialPosts)
         .set({
           status: "queued",
           scheduledAt: nextTry,
-          error: String(err?.message ?? err),
+          error: errMsg,
           updatedAt: new Date(),
         })
         .where(eq(socialPosts.id, post.id));
     }
   }
+
+  const ms = Date.now() - started;
+  console.log("[socialPostRunner] done", { ms, sent, failed });
+
+  return { ok: true, claimed: claimed.length, sent, failed, ms };
 };

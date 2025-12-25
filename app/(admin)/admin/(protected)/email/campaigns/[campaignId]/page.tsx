@@ -16,15 +16,17 @@ import ScheduleSection from "./_components/schedule-section";
 import KpiGrid from "./_components/kpi-grid";
 import RecipientsSection from "./_components/recipients-section";
 import PreviewSection from "./_components/preview-section";
-
 import { retryFailed } from "./actions/retry-actions";
 import { resendWholeCampaignAsCopy } from "./actions/resend-actions";
-
-// ✅ NEW: import the 2 send paths (runner vs direct resend)
 import {
-  sendNowRunner,
   sendNowDirectResend,
+  scheduleDirectResend,
 } from "./actions/send-actions";
+
+// ✅ NEW imports for preview rendering
+import { EMAIL_DEFAULTS } from "@/lib/constants/email-defaults";
+import { renderString } from "@/lib/helpers/render-template";
+import { buildEmailFooterHTML, buildEmailFooterText } from "@/lib/email/footer";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -64,7 +66,9 @@ export default async function CampaignDetailPage({ params }: PageProps) {
   if (!campaign) {
     return (
       <div className="space-y-3">
-        <h1 className="text-2xl font-bold text-[#202030]">Campaign not found</h1>
+        <h1 className="text-2xl font-bold text-[#202030]">
+          Campaign not found
+        </h1>
         <a
           className="text-sm font-semibold hover:underline"
           href="/admin/email/campaigns"
@@ -141,39 +145,102 @@ export default async function CampaignDetailPage({ params }: PageProps) {
     .where(eq(emailRecipients.campaignId, campaign.id));
 
   const existingEmails = existingRecipientRows
-    .map((r) => String(r.email ?? "").toLowerCase().trim())
+    .map((r) =>
+      String(r.email ?? "")
+        .toLowerCase()
+        .trim()
+    )
     .filter(Boolean);
 
   // ✅ Bind server actions (so ConfirmActionButton works clean)
-  const retryFailedAction = retryFailed.bind(null, campaign.id);
-  const resendCopyAction = resendWholeCampaignAsCopy.bind(null, campaign.id);
+  async function retryFailedAction() {
+    "use server";
+    await retryFailed(campaign.id);
+  }
 
   // ✅ Send actions (two different paths)
-  const sendRunnerAction = sendNowRunner.bind(null, campaign.id);
-  const sendDirectResendAction = sendNowDirectResend.bind(null, campaign.id);
+  async function resendCopyAction() {
+    "use server";
+    await resendWholeCampaignAsCopy(campaign.id);
+  }
+
+  async function sendDirectResendAction() {
+    "use server";
+    await sendNowDirectResend(campaign.id);
+  }
+
+  async function scheduleDirectResendAction(formData: FormData) {
+    "use server";
+    const sendAtIso = String(formData.get("sendAtIso") ?? "").trim();
+    await scheduleDirectResend(campaign.id, sendAtIso);
+  }
+
+  /* =========================
+     ✅ PREVIEW RENDER (server)
+     ========================= */
+
+  const previewVars: any = {
+    ...EMAIL_DEFAULTS,
+    // preview-only personalization
+    first_name: "there",
+    unsubscribe_link: "https://www.swtaxservice.com/unsubscribe",
+  };
+
+  previewVars.footer_html = buildEmailFooterHTML("marketing", {
+    companyName: String(previewVars.company_name ?? ""),
+    supportEmail: String(previewVars.support_email ?? ""),
+    website: String(previewVars.website ?? ""),
+    addressLine: "Las Vegas, NV",
+    unsubUrl: previewVars.unsubscribe_link,
+    includeDivider: false, // template already has <hr>
+    includeUnsubscribe: false, // template renders unsubscribe separately
+  });
+
+  previewVars.footer_text = buildEmailFooterText("marketing", {
+    companyName: String(previewVars.company_name ?? ""),
+    supportEmail: String(previewVars.support_email ?? ""),
+    website: String(previewVars.website ?? ""),
+    addressLine: "Las Vegas, NV",
+    unsubUrl: previewVars.unsubscribe_link,
+  });
+
+  const renderedPreviewHtml = renderString(
+    String(campaign.htmlBody ?? ""),
+    previewVars
+  );
 
   return (
     <div className="space-y-8">
       {/* Header only displays info now (no built-in send button) */}
       <CampaignHeader campaign={campaign as any} />
 
-      {/* ✅ Send buttons (you control them here) */}
-      <div className="flex flex-wrap gap-2">
-        <form action={sendRunnerAction}>
-          <button
-            type="submit"
-            className="cursor-pointer rounded-xl border px-3 py-2 text-sm font-semibold hover:bg-black/5 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            Send Now (Runner)
-          </button>
-        </form>
-
+      {/* ✅ Send / Schedule / Retry / Resend controls */}
+      <div className="flex flex-wrap items-center gap-2">
         <form action={sendDirectResendAction}>
+          <input type="hidden" name="campaignId" value={campaign.id} />
           <button
             type="submit"
             className="cursor-pointer rounded-xl bg-black px-3 py-2 text-sm font-semibold text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
           >
             Send Now (Direct Resend)
+          </button>
+        </form>
+
+        <form
+          action={scheduleDirectResendAction}
+          className="flex items-center gap-2"
+        >
+          <input
+            name="sendAtIso"
+            type="datetime-local"
+            className="rounded-xl border px-3 py-2 text-sm"
+            required
+          />
+          <button
+            type="submit"
+            className="cursor-pointer rounded-xl border px-3 py-2 text-sm font-semibold hover:bg-black/5 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            Schedule (Direct Resend)
           </button>
         </form>
 
@@ -211,7 +278,8 @@ export default async function CampaignDetailPage({ params }: PageProps) {
         recentRecipients={recentRecipients as any}
       />
 
-      <PreviewSection html={String(campaign.htmlBody ?? "")} />
+      {/* ✅ Rendered preview (no raw {{footer_text}} tokens) */}
+      <PreviewSection html={renderedPreviewHtml} />
     </div>
   );
 }

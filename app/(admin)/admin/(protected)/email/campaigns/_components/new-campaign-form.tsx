@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { renderString as renderFromLib } from "@/lib/helpers/render-template";
 
 type TemplateItem = {
   id: string;
@@ -11,11 +12,8 @@ type TemplateItem = {
   text: string;
 };
 
-type Defaults = Record<string, string>;
-
-function renderString(input: string, vars: Record<string, string>) {
-  return input.replace(/\{\{(\w+)\}\}/g, (_, key) => vars[key] ?? "");
-}
+type Defaults = Record<string, string | number>;
+type Vars = Record<string, string | number | null | undefined>;
 
 export default function NewCampaignForm({
   action,
@@ -41,24 +39,23 @@ export default function NewCampaignForm({
   function loadTemplate() {
     if (!selected) return;
 
-    // ✅ Replace your “defaults” so you don’t send raw {{waitlist_link}} etc.
-    const vars = {
-      ...defaults,
-      // broadcasts usually don’t have first_name; keep it empty unless you personalize later
-      first_name: "",
-    };
+    // ✅ Fill only stable defaults here.
+    // 🚫 DO NOT fill: first_name, footer_html, footer_text, unsubscribe_link
+    //    (those must remain tokens for send-time per-recipient rendering)
+    const { first_name, footer_html, footer_text, unsubscribe_link, ...known } =
+      defaults as any;
 
-    setSubject(renderString(selected.subject, vars));
-    setHtmlBody(renderString(selected.html.trim(), vars));
-    setTextBody(renderString(selected.text.trim(), vars));
+    const vars: Vars = { ...known };
 
-    // nice UX: auto-fill a campaign name if empty
+    setSubject(renderFromLib(selected.subject, vars as any));
+    setHtmlBody(renderFromLib(selected.html.trim(), vars as any));
+    setTextBody(renderFromLib(selected.text.trim(), vars as any));
+
     if (!name) setName(selected.name);
   }
 
   return (
     <form action={action} className="mt-4 grid gap-3">
-      {/* Template picker */}
       <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
         <label className="grid gap-1 text-xs text-[#202030]/70">
           Template
@@ -70,7 +67,8 @@ export default function NewCampaignForm({
             <option value="">— Select a template —</option>
             {templates.map((t) => (
               <option key={t.id} value={t.id}>
-                {t.category ? `${t.category} · ` : ""}{t.name}
+                {t.category ? `${t.category} · ` : ""}
+                {t.name}
               </option>
             ))}
           </select>
@@ -117,7 +115,6 @@ export default function NewCampaignForm({
           <option value="waitlist_all">Waitlist: All</option>
         </select>
 
-        {/* changed to textarea for real text bodies */}
         <textarea
           name="textBody"
           placeholder="Text body (optional)"

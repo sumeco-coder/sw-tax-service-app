@@ -2,19 +2,13 @@
 "use server";
 
 import { db } from "@/drizzle/db";
-import {
-  emailCampaigns,
-  emailRecipients,
-  emailCampaignSegment,
-  emailCampaignStatus,
-} from "@/drizzle/schema";
+import { emailCampaigns, emailRecipients } from "@/drizzle/schema";
 import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-
 import { ALL_TEMPLATES } from "../templates/_templates";
 import { EMAIL_DEFAULTS } from "@/lib/constants/email-defaults";
-
+import { renderTemplate, withDefaults } from "@/lib/helpers/render-template";
 import {
   CreateCampaignSchema,
   UpdateCampaignSchema,
@@ -29,9 +23,7 @@ import {
 import { compileMjmlToHtmlIfNeeded } from "@/lib/helpers/email-compile.server";
 import { fillKnownDefaultsKeepUnknown, now } from "@/lib/helpers/email-utils";
 
-import {
-  buildRecipientsFromAudience,
-} from "@/lib/helpers/build-recipients-from-audience.server";
+import { buildRecipientsFromAudience } from "@/lib/helpers/build-recipients-from-audience.server";
 
 /* =========================
    HELPERS (local only)
@@ -67,8 +59,10 @@ export async function createCampaign(formData: FormData): Promise<void> {
     .values({
       name,
       subject,
-      // ✅ store compiled HTML if MJML provided
+
+      // ✅ store compiled HTML if MJML provided (still fine even if you mostly use HTML)
       htmlBody: compileMjmlToHtmlIfNeeded(htmlBody),
+
       textBody: (textBody ?? "").trim().length ? textBody : null,
       segment: (segment ?? "waitlist_pending") as any,
       status: "draft" as any,
@@ -155,10 +149,7 @@ export async function setCampaignStatus(formData: FormData): Promise<void> {
     patch.schedulerName = null;
   }
 
-  await db
-    .update(emailCampaigns)
-    .set(patch)
-    .where(eq(emailCampaigns.id, campaignId));
+  await db.update(emailCampaigns).set(patch).where(eq(emailCampaigns.id, campaignId));
 
   revalidatePath("/admin/email/campaigns");
   revalidatePath(`/admin/email/campaigns/${campaignId}`);
@@ -234,7 +225,7 @@ export async function deleteCampaign(formData: FormData): Promise<void> {
  *
  * ✅ MJML allowed (we compile to HTML before saving)
  * ✅ Only fills known defaults (company_name, website, etc.)
- * ✅ Leaves unknown tokens like {{unsubscribe_link}} intact for the runner
+ * ✅ Leaves unknown tokens like {{unsubscribe_link}} intact for sending time
  */
 export async function applyTemplateToCampaign(formData: FormData): Promise<void> {
   const parsed = ApplyTemplateSchema.safeParse({
@@ -252,7 +243,9 @@ export async function applyTemplateToCampaign(formData: FormData): Promise<void>
 
   const htmlSource = (t as any).mjml ?? (t as any).html;
   if (!htmlSource) {
-    throw new Error(`Template "${templateId}" is missing required "mjml" or "html" content.`);
+    throw new Error(
+      `Template "${templateId}" is missing required "mjml" or "html" content.`
+    );
   }
 
   const knownDefaults: Record<string, string> = {
@@ -265,7 +258,10 @@ export async function applyTemplateToCampaign(formData: FormData): Promise<void>
 
   const subject = fillKnownDefaultsKeepUnknown(subjectTpl, knownDefaults);
   const filledSource = fillKnownDefaultsKeepUnknown(String(htmlSource), knownDefaults);
+
+  // ✅ stored as HTML in DB
   const compiledHtml = compileMjmlToHtmlIfNeeded(filledSource);
+
   const textBody = fillKnownDefaultsKeepUnknown(textTpl, knownDefaults);
 
   await db
@@ -287,13 +283,6 @@ export async function applyTemplateToCampaign(formData: FormData): Promise<void>
    RECIPIENTS (QUEUE)
    ========================= */
 
-/**
- * Cheapest plan:
- * - Build/queue recipients into email_recipients(status='queued')
- * - Runner sends later (every 5m)
- *
- * Uses server-only helper: buildRecipientsFromAudience(...)
- */
 export async function buildRecipientsForCampaign(campaignId: string, limit = 5000) {
   const id = String(campaignId ?? "").trim();
   if (!id) throw new Error("campaignId is required.");
@@ -338,7 +327,6 @@ export async function buildRecipientsForCampaign(campaignId: string, limit = 500
   return { ok: true, message: "Recipients queued.", ...out };
 }
 
-// Optional FormData wrapper (handy for <form action=...>)
 export async function buildRecipientsForCampaignAction(formData: FormData) {
   const parsed = BuildRecipientsSchema.safeParse({
     campaignId: formData.get("campaignId"),
@@ -350,7 +338,6 @@ export async function buildRecipientsForCampaignAction(formData: FormData) {
   }
 
   await buildRecipientsForCampaign(parsed.data.campaignId, parsed.data.limit);
-
   redirect(`/admin/email/campaigns/${parsed.data.campaignId}`);
 }
 
@@ -358,12 +345,6 @@ export async function buildRecipientsForCampaignAction(formData: FormData) {
    DB SCHEDULING (no AWS)
    ========================= */
 
-/**
- * Cheapest scheduling:
- * - Set status='scheduled'
- * - Set scheduledAt datetime
- * Runner (every 5m) promotes scheduled->sending when due.
- */
 export async function scheduleCampaignDb(campaignId: string, scheduledAt: Date) {
   const id = String(campaignId ?? "").trim();
   if (!id) throw new Error("campaignId is required.");
@@ -388,7 +369,6 @@ export async function scheduleCampaignDb(campaignId: string, scheduledAt: Date) 
   return { ok: true, message: "Campaign scheduled (DB)." };
 }
 
-// Optional FormData wrapper
 export async function scheduleCampaignDbAction(formData: FormData) {
   const parsed = ScheduleCampaignDbSchema.safeParse({
     campaignId: formData.get("campaignId"),
@@ -403,6 +383,5 @@ export async function scheduleCampaignDbAction(formData: FormData) {
   if (Number.isNaN(dt.getTime())) throw new Error("Invalid scheduledAt datetime.");
 
   await scheduleCampaignDb(parsed.data.campaignId, dt);
-
   redirect(`/admin/email/campaigns/${parsed.data.campaignId}`);
 }

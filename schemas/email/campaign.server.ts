@@ -4,8 +4,14 @@ import "server-only";
 import { z } from "zod";
 import { emailCampaignSegment, emailCampaignStatus } from "@/drizzle/schema";
 
-export const SegmentSchema = z.enum(emailCampaignSegment.enumValues);
-export const StatusSchema = z.enum(emailCampaignStatus.enumValues);
+export const SegmentSchema = z.enum(
+  emailCampaignSegment.enumValues as [string, ...string[]]
+);
+
+export const StatusSchema = z.enum(
+  emailCampaignStatus.enumValues as [string, ...string[]]
+);
+
 
 export const CreateCampaignSchema = z.object({
   name: z.string().trim().min(2, "Campaign name is required."),

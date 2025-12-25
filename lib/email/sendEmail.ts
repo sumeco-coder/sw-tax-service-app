@@ -1,4 +1,6 @@
 // lib/email/sendEmail.ts
+import "server-only";
+
 import { sendSesEmail } from "./ses";
 import { sendResendEmail, type ResendAttachment } from "./resend";
 
@@ -19,6 +21,9 @@ export type SendEmailArgs = {
   replyTo?: string;
   headers?: Record<string, string>;
   attachments?: EmailAttachment[];
+
+  // ✅ Resend scheduling (ISO string or "in 10 min")
+  scheduledAt?: string;
 };
 
 // ✅ Resend-first (default)
@@ -34,7 +39,7 @@ const provider = (process.env.EMAIL_PROVIDER || "resend").toLowerCase();
 export async function sendEmail(args: SendEmailArgs): Promise<void> {
   const hasAttachments = Boolean(args.attachments?.length);
 
-  // ✅ If attachments exist, ALWAYS use Resend (SES raw builder doesn’t attach files yet)
+  // ✅ If attachments exist, ALWAYS use Resend
   if (hasAttachments) {
     const attachments: ResendAttachment[] = (args.attachments ?? []).map((a) => ({
       filename: a.filename,
@@ -51,6 +56,7 @@ export async function sendEmail(args: SendEmailArgs): Promise<void> {
       replyTo: args.replyTo,
       headers: args.headers,
       attachments,
+      scheduledAt: args.scheduledAt,
     });
 
     return;
@@ -66,6 +72,7 @@ export async function sendEmail(args: SendEmailArgs): Promise<void> {
         textBody: args.textBody,
         replyTo: args.replyTo,
         headers: args.headers,
+        scheduledAt: args.scheduledAt,
       });
       return;
     } catch (err) {
@@ -75,6 +82,7 @@ export async function sendEmail(args: SendEmailArgs): Promise<void> {
 
     // SES fallback only if SES env vars exist
     try {
+      // ⚠️ SES doesn't support scheduledAt here — only immediate send
       await sendSesEmail(args);
       return;
     } catch (err) {

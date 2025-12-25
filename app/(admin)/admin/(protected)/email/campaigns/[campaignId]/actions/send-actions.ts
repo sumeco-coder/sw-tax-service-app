@@ -1,3 +1,4 @@
+// app/(admin)/admin/(protected)/email/campaigns/[campaignId]/actions/send-actions.ts
 "use server";
 
 import crypto from "crypto";
@@ -8,18 +9,12 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
 import { sendResendEmail } from "@/lib/email/resend";
-import { EMAIL_PARTIALS } from "@/lib/email/templatePartials";
 import {
-  renderHandlebars,
-  isMjml,
-  compileMjmlToHtml,
-} from "@/lib/email/templateEngine";
+  renderTemplate,
+  hasUnrenderedTokens,
+} from "@/lib/helpers/render-template";
 import { htmlToText } from "html-to-text";
-import {
-  buildEmailFooterHTML,
-  buildEmailFooterText,
-  buildEmailFooterMJML,
-} from "@/lib/email/footer";
+import { buildEmailFooterHTML, buildEmailFooterText } from "@/lib/email/footer";
 
 const BATCH_SIZE = 200;
 const REPLY_TO = "support@swtaxservice.com";
@@ -30,9 +25,7 @@ function makeToken() {
 
 function getSiteUrl() {
   const base =
-    process.env.SITE_URL ??
-    process.env.APP_URL ??
-    "https://www.swtaxservice.com";
+    process.env.SITE_URL ?? process.env.APP_URL ?? "https://www.swtaxservice.com";
   return String(base).replace(/\/$/, "");
 }
 
@@ -44,52 +37,17 @@ function buildUnsubUrls(token: string) {
   };
 }
 
-/**
- * Button A: Send Now (Runner)
- * - flips to scheduled and sets scheduledAt = now
- * - Amplify runner will pick it up on next tick
- */
-export async function sendNowRunner(campaignId: string) {
-  if (!campaignId) throw new Error("campaignId missing");
-
-  const [q] = await db
-    .select({ queued: sql<number>`count(*)::int` })
-    .from(emailRecipients)
-    .where(
-      and(
-        eq(emailRecipients.campaignId, campaignId),
-        eq(emailRecipients.status, "queued")
-      )
-    );
-
-  const queued = q?.queued ?? 0;
-  if (queued <= 0) {
-    throw new Error("No queued recipients. Click “Build recipients (queue)” first.");
+function assertResendWindow(sendAt: Date) {
+  const max = Date.now() + 30 * 24 * 60 * 60 * 1000; // 30 days
+  if (sendAt.getTime() < Date.now() + 60_000) {
+    throw new Error("Send time must be at least 1 minute in the future.");
   }
-
-  await db
-    .update(emailCampaigns)
-    .set({
-      status: "scheduled" as any,
-      scheduledAt: new Date(),
-      updatedAt: new Date(),
-    } as any)
-    .where(eq(emailCampaigns.id, campaignId));
-
-  revalidatePath("/admin/email/logs");
-  revalidatePath("/admin/email/campaigns");
-  revalidatePath(`/admin/email/campaigns/${campaignId}`);
-  redirect(`/admin/email/campaigns/${campaignId}`);
+  if (sendAt.getTime() > max) {
+    throw new Error("Resend can only schedule up to 30 days in advance.");
+  }
 }
 
-/**
- * Button B: Send Now (Direct Resend)
- * - sends up to BATCH_SIZE immediately via Resend
- * - IMPORTANT: renders handlebars + compiles MJML + builds footers (so logo shows)
- */
-export async function sendNowDirectResend(campaignId: string) {
-  if (!campaignId) throw new Error("campaignId missing");
-
+async function getCampaign(campaignId: string) {
   const [campaign] = await db
     .select({
       id: emailCampaigns.id,
@@ -103,8 +61,20 @@ export async function sendNowDirectResend(campaignId: string) {
 
   if (!campaign) throw new Error("Campaign not found");
 
-  // ✅ pull queued recipients (include unsub token)
-  const recipients = await db
+  const htmlTpl = String(campaign.htmlBody ?? "").trim();
+  const textTpl = String(campaign.textBody ?? "").trim();
+  if (!htmlTpl) throw new Error("Campaign htmlBody is empty (HTML required).");
+
+  const templateHasFooterHtml =
+    htmlTpl.includes("{{footer_html}}") || htmlTpl.includes("{{{footer_html}}}");
+  const templateHasFooterText =
+    textTpl.includes("{{footer_text}}") || textTpl.includes("{{{footer_text}}}");
+
+  return { campaign, htmlTpl, textTpl, templateHasFooterHtml, templateHasFooterText };
+}
+
+async function getQueuedBatch(campaignId: string) {
+  return db
     .select({
       id: emailRecipients.id,
       email: emailRecipients.email,
@@ -114,17 +84,28 @@ export async function sendNowDirectResend(campaignId: string) {
     .where(
       and(
         eq(emailRecipients.campaignId, campaignId),
-        eq(emailRecipients.status, "queued")
+        eq(emailRecipients.status as any, "queued" as any)
       )
     )
     .orderBy(sql`${emailRecipients.createdAt} asc`)
     .limit(BATCH_SIZE);
+}
 
+/**
+ * ✅ Send NOW (Direct Resend)
+ */
+export async function sendNowDirectResend(campaignId: string) {
+  const id = String(campaignId ?? "").trim();
+  if (!id) throw new Error("campaignId missing");
+
+  const { campaign, htmlTpl, textTpl, templateHasFooterHtml, templateHasFooterText } =
+    await getCampaign(id);
+
+  const recipients = await getQueuedBatch(id);
   if (!recipients.length) {
-    throw new Error("No queued recipients. Click “Build recipients (queue)” first.");
+    throw new Error('No queued recipients. Click “Build recipients (queue)” first.');
   }
 
-  // mark campaign sending
   await db
     .update(emailCampaigns)
     .set({
@@ -132,21 +113,7 @@ export async function sendNowDirectResend(campaignId: string) {
       updatedAt: new Date(),
       sentAt: null,
     } as any)
-    .where(eq(emailCampaigns.id, campaignId));
-
-  // detect footer tokens in stored template (so we don’t double-append)
-  const htmlTpl = String(campaign.htmlBody ?? "");
-  const textTpl = String(campaign.textBody ?? "");
-
-  const templateHasFooterHtml =
-    htmlTpl.includes("{{footer_html}}") ||
-    htmlTpl.includes("{{{footer_html}}}") ||
-    htmlTpl.includes("{{> footer}}");
-
-  const templateHasFooterText =
-    textTpl.includes("{{footer_text}}") ||
-    textTpl.includes("{{{footer_text}}}") ||
-    textTpl.includes("{{> footer}}");
+    .where(eq(emailCampaigns.id, id));
 
   for (const r of recipients) {
     const to = String(r.email ?? "").toLowerCase().trim();
@@ -155,7 +122,7 @@ export async function sendNowDirectResend(campaignId: string) {
       await db
         .update(emailRecipients)
         .set({
-          status: "failed",
+          status: "failed" as any,
           error: "Missing email",
           updatedAt: new Date(),
         } as any)
@@ -163,7 +130,12 @@ export async function sendNowDirectResend(campaignId: string) {
       continue;
     }
 
-    // ensure unsub token exists (older rows might be missing)
+    // prevent double-send
+    await db
+      .update(emailRecipients)
+      .set({ status: "sending" as any, updatedAt: new Date() } as any)
+      .where(eq(emailRecipients.id, r.id));
+
     const unsubToken = String(r.unsubToken ?? "").trim() || makeToken();
     if (!r.unsubToken) {
       await db
@@ -174,7 +146,190 @@ export async function sendNowDirectResend(campaignId: string) {
 
     const { pageUrl, oneClickUrl } = buildUnsubUrls(unsubToken);
 
-    // footers
+    const footerHtml = buildEmailFooterHTML("marketing", {
+      companyName: "SW Tax Service",
+      addressLine: "Las Vegas, NV",
+      supportEmail: "support@swtaxservice.com",
+      website: "https://www.swtaxservice.com",
+      unsubUrl: pageUrl,
+      includeDivider: false,
+      includeUnsubscribe: true,  
+    });
+
+    const footerText = buildEmailFooterText("marketing", {
+      companyName: "SW Tax Service",
+      addressLine: "Las Vegas, NV",
+      supportEmail: "support@swtaxservice.com",
+      website: "https://www.swtaxservice.com",
+      unsubUrl: pageUrl,
+    });
+
+    const vars: Record<string, any> = {
+      company_name: "SW Tax Service",
+      support_email: "support@swtaxservice.com",
+      website: "https://www.swtaxservice.com",
+      waitlist_link: "https://www.swtaxservice.com/waitlist",
+      first_name: "there",
+      signature_name: "SW Tax Service Team",
+      unsubscribe_link: pageUrl,
+      one_click_unsub_url: oneClickUrl,
+      footer_html: footerHtml,
+      footer_text: footerText,
+      logo_url:
+        "https://www.swtaxservice.com/swtax-favicon-pack/android-chrome-512x512.png",
+      logo_alt: "SW Tax Service",
+      logo_link: "https://www.swtaxservice.com",
+      logo_width: "72px",
+    };
+
+    try {
+      const renderedSubject = renderTemplate(String(campaign.subject ?? ""), vars);
+      let renderedHtml = renderTemplate(htmlTpl, vars);
+
+      let renderedText = textTpl
+        ? renderTemplate(textTpl, vars)
+        : htmlToText(renderedHtml, { wordwrap: 90 });
+
+      if (!templateHasFooterHtml) renderedHtml = `${renderedHtml}\n\n${footerHtml}`;
+      if (!templateHasFooterText) renderedText = `${renderedText}\n\n${footerText}`;
+
+      if (
+        hasUnrenderedTokens(renderedSubject) ||
+        hasUnrenderedTokens(renderedHtml) ||
+        hasUnrenderedTokens(renderedText)
+      ) {
+        throw new Error("Template contains unknown {{tokens}}.");
+      }
+
+      await sendResendEmail({
+        to,
+        subject: renderedSubject,
+        htmlBody: renderedHtml,
+        textBody: renderedText || undefined,
+        replyTo: REPLY_TO,
+        headers: {
+          "List-Unsubscribe": `<${oneClickUrl}>`,
+          "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+          "X-SWTS-Campaign-Id": id,
+          "X-SWTS-Recipient-Id": String(r.id),
+        },
+      });
+
+      await db
+        .update(emailRecipients)
+        .set({
+          status: "sent" as any,
+          sentAt: new Date(),
+          error: null,
+          updatedAt: new Date(),
+        } as any)
+        .where(eq(emailRecipients.id, r.id));
+    } catch (err: any) {
+      await db
+        .update(emailRecipients)
+        .set({
+          status: "failed" as any,
+          error: String(err?.message ?? err ?? "Send failed"),
+          updatedAt: new Date(),
+        } as any)
+        .where(eq(emailRecipients.id, r.id));
+    }
+  }
+
+  // If nothing left queued/sending, mark campaign as sent (best-effort)
+  const [remaining] = await db
+    .select({
+      open: sql<number>`sum(case when ${emailRecipients.status} in ('queued','sending') then 1 else 0 end)::int`,
+    })
+    .from(emailRecipients)
+    .where(eq(emailRecipients.campaignId, id));
+
+  if ((remaining?.open ?? 0) === 0) {
+    await db
+      .update(emailCampaigns)
+      .set({
+        status: "sent" as any,
+        sentAt: new Date(),
+        updatedAt: new Date(),
+      } as any)
+      .where(eq(emailCampaigns.id, id));
+  }
+
+  revalidatePath("/admin/email/campaigns");
+  revalidatePath(`/admin/email/campaigns/${id}`);
+  redirect(`/admin/email/campaigns/${id}`);
+}
+
+/**
+ * ✅ Schedule (Direct Resend)
+ * Accepts either:
+ *   - ISO string (second arg)
+ *   - FormData (second arg) with keys: sendAtIso OR sendAt (and optional sendAtLocal)
+ */
+export async function scheduleDirectResend(
+  campaignId: string,
+  sendAtOrForm: string | FormData
+) {
+  const id = String(campaignId ?? "").trim();
+  if (!id) throw new Error("campaignId missing");
+
+  const sendAtIso =
+    typeof sendAtOrForm === "string"
+      ? String(sendAtOrForm ?? "").trim()
+      : String(
+          sendAtOrForm.get("sendAtIso") ??
+            sendAtOrForm.get("sendAt") ??
+            ""
+        ).trim();
+
+  const sendAtLocal =
+    typeof sendAtOrForm === "string"
+      ? ""
+      : String(sendAtOrForm.get("sendAtLocal") ?? "").trim();
+
+  if (!sendAtIso) throw new Error("Pick a date/time.");
+
+  const sendAt = new Date(sendAtIso);
+  if (Number.isNaN(sendAt.getTime())) {
+    throw new Error(`Invalid date/time. (local="${sendAtLocal}", iso="${sendAtIso}")`);
+  }
+
+  assertResendWindow(sendAt);
+
+  const { campaign, htmlTpl, textTpl, templateHasFooterHtml, templateHasFooterText } =
+    await getCampaign(id);
+
+  const scheduledAt = sendAt.toISOString();
+
+  const recipients = await getQueuedBatch(id);
+  if (!recipients.length) throw new Error("No queued recipients to schedule.");
+
+  // Mark campaign as scheduled in YOUR DB too (for UI)
+  await db
+    .update(emailCampaigns)
+    .set({
+      status: "scheduled" as any, // make sure your enum allows this OR change to something you already have
+      scheduledAt: sendAt,
+      schedulerName: null,
+      sentAt: null,
+      updatedAt: new Date(),
+    } as any)
+    .where(eq(emailCampaigns.id, id));
+
+  for (const r of recipients) {
+    const to = String(r.email ?? "").toLowerCase().trim();
+    if (!to) continue;
+
+    const unsubToken = String(r.unsubToken ?? "").trim() || makeToken();
+    if (!r.unsubToken) {
+      await db
+        .update(emailRecipients)
+        .set({ unsubToken, updatedAt: new Date() } as any)
+        .where(eq(emailRecipients.id, r.id));
+    }
+
+    const { pageUrl, oneClickUrl } = buildUnsubUrls(unsubToken);
+
     const footerHtml = buildEmailFooterHTML("marketing", {
       companyName: "SW Tax Service",
       addressLine: "Las Vegas, NV",
@@ -191,28 +346,17 @@ export async function sendNowDirectResend(campaignId: string) {
       unsubUrl: pageUrl,
     });
 
-    const footerMjml = buildEmailFooterMJML("marketing", {
-      companyName: "SW Tax Service",
-      addressLine: "Las Vegas, NV",
-      supportEmail: "support@swtaxservice.com",
-      website: "https://www.swtaxservice.com",
-      unsubUrl: pageUrl,
-    });
-
-    // base vars (this is what makes logo appear)
     const vars: Record<string, any> = {
       company_name: "SW Tax Service",
-      waitlist_link: "https://www.swtaxservice.com/waitlist",
       support_email: "support@swtaxservice.com",
       website: "https://www.swtaxservice.com",
+      waitlist_link: "https://www.swtaxservice.com/waitlist",
       first_name: "there",
       signature_name: "SW Tax Service Team",
-
       unsubscribe_link: pageUrl,
       one_click_unsub_url: oneClickUrl,
-
+      footer_html: footerHtml,
       footer_text: footerText,
-
       logo_url:
         "https://www.swtaxservice.com/swtax-favicon-pack/android-chrome-512x512.png",
       logo_alt: "SW Tax Service",
@@ -221,125 +365,53 @@ export async function sendNowDirectResend(campaignId: string) {
     };
 
     try {
-      // subject
-      const renderedSubject = renderHandlebars(
-        String(campaign.subject ?? ""),
-        vars,
-        EMAIL_PARTIALS
-      );
+      const renderedSubject = renderTemplate(String(campaign.subject ?? ""), vars);
+      let renderedHtml = renderTemplate(htmlTpl, vars);
+      let renderedText = textTpl
+        ? renderTemplate(textTpl, vars)
+        : htmlToText(renderedHtml, { wordwrap: 90 });
 
-      // html render pass 1 (detect MJML)
-      const firstPass = renderHandlebars(htmlTpl, vars, EMAIL_PARTIALS);
-      const bodyIsMjml = isMjml(firstPass);
+      if (!templateHasFooterHtml) renderedHtml = `${renderedHtml}\n\n${footerHtml}`;
+      if (!templateHasFooterText) renderedText = `${renderedText}\n\n${footerText}`;
 
-      // choose correct footer format for footer_html
-      const footerForTemplate = bodyIsMjml ? footerMjml : footerHtml;
-
-      // final html render
-      const renderedSource = renderHandlebars(
-        htmlTpl,
-        { ...vars, footer_html: footerForTemplate },
-        EMAIL_PARTIALS
-      );
-
-      const renderedHtml = isMjml(renderedSource)
-        ? compileMjmlToHtml(renderedSource)
-        : renderedSource;
-
-      // text
-      let renderedText = "";
-      if (textTpl.trim().length) {
-        renderedText = renderHandlebars(
-          textTpl,
-          { ...vars, footer_html: footerForTemplate },
-          EMAIL_PARTIALS
-        );
-      } else {
-        renderedText = htmlToText(renderedHtml, { wordwrap: 90 });
+      if (
+        hasUnrenderedTokens(renderedSubject) ||
+        hasUnrenderedTokens(renderedHtml) ||
+        hasUnrenderedTokens(renderedText)
+      ) {
+        throw new Error("Template contains unknown {{tokens}}.");
       }
 
-      // append footers only if template didn’t include them
-      let finalHtml = renderedHtml;
-      let finalText = renderedText;
-
-      if (!bodyIsMjml && !templateHasFooterHtml) {
-        finalHtml = `${finalHtml}\n\n${footerHtml}`;
-      }
-      if (!templateHasFooterText) {
-        finalText = `${finalText}\n\n${footerText}`;
-      }
-
-      // save preview fields (optional — only if your schema has them)
-      await db
-        .update(emailRecipients)
-        .set({
-          renderedSubject,
-          renderedHtml: finalHtml,
-          renderedText: finalText,
-          updatedAt: new Date(),
-        } as any)
-        .where(eq(emailRecipients.id, r.id));
-
-      // ✅ send via Resend
       await sendResendEmail({
         to,
         subject: renderedSubject,
-        htmlBody: finalHtml,
-        textBody: finalText || undefined,
+        htmlBody: renderedHtml,
+        textBody: renderedText || undefined,
         replyTo: REPLY_TO,
+        scheduledAt, // ✅ shows as “Scheduled” in Resend
         headers: {
           "List-Unsubscribe": `<${oneClickUrl}>`,
           "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
-          "X-SWTS-Campaign-Id": campaignId,
+          "X-SWTS-Campaign-Id": id,
           "X-SWTS-Recipient-Id": String(r.id),
         },
       });
 
-      await db
-        .update(emailRecipients)
-        .set({
-          status: "sent",
-          sentAt: new Date(),
-          error: null,
-          updatedAt: new Date(),
-        } as any)
-        .where(eq(emailRecipients.id, r.id));
+      // keep recipient status as queued (safe), unless your enum supports "scheduled"
+      // await db.update(emailRecipients).set({ status: "scheduled" as any, updatedAt: new Date() } as any).where(eq(emailRecipients.id, r.id));
     } catch (err: any) {
       await db
         .update(emailRecipients)
         .set({
-          status: "failed",
-          error: String(err?.message ?? err ?? "Send failed"),
+          status: "failed" as any,
+          error: String(err?.message ?? err ?? "Schedule failed"),
           updatedAt: new Date(),
         } as any)
         .where(eq(emailRecipients.id, r.id));
     }
   }
 
-  // finalize campaign status
-  const [left] = await db
-    .select({ queued: sql<number>`count(*)::int` })
-    .from(emailRecipients)
-    .where(
-      and(
-        eq(emailRecipients.campaignId, campaignId),
-        eq(emailRecipients.status, "queued")
-      )
-    );
-
-  const hasMoreQueued = (left?.queued ?? 0) > 0;
-
-  await db
-    .update(emailCampaigns)
-    .set({
-      status: (hasMoreQueued ? "sending" : "sent") as any,
-      sentAt: hasMoreQueued ? null : new Date(),
-      updatedAt: new Date(),
-    } as any)
-    .where(eq(emailCampaigns.id, campaignId));
-
-  revalidatePath("/admin/email/logs");
   revalidatePath("/admin/email/campaigns");
-  revalidatePath(`/admin/email/campaigns/${campaignId}`);
-  redirect(`/admin/email/campaigns/${campaignId}`);
+  revalidatePath(`/admin/email/campaigns/${id}`);
+  redirect(`/admin/email/campaigns/${id}`);
 }

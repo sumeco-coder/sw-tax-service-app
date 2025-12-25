@@ -12,7 +12,6 @@ import {
 import { eq, inArray, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import DateTimeLocalIsoField from "../[campaignId]/_components/DateTimeLocalIsoField";
 
 import { buildRecipientsFromAudience } from "@/lib/server/email-campaign";
 import {
@@ -24,12 +23,18 @@ function makeToken() {
   return crypto.randomBytes(24).toString("base64url");
 }
 
+function normalizeEmail(e: unknown) {
+  return String(e ?? "").toLowerCase().trim();
+}
+
 /** ✅ used by RecipientPicker (client component) */
 export async function addSelectedToCampaign(opts: {
   campaignId: string;
   subscriberIds: string[];
 }) {
   const { campaignId, subscriberIds } = opts;
+  const id = String(campaignId ?? "").trim();
+  if (!id) throw new Error("Missing campaignId");
   if (!subscriberIds?.length) return;
 
   const subs = await db
@@ -41,27 +46,28 @@ export async function addSelectedToCampaign(opts: {
     .from(emailSubscribers)
     .where(inArray(emailSubscribers.id, subscriberIds));
 
-  const emails = subs
-    .filter((s) => String((s as any).status) === "subscribed")
-    .map((s) =>
-      String((s as any).email)
-        .toLowerCase()
-        .trim()
+  const emails = Array.from(
+    new Set(
+      subs
+        .filter((s) => String((s as any).status) === "subscribed")
+        .map((s) => normalizeEmail((s as any).email))
+        .filter(Boolean)
     )
-    .filter(Boolean);
+  );
 
   if (!emails.length) return;
 
+  // ✅ case-insensitive unsub lookup
   const unsub = await db
     .select({ email: emailUnsubscribes.email })
     .from(emailUnsubscribes)
-    .where(inArray(emailUnsubscribes.email, emails));
+    .where(inArray(sql`lower(${emailUnsubscribes.email})`, emails));
 
-  const unsubSet = new Set(unsub.map((u) => u.email.toLowerCase()));
+  const unsubSet = new Set(unsub.map((u) => normalizeEmail(u.email)).filter(Boolean));
 
   const now = new Date();
   const rows = emails.map((email) => ({
-    campaignId,
+    campaignId: id,
     email,
     unsubToken: makeToken(),
     status: unsubSet.has(email) ? ("unsubscribed" as any) : ("queued" as any),
@@ -73,20 +79,17 @@ export async function addSelectedToCampaign(opts: {
     .insert(emailRecipients)
     .values(rows as any)
     .onConflictDoNothing({
-      target: [
-        (emailRecipients as any).campaignId,
-        (emailRecipients as any).email,
-      ],
+      target: [(emailRecipients as any).campaignId, (emailRecipients as any).email],
     } as any);
 
-  revalidatePath(`/admin/email/campaigns/${campaignId}`);
+  revalidatePath(`/admin/email/campaigns/${id}`);
 }
 
 /** ✅ audience save + optional build (one form, two buttons) */
-export async function saveAudienceOrBuild(
-  campaignId: string,
-  formData: FormData
-) {
+export async function saveAudienceOrBuild(campaignId: string, formData: FormData) {
+  const id = String(campaignId ?? "").trim();
+  if (!id) throw new Error("Missing campaignId");
+
   const intent = String(formData.get("intent") ?? "save");
 
   const segment =
@@ -110,11 +113,11 @@ export async function saveAudienceOrBuild(
       manualRecipientsRaw,
       updatedAt: new Date(),
     } as any)
-    .where(eq(emailCampaigns.id, campaignId));
+    .where(eq(emailCampaigns.id, id));
 
   if (intent === "build") {
     await buildRecipientsFromAudience({
-      campaignId,
+      campaignId: id,
       segment,
       listId,
       apptSegment,
@@ -122,18 +125,21 @@ export async function saveAudienceOrBuild(
     });
   }
 
-  revalidatePath(`/admin/email/campaigns/${campaignId}`);
-  redirect(`/admin/email/campaigns/${campaignId}`);
+  revalidatePath(`/admin/email/campaigns/${id}`);
+  redirect(`/admin/email/campaigns/${id}`);
 }
 
 export async function scheduleSend(campaignId: string, formData: FormData) {
+  const id = String(campaignId ?? "").trim();
+  if (!id) throw new Error("Missing campaignId");
+
   // If nothing queued, auto-build from saved audience
   const [q] = await db
     .select({
       queued: sql<number>`sum(case when ${emailRecipients.status} = 'queued' then 1 else 0 end)::int`,
     })
     .from(emailRecipients)
-    .where(eq(emailRecipients.campaignId, campaignId));
+    .where(eq(emailRecipients.campaignId, id));
 
   if ((q?.queued ?? 0) <= 0) {
     const [c] = await db
@@ -144,17 +150,15 @@ export async function scheduleSend(campaignId: string, formData: FormData) {
         manualRecipientsRaw: emailCampaigns.manualRecipientsRaw,
       })
       .from(emailCampaigns)
-      .where(eq(emailCampaigns.id, campaignId))
+      .where(eq(emailCampaigns.id, id))
       .limit(1);
 
     await buildRecipientsFromAudience({
-      campaignId,
+      campaignId: id,
       segment: String(c?.segment ?? "waitlist_pending"),
       listId: c?.listId ? String(c.listId) : null,
       apptSegment: c?.apptSegment ? String(c.apptSegment) : null,
-      manualRecipientsRaw: c?.manualRecipientsRaw
-        ? String(c.manualRecipientsRaw)
-        : null,
+      manualRecipientsRaw: c?.manualRecipientsRaw ? String(c.manualRecipientsRaw) : null,
     });
 
     const [q2] = await db
@@ -162,7 +166,7 @@ export async function scheduleSend(campaignId: string, formData: FormData) {
         queued: sql<number>`sum(case when ${emailRecipients.status} = 'queued' then 1 else 0 end)::int`,
       })
       .from(emailRecipients)
-      .where(eq(emailRecipients.campaignId, campaignId));
+      .where(eq(emailRecipients.campaignId, id));
 
     if ((q2?.queued ?? 0) <= 0) {
       throw new Error(
@@ -178,16 +182,14 @@ export async function scheduleSend(campaignId: string, formData: FormData) {
 
   const sendAt = new Date(sendAtIso);
   if (Number.isNaN(sendAt.getTime())) {
-    throw new Error(
-      `Invalid date/time. (local="${sendAtLocal}", iso="${sendAtIso}")`
-    );
+    throw new Error(`Invalid date/time. (local="${sendAtLocal}", iso="${sendAtIso}")`);
   }
 
   if (sendAt.getTime() < Date.now() + 60_000) {
     throw new Error("Send time must be at least 1 minute in the future.");
   }
 
-  const scheduleName = await scheduleCampaignExact({ campaignId, sendAt });
+  const scheduleName = await scheduleCampaignExact({ campaignId: id, sendAt });
 
   await db
     .update(emailCampaigns)
@@ -197,14 +199,17 @@ export async function scheduleSend(campaignId: string, formData: FormData) {
       schedulerName: scheduleName,
       updatedAt: new Date(),
     } as any)
-    .where(eq(emailCampaigns.id, campaignId));
+    .where(eq(emailCampaigns.id, id));
 
-  revalidatePath(`/admin/email/campaigns/${campaignId}`);
-  redirect(`/admin/email/campaigns/${campaignId}`);
+  revalidatePath(`/admin/email/campaigns/${id}`);
+  redirect(`/admin/email/campaigns/${id}`);
 }
 
 export async function cancelSchedule(campaignId: string) {
-  await cancelScheduledCampaign(campaignId);
+  const id = String(campaignId ?? "").trim();
+  if (!id) throw new Error("Missing campaignId");
+
+  await cancelScheduledCampaign(id);
 
   await db
     .update(emailCampaigns)
@@ -214,8 +219,8 @@ export async function cancelSchedule(campaignId: string) {
       schedulerName: null,
       updatedAt: new Date(),
     } as any)
-    .where(eq(emailCampaigns.id, campaignId));
+    .where(eq(emailCampaigns.id, id));
 
-  revalidatePath(`/admin/email/campaigns/${campaignId}`);
-  redirect(`/admin/email/campaigns/${campaignId}`);
+  revalidatePath(`/admin/email/campaigns/${id}`);
+  redirect(`/admin/email/campaigns/${id}`);
 }

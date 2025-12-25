@@ -44,7 +44,7 @@ export default async function CampaignsPage() {
     name: t.name,
     category: t.category,
     subject: t.subject,
-    html: t.mjml ?? t.html ?? "",
+    html: t.html ?? "",
     text: t.text ?? "",
   }));
 

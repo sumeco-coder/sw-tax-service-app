@@ -4,7 +4,6 @@ import { waitlist } from "@/drizzle/schema";
 import { approveWaitlistAndCreateInvite, rejectWaitlist } from "./actions";
 import { desc } from "drizzle-orm";
 import { sendEmail } from "@/lib/email/sendEmail";
-
 import { getWaitlistConfig } from "@/lib/waitlist/config";
 import {
   toggleWaitlistOpenAction,

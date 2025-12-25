@@ -13,10 +13,13 @@ export const EMAIL_DEFAULTS = {
     "https://www.swtaxservice.com/swtax-favicon-pack/android-chrome-512x512.png",
   logo_alt: "SW Tax Service",
   logo_link: "https://www.swtaxservice.com",
-  logo_width: "72px",
+  logo_width: 72, // ✅ number (not "72px")
 
   // render-time filled
   unsubscribe_link: "",
   footer_html: "",
   footer_text: "",
 } as const;
+
+// OPTIONAL: if other code still imports DEFAULT_EMAIL_VARS, alias it so nothing breaks
+export const DEFAULT_EMAIL_VARS = EMAIL_DEFAULTS;
