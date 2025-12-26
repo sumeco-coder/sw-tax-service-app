@@ -3,13 +3,15 @@ import { db } from "@/drizzle/db";
 import { waitlist } from "@/drizzle/schema";
 import { approveWaitlistAndCreateInvite, rejectWaitlist } from "./actions";
 import { desc } from "drizzle-orm";
-import { sendEmail } from "@/lib/email/sendEmail";
+import { sendEmail } from "@/lib/email/sendEmail.server";
 import { getWaitlistConfig } from "@/lib/waitlist/config";
+import { redirect } from "next/navigation";
+
 import {
   toggleWaitlistOpenAction,
   setWaitlistModeAction,
   sendPendingInvitesAction,
-} from "@/app/(admin)/admin/(protected)/waitlist/settings-actions";
+} from "./settings-actions";
 
 import WaitlistScheduleForm from "./_components/WaitlistScheduleForm";
 
@@ -43,7 +45,7 @@ async function sendTestEmailAction(formData: FormData) {
   "use server";
 
   const to = (formData.get("to") as string | null)?.trim();
-  if (!to) return;
+  if (!to) redirect("/admin/waitlist?testEmail=missing");
 
   const subject = "SW Tax Service – Test Email (Waitlist Onboarding)";
 
@@ -69,12 +71,24 @@ async function sendTestEmailAction(formData: FormData) {
     </div>
   `;
 
-  await sendEmail({
-    to,
-    subject,
-    htmlBody,
-    textBody,
-  });
+  try {
+    await sendEmail({
+      to,
+      subject,
+      htmlBody,
+      textBody,
+    });
+
+    redirect("/admin/waitlist?testEmail=sent");
+  } catch (err: any) {
+    console.error("sendTestEmailAction failed:", err);
+
+    redirect(
+      `/admin/waitlist?testEmail=error&msg=${encodeURIComponent(
+        err?.message ?? "Unknown error"
+      )}`
+    );
+  }
 }
 
 export default async function AdminWaitlistPage() {

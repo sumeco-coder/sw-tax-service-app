@@ -1,4 +1,4 @@
-// app/(admin)/waitlist/schedule-actions.ts
+// app/(admin)/admin/protected/waitlist/schedule-actions.ts
 "use server";
 
 import { revalidatePath } from "next/cache";
