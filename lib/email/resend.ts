@@ -76,6 +76,13 @@ export async function sendResendEmail(input: ResendEmailInput) {
       ? { attachments: mapAttachments(input.attachments) }
       : {}),
   };
+  
+ const { data, error } = await resend.emails.send(payload as any);
+  if (error) {
+    // Keep it readable
+    throw new Error(`Resend send failed: ${error.message}`);
+  }
+
 
   // ✅ Cast once to avoid Resend SDK union-type headaches in TS
   return await resend.emails.send(payload as any);

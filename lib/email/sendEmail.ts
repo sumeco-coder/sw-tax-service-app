@@ -30,18 +30,13 @@ function getProvider() {
   return (process.env.EMAIL_PROVIDER || "resend").toLowerCase();
 }
 
-function hasSesConfig() {
-  // adjust to whatever your SES module requires
-  return Boolean(process.env.AWS_REGION); // + any other SES envs you use
-}
-
 export async function sendEmail(args: SendEmailArgs): Promise<void> {
   const provider = getProvider();
 
   const hasAttachments = Boolean(args.attachments?.length);
   const isScheduled = Boolean(args.scheduledAt);
 
-  // ✅ Resend-only cases (NO fallback)
+  // ✅ Resend-only cases (attachments + scheduling are Resend features here)
   if (hasAttachments || isScheduled) {
     const attachments: ResendAttachment[] = (args.attachments ?? []).map((a) => ({
       filename: a.filename,
@@ -64,37 +59,19 @@ export async function sendEmail(args: SendEmailArgs): Promise<void> {
     return;
   }
 
-  // ✅ If you explicitly choose SES
+  // ✅ SES is ONLY used when you explicitly opt-in
   if (provider === "ses") {
     await sendSesEmail(args);
     return;
   }
 
-  // ✅ Default: Resend first, fallback to SES only for immediate sends
-  try {
-    await sendResendEmail({
-      to: args.to,
-      subject: args.subject,
-      htmlBody: args.htmlBody,
-      textBody: args.textBody,
-      replyTo: args.replyTo,
-      headers: args.headers,
-    });
-    return;
-  } catch (err) {
-    console.error("Resend send failed:", err);
-  }
-
-  if (hasSesConfig()) {
-    try {
-      await sendSesEmail(args);
-      return;
-    } catch (err) {
-      console.error("SES fallback failed too:", err);
-      throw err;
-    }
-  }
-
-  // no SES configured
-  throw new Error("Email send failed (Resend failed and SES is not configured).");
+  // ✅ Default: Resend only (NO SES fallback)
+  await sendResendEmail({
+    to: args.to,
+    subject: args.subject,
+    htmlBody: args.htmlBody,
+    textBody: args.textBody,
+    replyTo: args.replyTo,
+    headers: args.headers,
+  });
 }
