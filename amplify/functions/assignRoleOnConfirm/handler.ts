@@ -1,3 +1,4 @@
+// amplify/functions/assignRoleOnConfirm/handler.ts
 import type { PostConfirmationTriggerHandler } from "aws-lambda";
 import {
   CognitoIdentityProviderClient,
@@ -5,12 +6,11 @@ import {
   AdminUpdateUserAttributesCommand,
 } from "@aws-sdk/client-cognito-identity-provider";
 
-const env = process.env;
-
 const cognito = new CognitoIdentityProviderClient({});
 
-const VALID_ROLES = ["taxpayer", "lms-preparer", "lms-admin", "admin"] as const;
-type AllowedRole = (typeof VALID_ROLES)[number];
+const ROLES = ["taxpayer", "lms-preparer", "lms-admin", "admin", "unknown"] as const;
+type AnyRole = (typeof ROLES)[number];
+type GroupRole = Exclude<AnyRole, "unknown">;
 
 function normalizeEmail(s: unknown) {
   return String(s ?? "").trim().toLowerCase();
@@ -22,16 +22,48 @@ function safeTrim(v: unknown) {
 
 function parseEmailList(csv: string) {
   return new Set(
-    csv
+    (csv ?? "")
       .split(",")
       .map((s) => s.trim().toLowerCase())
       .filter(Boolean)
   );
 }
 
+function decideRole(opts: {
+  email: string;
+  inviteCode: string;
+  adminEmails: Set<string>;
+  adminInviteCode: string;
+  lmsAdminInviteCode: string;
+  preparerInviteCode: string;
+}): GroupRole {
+  const {
+    email,
+    inviteCode,
+    adminEmails,
+    adminInviteCode,
+    lmsAdminInviteCode,
+    preparerInviteCode,
+  } = opts;
+
+  // ✅ Admin requires BOTH allowlist email + admin invite code
+  const isAdminByPolicy =
+    !!email &&
+    adminEmails.has(email) &&
+    !!adminInviteCode &&
+    inviteCode === adminInviteCode;
+
+  if (isAdminByPolicy) return "admin";
+  if (inviteCode && lmsAdminInviteCode && inviteCode === lmsAdminInviteCode) return "lms-admin";
+  if (inviteCode && preparerInviteCode && inviteCode === preparerInviteCode) return "lms-preparer";
+
+  return "taxpayer";
+}
+
 export const handler: PostConfirmationTriggerHandler = async (event) => {
   const userPoolId = event.userPoolId;
   const username = event.userName;
+
   const clientMetadata = event.request.clientMetadata ?? {};
   const attrs = event.request.userAttributes ?? {};
 
@@ -40,49 +72,38 @@ export const handler: PostConfirmationTriggerHandler = async (event) => {
     normalizeEmail(attrs["preferred_username"]) ||
     normalizeEmail(attrs["cognito:username"]);
 
-  // What your signup pages pass (admin sign-up will pass this)
+  // What your signup page passes: options.clientMetadata.inviteCode
   const inviteCode = safeTrim(clientMetadata.inviteCode);
 
-  // Secrets / env
-  const ADMIN_EMAILS = parseEmailList(safeTrim(env.ADMIN_EMAILS));
-  const ADMIN_INVITE_CODE = safeTrim(env.ADMIN_INVITE_CODE);
+  // Secrets / env (Amplify injects these)
+  const adminEmails = parseEmailList(safeTrim(process.env.ADMIN_EMAILS));
+  const adminInviteCode = safeTrim(process.env.ADMIN_INVITE_CODE);
+  const lmsAdminInviteCode = safeTrim(process.env.INVITE_CODE_LMS_ADMIN);
+  const preparerInviteCode = safeTrim(process.env.INVITE_CODE_LMS_PREPARER);
 
-  const CODE_PREPARER = safeTrim(env.INVITE_CODE_LMS_PREPARER);
-  const CODE_LMS_ADMIN = safeTrim(env.INVITE_CODE_LMS_ADMIN);
+  // We support AnyRole in types, but actual assignment is always a real group role.
+  const desiredGroupRole: GroupRole = decideRole({
+    email,
+    inviteCode,
+    adminEmails,
+    adminInviteCode,
+    lmsAdminInviteCode,
+    preparerInviteCode,
+  });
 
-  let desiredRole: AllowedRole = "taxpayer";
+  // If you still want a "desiredRole" variable that can be "unknown" elsewhere:
+  const desiredRole: AnyRole = desiredGroupRole; // never "unknown" here
 
-  // ✅ Admin requires BOTH allowlist email + admin invite code
-  const isAdminByPolicy =
-    !!email &&
-    ADMIN_EMAILS.has(email) &&
-    !!ADMIN_INVITE_CODE &&
-    inviteCode === ADMIN_INVITE_CODE;
-
-  if (isAdminByPolicy) {
-    desiredRole = "admin";
-  } else if (inviteCode && CODE_LMS_ADMIN && inviteCode === CODE_LMS_ADMIN) {
-    desiredRole = "lms-admin";
-  } else if (inviteCode && CODE_PREPARER && inviteCode === CODE_PREPARER) {
-    desiredRole = "lms-preparer";
-  } else {
-    desiredRole = "taxpayer";
-  }
-
-  if (!VALID_ROLES.includes(desiredRole)) desiredRole = "taxpayer";
-
-  const groupName = desiredRole; // group names match role strings in your app
-
-  // 1) Add user to group
+  // 1) Add user to group (never "unknown")
   try {
     await cognito.send(
       new AdminAddUserToGroupCommand({
-        GroupName: groupName,
+        GroupName: desiredGroupRole,
         Username: username,
         UserPoolId: userPoolId,
       })
     );
-    console.log(`✅ Added user ${username} to group ${groupName}`);
+    console.log(`✅ Added user ${username} to group ${desiredGroupRole}`);
   } catch (err) {
     console.error("❌ Error adding user to group", err);
   }
@@ -93,10 +114,10 @@ export const handler: PostConfirmationTriggerHandler = async (event) => {
       new AdminUpdateUserAttributesCommand({
         UserPoolId: userPoolId,
         Username: username,
-        UserAttributes: [{ Name: "custom:role", Value: desiredRole }],
+        UserAttributes: [{ Name: "custom:role", Value: desiredGroupRole }],
       })
     );
-    console.log(`✅ Set custom:role=${desiredRole} for ${username}`);
+    console.log(`✅ Set custom:role=${desiredGroupRole} for ${username}`);
   } catch (err) {
     console.error("❌ Error updating custom:role", err);
   }

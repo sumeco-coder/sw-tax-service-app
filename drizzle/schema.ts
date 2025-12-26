@@ -363,39 +363,43 @@ export const progressStatusEnum = pgEnum("progress_status", [
 // =========================
 // USERS
 // =========================
+export const userRoleEnum = pgEnum("user_role", [
+  "TAXPAYER",
+  "AGENCY",
+  "ADMIN",
+  "SUPERADMIN",
+  "LMS_PREPARER",
+  "LMS_ADMIN",
+  "TAX_PREPARER",
+]);
+
 export const users = pgTable(
   "users",
   {
     id: uuid("id").defaultRandom().primaryKey(),
-    cognitoSub: text("cognito_sub").notNull().unique(), // map to Cognito sub
+    cognitoSub: text("cognito_sub").notNull().unique(),
     email: text("email").notNull(),
 
-    // ✅ NEW: split name
     firstName: text("first_name"),
+    middleName: text("middle_name"), 
     lastName: text("last_name"),
 
-    // keep the existing full name for display
     name: text("name"),
     phone: text("phone"),
-    dob: date("dob"), // <— date, not text
-    ssnEncrypted: text("ssn_encrypted"), // store server-side only, encrypted
+    dob: date("dob"), 
+    ssnEncrypted: text("ssn_encrypted"),
     address1: text("address1"),
     address2: text("address2"),
     city: text("city"),
     state: text("state"),
     zip: text("zip"),
-    filingStatus: text("filing_status"), // could make enum later if you want
+    filingStatus: text("filing_status"),
     avatarUrl: text("avatar_url"),
     bio: text("bio"),
 
-    // 🔥 NEW: track where they are in onboarding
-    onboardingStep: onboardingStepEnum("onboarding_step")
-      .default("PROFILE")
-      .notNull(),
+    onboardingStep: onboardingStepEnum("onboarding_step").default("PROFILE").notNull(),
 
-    createdAt: timestamp("created_at", { withTimezone: true })
-      .defaultNow()
-      .notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .defaultNow()
       .$onUpdate(() => new Date())
@@ -403,6 +407,33 @@ export const users = pgTable(
   },
   (t) => ({
     emailIdx: index("users_email_idx").on(t.email),
+  })
+);
+
+
+
+// =========================
+// TAXPAYER INTAKE TABLE
+// =========================
+export const taxpayerIntake = pgTable(
+  "taxpayer_intake",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+
+    // everything from onboarding/questions goes here
+    answers: jsonb("answers").notNull().default({}),
+
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (t) => ({
+    userUnique: uniqueIndex("taxpayer_intake_user_unique").on(t.userId),
   })
 );
 
@@ -664,6 +695,14 @@ export const userSettings = pgTable(
    LMS SECTION
    Firms, Courses, Modules, Lessons, Enrollments, Progress, SOP Files
    ====================================================================== */
+   export const firmRoleEnum = pgEnum("firm_role", [
+  "OWNER",
+  "ADMIN",
+  "INSTRUCTOR",
+  "TAX_PREPARER",
+  "STAFF",
+]);
+
 export const firms = pgTable(
   "firms",
   {

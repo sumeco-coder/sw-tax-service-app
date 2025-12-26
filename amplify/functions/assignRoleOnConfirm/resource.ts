@@ -6,6 +6,7 @@ export const assignRoleOnConfirm = defineFunction({
   entry: "./handler.ts",
   timeoutSeconds: 10,
   environment: {
+    DATABASE_URL: secret("DATABASE_URL"),
     ADMIN_EMAILS: secret("ADMIN_EMAILS"),
     ADMIN_INVITE_CODE: secret("ADMIN_INVITE_CODE"),
     INVITE_CODE_LMS_PREPARER: secret("INVITE_CODE_LMS_PREPARER"),

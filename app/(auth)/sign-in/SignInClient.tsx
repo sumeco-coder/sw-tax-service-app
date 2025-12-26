@@ -22,6 +22,15 @@ function getErrMsg(e: unknown) {
   return "Something went wrong. Please try again.";
 }
 
+/** Only allow internal app paths to avoid open-redirect attacks */
+function safeInternalPath(input: string | null, fallback: string) {
+  const raw = (input ?? "").trim();
+  if (!raw) return fallback;
+  if (!raw.startsWith("/")) return fallback;
+  if (raw.startsWith("//")) return fallback;
+  return raw;
+}
+
 export default function SigninClient() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -30,18 +39,31 @@ export default function SigninClient() {
     configureAmplify();
   }, []);
 
-  const redirectTo = useMemo(
-    () => searchParams.get("redirect") ?? "/dashboard",
+  const invite = useMemo(() => (searchParams.get("invite") ?? "").trim(), [searchParams]);
+
+  // support both next & redirect
+  const nextParam = useMemo(
+    () => searchParams.get("next") ?? searchParams.get("redirect"),
     [searchParams]
   );
 
-  const [view, setView] = useState<View>("signin");
+  const redirectTo = useMemo(() => {
+    const fallback = "/dashboard";
+    return safeInternalPath(nextParam, fallback);
+  }, [nextParam]);
 
+  const signUpHref = useMemo(() => {
+    const params = new URLSearchParams();
+    if (invite) params.set("invite", invite);
+    if (redirectTo) params.set("next", redirectTo);
+    const qs = params.toString();
+    return `/sign-up${qs ? `?${qs}` : ""}`;
+  }, [invite, redirectTo]);
+
+  const [view, setView] = useState<View>("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-
   const [code, setCode] = useState("");
-
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState("");
 
@@ -84,7 +106,6 @@ export default function SigninClient() {
         return;
       }
 
-      // Some other step (rare) — show confirm screen
       setView("confirmSignIn");
       setMsg(step ? `Additional sign-in step required: ${step}` : "Continue sign-in.");
     } catch (e: unknown) {
@@ -193,7 +214,7 @@ export default function SigninClient() {
                 Forgot password?
               </button>
 
-              <Link href="/sign-up" className="text-blue-700 hover:underline font-semibold">
+              <Link href={signUpHref} className="text-blue-700 hover:underline font-semibold">
                 Create account
               </Link>
             </div>
@@ -202,11 +223,7 @@ export default function SigninClient() {
 
         {view === "forgot" && (
           <div className="mt-6">
-            <ForgotPasswordForm
-              initialEmail={email}
-              onBack={backToSignIn}
-              onDone={backToSignIn}
-            />
+            <ForgotPasswordForm initialEmail={email} onBack={backToSignIn} onDone={backToSignIn} />
           </div>
         )}
 
