@@ -6,32 +6,33 @@ import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { db } from "@/drizzle/db";
 import { waitlist, invites } from "@/drizzle/schema";
-import { sendEmail } from "@/lib/email/sendEmail";
+import { sendEmail } from "@/lib/email/sendEmail.server";
 import { and, eq, gt } from "drizzle-orm";
 
 /**
  * Build a stable base URL for email links.
- * Prefer APP_URL in production so emails always point to the right domain.
+ * Prefer APP_ORIGIN (canonical), then APP_URL, then request headers, then localhost.
  */
 async function getBaseUrl() {
-  if (process.env.APP_URL?.trim()) return process.env.APP_URL.trim();
+  const envBase =
+    process.env.APP_ORIGIN?.trim() ||
+    process.env.APP_URL?.trim();
 
-  // ✅ In newer Next versions, headers() returns Promise<ReadonlyHeaders>
-  const h = await headers();
+  if (envBase) return envBase.replace(/\/$/, "");
+
+  // Next headers() can be sync or async depending on version/runtime
+  const h: any = await Promise.resolve(headers());
+
   const host = h.get("x-forwarded-host") ?? h.get("host");
   const proto = h.get("x-forwarded-proto") ?? "https";
 
   if (!host) return "http://localhost:3000";
-  return `${proto}://${host}`;
+  return `${proto}://${host}`.replace(/\/$/, "");
 }
 
 /**
  * Approve a waitlist entry, create (or reuse) a taxpayer invite,
  * and send an onboarding email.
- *
- * ✅ Idempotent behavior:
- * - If waitlist is already approved, we try to reuse an existing valid pending invite and resend the email.
- * - If waitlist is pending, we approve it and create an invite (unless a valid one already exists).
  */
 export async function approveWaitlistAndCreateInvite(
   waitlistId: string,
@@ -95,7 +96,7 @@ export async function approveWaitlistAndCreateInvite(
     });
   }
 
-  // 4) Approve the waitlist row if it's still pending (don’t throw if already approved)
+  // 4) Approve the waitlist row if it's still pending
   if (entry.status === "pending") {
     await db
       .update(waitlist)
@@ -103,9 +104,13 @@ export async function approveWaitlistAndCreateInvite(
       .where(eq(waitlist.id, waitlistId));
   }
 
-  // 5) Build onboarding URL
+  // 5) Build onboarding URL (safe join + safe query)
   const baseUrl = await getBaseUrl();
-  const onboardingUrl = `${baseUrl}/taxpayer/onboarding-sign-up?token=${token}`;
+  const onboardingUrl = new URL(
+    "/taxpayer/onboarding-sign-up",
+    baseUrl
+  );
+  onboardingUrl.searchParams.set("token", token);
 
   // 6) Send onboarding invite email
   try {
@@ -117,7 +122,7 @@ export async function approveWaitlistAndCreateInvite(
       "Good news — you've been approved to file your taxes with SW Tax Service.",
       "",
       "Click the link below to create your secure account and complete onboarding:",
-      onboardingUrl,
+      onboardingUrl.toString(),
       "",
       "If you didn’t request this, you can ignore this email.",
       "",
@@ -130,14 +135,14 @@ export async function approveWaitlistAndCreateInvite(
         <p>Good news — you've been <strong>approved to file your taxes with SW Tax Service</strong>.</p>
         <p>Click the button below to create your secure account and complete onboarding:</p>
         <p>
-          <a href="${onboardingUrl}"
+          <a href="${onboardingUrl.toString()}"
              style="display:inline-block;background:#2563eb;color:#ffffff;padding:10px 18px;border-radius:999px;text-decoration:none;font-weight:600;">
             Start your onboarding
           </a>
         </p>
         <p style="margin-top:16px;font-size:12px;color:#6b7280;">
           Or copy and paste this link into your browser:<br/>
-          <span style="word-break:break-all;">${onboardingUrl}</span>
+          <span style="word-break:break-all;">${onboardingUrl.toString()}</span>
         </p>
         <p style="margin-top:16px;">If you didn’t request this, you can safely ignore this email.</p>
         <p style="margin-top:12px;">— SW Tax Service</p>
@@ -152,15 +157,21 @@ export async function approveWaitlistAndCreateInvite(
     });
   } catch (err) {
     console.error("Failed to send invite email:", err);
-    // Don’t throw so approval/invite still succeeds
+    // don't throw; approval/invite still succeeds
   }
 
-  // 7) Revalidate admin pages (covers both URL patterns)
-  revalidatePath("/waitlist"); // if your page is /waitlist
-  revalidatePath("/admin/waitlist"); // if you later move it under /admin/waitlist
-  revalidatePath("/admin"); // dashboard (if you have one)
+  // 7) Revalidate admin pages
+  revalidatePath("/admin/waitlist");
+  revalidatePath("/admin");
+  // keep these if you truly have them:
+  revalidatePath("/waitlist");
 
-  return { onboardingUrl, token, expiresAt, reused };
+  return {
+    onboardingUrl: onboardingUrl.toString(),
+    token,
+    expiresAt,
+    reused,
+  };
 }
 
 /**
@@ -174,7 +185,7 @@ export async function rejectWaitlist(waitlistId: string) {
     .set({ status: "rejected", updatedAt: new Date() })
     .where(eq(waitlist.id, waitlistId));
 
-  revalidatePath("/waitlist");
   revalidatePath("/admin/waitlist");
   revalidatePath("/admin");
+  revalidatePath("/waitlist");
 }

@@ -25,6 +25,8 @@ const PROTECTED_KEYS = new Set([
 
 export default async function AdminSettingsPage() {
   const cfg = await getWaitlistConfig();
+  const appOrigin = process.env.APP_ORIGIN ?? null;
+  const appUrl = process.env.APP_URL ?? null;
 
   const settings = await db
     .select()
@@ -124,15 +126,29 @@ export default async function AdminSettingsPage() {
       <section className="rounded-xl border bg-white p-4">
         <h2 className="text-sm font-semibold text-gray-900">Email Links</h2>
         <p className="mt-1 text-xs text-gray-600">
-          Emails should use <code>APP_URL</code> so invite links are always
-          correct.
+          Emails should use <code>APP_ORIGIN</code> (preferred) or{" "}
+          <code>APP_URL</code> (fallback) so invite links are always correct.
         </p>
-        <div className="mt-3 rounded-lg border bg-gray-50 p-3 text-sm">
-          <div className="flex flex-col gap-1">
-            <span className="text-xs text-gray-600">APP_URL</span>
-            <span className="font-mono text-xs text-gray-900">
-              {process.env.APP_URL ?? "(not set)"}
-            </span>
+
+        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+          <div className="rounded-lg border bg-gray-50 p-3 text-sm">
+            <div className="flex flex-col gap-1">
+              <span className="text-xs text-gray-600">
+                APP_ORIGIN (preferred)
+              </span>
+              <span className="font-mono text-xs text-gray-900">
+                {appOrigin ?? "(not set)"}
+              </span>
+            </div>
+          </div>
+
+          <div className="rounded-lg border bg-gray-50 p-3 text-sm">
+            <div className="flex flex-col gap-1">
+              <span className="text-xs text-gray-600">APP_URL (fallback)</span>
+              <span className="font-mono text-xs text-gray-900">
+                {appUrl ?? "(not set)"}
+              </span>
+            </div>
           </div>
         </div>
       </section>

@@ -27,9 +27,13 @@ function makeToken() {
 
 function getSiteUrl() {
   const base =
-    process.env.SITE_URL ?? process.env.APP_URL ?? "https://www.swtaxservice.com";
-  return String(base).replace(/\/$/, "");
+    process.env.APP_ORIGIN ??
+    process.env.APP_URL ??
+    "https://www.swtaxservice.com";
+
+  return String(base).trim().replace(/\/$/, "");
 }
+
 
 function buildUnsubUrls(token: string) {
   const base = getSiteUrl();
