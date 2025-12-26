@@ -3,12 +3,15 @@
 
 import { db } from "@/drizzle/db";
 import { emailCampaigns, emailRecipients } from "@/drizzle/schema";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+
 import { ALL_TEMPLATES } from "../templates/_templates";
 import { EMAIL_DEFAULTS } from "@/lib/constants/email-defaults";
-import { renderTemplate, withDefaults } from "@/lib/helpers/render-template";
+import { compileMjmlToHtmlIfNeeded } from "@/lib/helpers/email-compile.server";
+import { fillKnownDefaultsKeepUnknown, now } from "@/lib/helpers/email-utils";
+
 import {
   CreateCampaignSchema,
   UpdateCampaignSchema,
@@ -20,19 +23,37 @@ import {
   ScheduleCampaignDbSchema,
 } from "@/schemas/email/campaign.server";
 
-import { compileMjmlToHtmlIfNeeded } from "@/lib/helpers/email-compile.server";
-import { fillKnownDefaultsKeepUnknown, now } from "@/lib/helpers/email-utils";
-
-import { buildRecipientsFromAudience } from "@/lib/helpers/build-recipients-from-audience.server";
+import { buildRecipientsFromAudience } from "@/lib/server/email-campaign";
 
 /* =========================
-   HELPERS (local only)
+   LOCAL HELPERS
    ========================= */
 
 function getTemplate(templateId: string) {
   const t = ALL_TEMPLATES.find((x) => x.id === templateId);
   if (!t) throw new Error("Template not found.");
   return t;
+}
+
+async function compileToHtml(source: string) {
+  // supports either sync or async helper
+  return await Promise.resolve(compileMjmlToHtmlIfNeeded(source));
+}
+
+async function requireQueuedRecipients(campaignId: string) {
+  const [row] = await db
+    .select({
+      queued: sql<number>`sum(case when ${emailRecipients.status} = 'queued' then 1 else 0 end)::int`,
+    })
+    .from(emailRecipients)
+    .where(eq(emailRecipients.campaignId, campaignId));
+
+  const queued = row?.queued ?? 0;
+  if (queued <= 0) {
+    throw new Error(
+      "No queued recipients for this campaign. Build recipients first."
+    );
+  }
 }
 
 /* =========================
@@ -54,15 +75,14 @@ export async function createCampaign(formData: FormData): Promise<void> {
 
   const { name, subject, htmlBody, textBody, segment } = parsed.data;
 
+  const htmlCompiled = await compileToHtml(htmlBody);
+
   const [row] = await db
     .insert(emailCampaigns)
     .values({
       name,
       subject,
-
-      // ✅ store compiled HTML if MJML provided (still fine even if you mostly use HTML)
-      htmlBody: compileMjmlToHtmlIfNeeded(htmlBody),
-
+      htmlBody: htmlCompiled,
       textBody: (textBody ?? "").trim().length ? textBody : null,
       segment: (segment ?? "waitlist_pending") as any,
       status: "draft" as any,
@@ -100,7 +120,7 @@ export async function updateCampaign(formData: FormData): Promise<void> {
   if (subject !== undefined) values.subject = subject;
 
   if (htmlBody !== undefined) {
-    values.htmlBody = compileMjmlToHtmlIfNeeded(htmlBody);
+    values.htmlBody = await compileToHtml(htmlBody);
   }
 
   if (textBody !== undefined) {
@@ -149,7 +169,10 @@ export async function setCampaignStatus(formData: FormData): Promise<void> {
     patch.schedulerName = null;
   }
 
-  await db.update(emailCampaigns).set(patch).where(eq(emailCampaigns.id, campaignId));
+  await db
+    .update(emailCampaigns)
+    .set(patch)
+    .where(eq(emailCampaigns.id, campaignId));
 
   revalidatePath("/admin/email/campaigns");
   revalidatePath(`/admin/email/campaigns/${campaignId}`);
@@ -212,8 +235,10 @@ export async function deleteCampaign(formData: FormData): Promise<void> {
 
   const { campaignId } = parsed.data;
 
-  // ✅ cleanup recipients first (avoid FK/orphans)
-  await db.delete(emailRecipients).where(eq(emailRecipients.campaignId, campaignId));
+  // cleanup recipients first (avoid FK/orphans)
+  await db
+    .delete(emailRecipients)
+    .where(eq(emailRecipients.campaignId, campaignId));
   await db.delete(emailCampaigns).where(eq(emailCampaigns.id, campaignId));
 
   revalidatePath("/admin/email/campaigns");
@@ -223,7 +248,7 @@ export async function deleteCampaign(formData: FormData): Promise<void> {
 /**
  * Apply a template to an existing campaign (fills subject/html/text).
  *
- * ✅ MJML allowed (we compile to HTML before saving)
+ * ✅ MJML allowed (compiled to HTML before saving)
  * ✅ Only fills known defaults (company_name, website, etc.)
  * ✅ Leaves unknown tokens like {{unsubscribe_link}} intact for sending time
  */
@@ -257,11 +282,12 @@ export async function applyTemplateToCampaign(formData: FormData): Promise<void>
   const textTpl = String((t as any).text ?? "");
 
   const subject = fillKnownDefaultsKeepUnknown(subjectTpl, knownDefaults);
-  const filledSource = fillKnownDefaultsKeepUnknown(String(htmlSource), knownDefaults);
+  const filledSource = fillKnownDefaultsKeepUnknown(
+    String(htmlSource),
+    knownDefaults
+  );
 
-  // ✅ stored as HTML in DB
-  const compiledHtml = compileMjmlToHtmlIfNeeded(filledSource);
-
+  const compiledHtml = await compileToHtml(filledSource);
   const textBody = fillKnownDefaultsKeepUnknown(textTpl, knownDefaults);
 
   await db
@@ -295,8 +321,10 @@ export async function buildRecipientsForCampaign(campaignId: string, limit = 500
 
   if (!c) throw new Error("Campaign not found.");
 
-  // Don’t rebuild recipients for sent campaigns (prevents accidental resends)
-  if ((c as any).status === "sent") {
+  const status = String((c as any).status ?? "draft");
+
+  // Prevent race conditions / accidental resends
+  if (status === "sent") {
     return {
       ok: true,
       message: "Campaign already sent; recipients not rebuilt.",
@@ -304,6 +332,9 @@ export async function buildRecipientsForCampaign(campaignId: string, limit = 500
       queued: 0,
       unsubscribed: 0,
     };
+  }
+  if (status === "sending") {
+    throw new Error("Campaign is currently sending. Try again after it finishes.");
   }
 
   const out = await buildRecipientsFromAudience({
@@ -313,7 +344,6 @@ export async function buildRecipientsForCampaign(campaignId: string, limit = 500
     apptSegment: ((c as any).apptSegment ?? null) as any,
     manualRecipientsRaw: ((c as any).manualRecipientsRaw ?? null) as any,
 
-    // ✅ apply one limit knob across all sources
     waitlistLimit: limit,
     listLimit: limit,
     apptLimit: limit,
@@ -352,6 +382,24 @@ export async function scheduleCampaignDb(campaignId: string, scheduledAt: Date) 
     throw new Error("scheduledAt must be a valid Date.");
   }
 
+  // Safety: must be at least 1 minute in the future
+  if (scheduledAt.getTime() < Date.now() + 60_000) {
+    throw new Error("Send time must be at least 1 minute in the future.");
+  }
+
+  const [c] = await db
+    .select({ status: emailCampaigns.status })
+    .from(emailCampaigns)
+    .where(eq(emailCampaigns.id, id))
+    .limit(1);
+
+  const status = String((c as any)?.status ?? "draft");
+  if (status === "sent") throw new Error("Campaign already sent.");
+  if (status === "sending") throw new Error("Campaign is currently sending.");
+
+  // Require queued recipients before scheduling
+  await requireQueuedRecipients(id);
+
   await db
     .update(emailCampaigns)
     .set({
@@ -370,9 +418,13 @@ export async function scheduleCampaignDb(campaignId: string, scheduledAt: Date) 
 }
 
 export async function scheduleCampaignDbAction(formData: FormData) {
+  // Accept either field name to avoid UI mismatch bugs:
+  const scheduledAtIso =
+    (formData.get("scheduledAtIso") as any) ?? (formData.get("sendAt") as any);
+
   const parsed = ScheduleCampaignDbSchema.safeParse({
     campaignId: formData.get("campaignId"),
-    scheduledAtIso: formData.get("scheduledAtIso"),
+    scheduledAtIso,
   });
 
   if (!parsed.success) {

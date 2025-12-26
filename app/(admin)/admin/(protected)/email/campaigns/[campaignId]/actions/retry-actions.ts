@@ -7,32 +7,57 @@ import { and, eq, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
+/**
+ * Retry ONLY failed recipients:
+ * - failed -> queued
+ * - if anything queued, mark campaign scheduled to run ASAP (DB-runner friendly)
+ */
 export async function retryFailed(campaignId: string) {
   const id = String(campaignId ?? "").trim();
   if (!id) throw new Error("Missing campaignId");
 
-  // ✅ reset failed -> queued
+  const now = new Date();
+
+  // 1) Reset failed -> queued
   await db
     .update(emailRecipients)
-    .set({ status: "queued", error: null, updatedAt: new Date() })
-    .where(and(eq(emailRecipients.campaignId, id), eq(emailRecipients.status, "failed")));
+    .set({
+      status: "queued" as any,
+      error: null,
+      updatedAt: now,
+    } as any)
+    .where(
+      and(
+        eq(emailRecipients.campaignId, id),
+        eq(emailRecipients.status as any, "failed" as any)
+      )
+    );
 
-  // ✅ If there is anything queued now, schedule campaign to run ASAP (cheapest plan)
+  // 2) Count queued
   const [row] = await db
-    .select({ queued: sql<number>`count(*)::int` })
+    .select({
+      queued: sql<number>`count(*)::int`,
+    })
     .from(emailRecipients)
-    .where(and(eq(emailRecipients.campaignId, id), eq(emailRecipients.status, "queued")));
+    .where(
+      and(
+        eq(emailRecipients.campaignId, id),
+        eq(emailRecipients.status as any, "queued" as any)
+      )
+    );
 
   const queued = row?.queued ?? 0;
 
+  // 3) If anything queued, schedule campaign to run ASAP (DB scheduling)
   if (queued > 0) {
     await db
       .update(emailCampaigns)
       .set({
         status: "scheduled" as any,
-        scheduledAt: new Date(), // now
+        scheduledAt: now,        // "now" (runner will pick up on next tick)
+        schedulerName: null,     // ✅ important: keep DB-runner ownership
         sentAt: null,
-        updatedAt: new Date(),
+        updatedAt: now,
       } as any)
       .where(eq(emailCampaigns.id, id));
   }

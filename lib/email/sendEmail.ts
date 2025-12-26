@@ -9,7 +9,7 @@ export type EmailAttachment = {
   content?: string; // base64
   path?: string; // public URL
   contentId?: string;
-  contentType?: string; // optional metadata
+  contentType?: string; // optional metadata (Resend ignores)
 };
 
 export type SendEmailArgs = {
@@ -22,25 +22,27 @@ export type SendEmailArgs = {
   headers?: Record<string, string>;
   attachments?: EmailAttachment[];
 
-  // ✅ Resend scheduling (ISO string or "in 10 min")
+  // Resend scheduling (ISO string or "in 10 min")
   scheduledAt?: string;
 };
 
-// ✅ Resend-first (default)
-const provider = (process.env.EMAIL_PROVIDER || "resend").toLowerCase();
+function getProvider() {
+  return (process.env.EMAIL_PROVIDER || "resend").toLowerCase();
+}
 
-/**
- * Unified email sender for the whole app.
- *
- * Resend-first:
- * - If EMAIL_PROVIDER=resend → send with Resend, optionally fall back to SES if configured
- * - If EMAIL_PROVIDER=ses → send with SES first (only if you ever choose that)
- */
+function hasSesConfig() {
+  // adjust to whatever your SES module requires
+  return Boolean(process.env.AWS_REGION); // + any other SES envs you use
+}
+
 export async function sendEmail(args: SendEmailArgs): Promise<void> {
-  const hasAttachments = Boolean(args.attachments?.length);
+  const provider = getProvider();
 
-  // ✅ If attachments exist, ALWAYS use Resend
-  if (hasAttachments) {
+  const hasAttachments = Boolean(args.attachments?.length);
+  const isScheduled = Boolean(args.scheduledAt);
+
+  // ✅ Resend-only cases (NO fallback)
+  if (hasAttachments || isScheduled) {
     const attachments: ResendAttachment[] = (args.attachments ?? []).map((a) => ({
       filename: a.filename,
       content: a.content,
@@ -55,34 +57,36 @@ export async function sendEmail(args: SendEmailArgs): Promise<void> {
       textBody: args.textBody,
       replyTo: args.replyTo,
       headers: args.headers,
-      attachments,
+      attachments: attachments.length ? attachments : undefined,
       scheduledAt: args.scheduledAt,
     });
 
     return;
   }
 
-  // ✅ Resend-first behavior
-  if (provider !== "ses") {
-    try {
-      await sendResendEmail({
-        to: args.to,
-        subject: args.subject,
-        htmlBody: args.htmlBody,
-        textBody: args.textBody,
-        replyTo: args.replyTo,
-        headers: args.headers,
-        scheduledAt: args.scheduledAt,
-      });
-      return;
-    } catch (err) {
-      console.error("Resend send failed, falling back to SES:", err);
-      // fallthrough to SES
-    }
+  // ✅ If you explicitly choose SES
+  if (provider === "ses") {
+    await sendSesEmail(args);
+    return;
+  }
 
-    // SES fallback only if SES env vars exist
+  // ✅ Default: Resend first, fallback to SES only for immediate sends
+  try {
+    await sendResendEmail({
+      to: args.to,
+      subject: args.subject,
+      htmlBody: args.htmlBody,
+      textBody: args.textBody,
+      replyTo: args.replyTo,
+      headers: args.headers,
+    });
+    return;
+  } catch (err) {
+    console.error("Resend send failed:", err);
+  }
+
+  if (hasSesConfig()) {
     try {
-      // ⚠️ SES doesn't support scheduledAt here — only immediate send
       await sendSesEmail(args);
       return;
     } catch (err) {
@@ -91,6 +95,6 @@ export async function sendEmail(args: SendEmailArgs): Promise<void> {
     }
   }
 
-  // If you ever set EMAIL_PROVIDER=ses intentionally:
-  await sendSesEmail(args);
+  // no SES configured
+  throw new Error("Email send failed (Resend failed and SES is not configured).");
 }

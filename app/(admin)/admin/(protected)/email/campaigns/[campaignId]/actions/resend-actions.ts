@@ -8,6 +8,8 @@ import { eq, inArray, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
+const CHUNK = 1000;
+
 function makeToken() {
   return crypto.randomBytes(24).toString("base64url");
 }
@@ -16,6 +18,16 @@ function normalizeEmail(e: unknown) {
   return String(e ?? "").toLowerCase().trim();
 }
 
+function chunk<T>(arr: T[], size = CHUNK) {
+  const out: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
+
+/**
+ * Creates a NEW campaign copy, and re-queues recipients (excluding unsubscribed).
+ * Does NOT send anything.
+ */
 export async function resendWholeCampaignAsCopy(campaignId: string) {
   const srcId = String(campaignId ?? "").trim();
   if (!srcId) throw new Error("Missing campaignId");
@@ -38,7 +50,7 @@ export async function resendWholeCampaignAsCopy(campaignId: string) {
 
   const now = new Date();
 
-  // 2) Duplicate campaign (✅ NO LAMBDA: create as draft / unsent)
+  // 2) Duplicate campaign as draft (queue-only)
   const [created] = await db
     .insert(emailCampaigns)
     .values({
@@ -48,7 +60,6 @@ export async function resendWholeCampaignAsCopy(campaignId: string) {
       textBody: src.textBody ?? null,
       segment: src.segment as any,
 
-      // ✅ no runner, so don't schedule
       status: "draft" as any,
       scheduledAt: null,
       sentAt: null,
@@ -62,18 +73,28 @@ export async function resendWholeCampaignAsCopy(campaignId: string) {
   const newId = String(created.id);
 
   // 3) Copy recipient emails from old campaign
+  // ✅ also fetch status so we can skip old "unsubscribed" rows
   const oldRecipients = await db
-    .select({ email: emailRecipients.email })
+    .select({
+      email: emailRecipients.email,
+      status: emailRecipients.status,
+    })
     .from(emailRecipients)
     .where(eq(emailRecipients.campaignId, srcId));
 
   const emails = Array.from(
-    new Set(oldRecipients.map((r) => normalizeEmail(r.email)).filter(Boolean))
+    new Set(
+      oldRecipients
+        .filter((r) => String(r.status) !== "unsubscribed") // ✅ don’t re-add old unsubscribed
+        .map((r) => normalizeEmail(r.email))
+        .filter(Boolean)
+    )
   );
 
   if (!emails.length) {
     revalidatePath("/admin/email/campaigns");
     redirect(`/admin/email/campaigns/${newId}`);
+    return;
   }
 
   // 4) Global unsub blocklist (case-insensitive safe)
@@ -84,7 +105,7 @@ export async function resendWholeCampaignAsCopy(campaignId: string) {
 
   const unsubSet = new Set(unsub.map((u) => normalizeEmail(u.email)).filter(Boolean));
 
-  // 5) Insert recipients for the new campaign
+  // 5) Insert recipients for the new campaign (queued/unsubscribed)
   const toInsert = emails.map((email) => ({
     campaignId: newId,
     email,
@@ -94,12 +115,14 @@ export async function resendWholeCampaignAsCopy(campaignId: string) {
     updatedAt: now,
   }));
 
-  await db
-    .insert(emailRecipients)
-    .values(toInsert)
-    .onConflictDoNothing({
-      target: [emailRecipients.campaignId, emailRecipients.email],
-    });
+  for (const batch of chunk(toInsert, 1000)) {
+    await db
+      .insert(emailRecipients)
+      .values(batch as any)
+      .onConflictDoNothing({
+        target: [emailRecipients.campaignId, emailRecipients.email],
+      } as any);
+  }
 
   revalidatePath("/admin/email/campaigns");
   revalidatePath(`/admin/email/campaigns/${srcId}`);

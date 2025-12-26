@@ -5,6 +5,9 @@ export const EMAIL_PLACEHOLDERS = [
   "waitlist_link",
   "support_email",
   "website",
+  "sign_in_url",
+  "sign_up_url",
+  "expires_text",
   "first_name",
   "signature_name",
   "unsubscribe_link",
@@ -22,21 +25,15 @@ export type TemplateVars = Partial<
   Record<EmailPlaceholder, string | number | null | undefined>
 >;
 
-// ✅ basic recipient shape used by helpers/actions
 export type Recipient = { email: string };
 
-// ✅ Allow either MJML or HTML (MJML gets compiled to HTML)
 export type EmailTemplate = {
   id: string;
   name: string;
   subject: string;
-
-  // One of these should be present:
   html?: string;
   mjml?: string;
-
   text: string;
-
   placeholders: EmailPlaceholder[];
   category?: string;
 };

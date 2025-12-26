@@ -1,5 +1,4 @@
 // lib/email/resend.ts
-import "server-only";
 import { Resend } from "resend";
 
 const defaultFrom =
