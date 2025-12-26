@@ -3,11 +3,12 @@ import { NextResponse } from "next/server";
 import { db } from "@/drizzle/db";
 import { appointments, users } from "@/drizzle/schema";
 import { eq, desc } from "drizzle-orm";
+import { getServerRole } from "@/lib/auth/roleServer";
 
-export async function POST(req: Request) {
+export async function POST() {
   try {
-    const body = await req.json().catch(() => ({}));
-    const cognitoSub = String(body?.cognitoSub ?? "").trim();
+    const me = await getServerRole();
+    const cognitoSub = me?.sub ? String(me.sub) : "";
 
     if (!cognitoSub) {
       return NextResponse.json({ appointment: null }, { status: 200 });

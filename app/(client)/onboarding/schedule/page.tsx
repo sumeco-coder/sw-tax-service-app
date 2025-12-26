@@ -5,7 +5,20 @@ import { useEffect, useMemo, useState } from "react";
 import { getCurrentUser } from "aws-amplify/auth";
 import { configureAmplify } from "@/lib/amplifyClient";
 import Link from "next/link";
-import { cancelAppointment, rescheduleAppointment, bookAppointment } from "./actions";
+import {
+  cancelAppointment,
+  rescheduleAppointment,
+  bookAppointment,
+  skipScheduling,
+} from "./actions";
+
+// shadcn ui
+import { Calendar } from "@/components/ui/calendar";
+import { Button } from "@/components/ui/button";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+
+// If you have cn helper
+import { cn } from "@/lib/utils";
 
 configureAmplify();
 
@@ -19,21 +32,6 @@ type Appointment = {
   startsAt: string; // ISO string
 };
 
-const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-
-// Fake available dates (next 10 days)
-const getNext10Days = () => {
-  const out: Date[] = [];
-  const now = new Date();
-  for (let i = 1; i <= 10; i++) {
-    const d = new Date();
-    d.setDate(now.getDate() + i);
-    out.push(d);
-  }
-  return out;
-};
-
-// Time slots with label + 24h value
 const TIME_SLOTS = [
   { label: "9:00 AM", value: "09:00" },
   { label: "10:30 AM", value: "10:30" },
@@ -46,8 +44,17 @@ const TIME_SLOTS = [
 function buildIsoDateTime(date: Date, hhmm: string): string {
   const [hours, minutes] = hhmm.split(":").map((n) => Number(n));
   const d = new Date(date);
-  d.setHours(hours, minutes, 0, 0);
-  return d.toISOString();
+  d.setHours(hours, minutes, 0, 0); // local time
+  return d.toISOString(); // stored as UTC
+}
+
+function formatPrettyDate(d: Date) {
+  return new Intl.DateTimeFormat("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  }).format(d);
 }
 
 export default function SchedulePage() {
@@ -60,9 +67,14 @@ export default function SchedulePage() {
 
   const [isRescheduling, setIsRescheduling] = useState(false);
 
-  const dates = useMemo(() => getNext10Days(), []);
-  const [selectedDate, setSelectedDate] = useState<Date | null>(null);
+  const [selectedDate, setSelectedDate] = useState<Date | undefined>(undefined);
   const [selectedSlot, setSelectedSlot] = useState<(typeof TIME_SLOTS)[number] | null>(null);
+
+  const today = useMemo(() => {
+    const t = new Date();
+    t.setHours(0, 0, 0, 0);
+    return t;
+  }, []);
 
   // Load user session
   useEffect(() => {
@@ -136,60 +148,49 @@ export default function SchedulePage() {
     );
   }
 
-  const DateGrid = (
-    <section>
-      <p className="text-sm font-semibold text-slate-800 mb-2">Choose a date</p>
+  const DatePicker = (
+    <section className="space-y-2">
+      <p className="text-sm font-semibold text-slate-800">Choose a date</p>
 
-      <div className="grid grid-cols-5 gap-3 sm:grid-cols-7">
-        {dates.map((date) => {
-          const day = days[date.getDay()];
-          const isSelected =
-            selectedDate && date.toDateString() === selectedDate.toDateString();
+      <Popover>
+        <PopoverTrigger asChild>
+          <Button
+            type="button"
+            variant="outline"
+            className={cn(
+              "w-full justify-start rounded-xl border-slate-200 bg-white text-left font-medium",
+              !selectedDate && "text-slate-500"
+            )}
+          >
+            {selectedDate ? formatPrettyDate(selectedDate) : "Pick a date…"}
+          </Button>
+        </PopoverTrigger>
 
-          const month = date.toLocaleDateString("en-US", { month: "short" });
-          const dayNum = date.toLocaleDateString("en-US", { day: "numeric" });
-          const year = date.toLocaleDateString("en-US", { year: "numeric" });
+        <PopoverContent className="w-auto p-0" align="start">
+          <Calendar
+            mode="single"
+            selected={selectedDate}
+            onSelect={(d) => {
+              setSelectedDate(d);
+              setSelectedSlot(null);
+            }}
+            disabled={{ before: today }}
+            initialFocus
+          />
+        </PopoverContent>
+      </Popover>
 
-          return (
-            <button
-              key={date.toISOString()}
-              type="button"
-              onClick={() => {
-                setSelectedDate(date);
-                setSelectedSlot(null);
-              }}
-              className={`rounded-xl p-3 text-center shadow-sm border transition leading-tight
-                ${isSelected ? "border-blue-600 bg-blue-50" : "border-slate-200 bg-slate-50 hover:bg-slate-100"}`}
-            >
-              <p
-                className={`text-[11px] font-semibold opacity-80 ${
-                  isSelected ? "text-blue-700" : "text-slate-700"
-                }`}
-              >
-                {day}
-              </p>
-
-              <p
-                className={`mt-1 text-base font-extrabold ${
-                  isSelected ? "text-blue-700" : "text-slate-900"
-                }`}
-              >
-                {month} {dayNum}
-              </p>
-
-              <p className="text-[11px] font-semibold text-slate-500">{year}</p>
-            </button>
-          );
-        })}
-      </div>
+      <p className="text-xs text-slate-500">
+        Tip: only future dates are selectable.
+      </p>
     </section>
   );
 
   const TimeSlots = selectedDate && (
-    <section>
-      <p className="text-sm font-semibold text-slate-800 mb-2">Available times</p>
+    <section className="space-y-2">
+      <p className="text-sm font-semibold text-slate-800">Available times</p>
 
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
         {TIME_SLOTS.map((slot) => {
           const isSelected = selectedSlot?.value === slot.value;
           return (
@@ -197,8 +198,12 @@ export default function SchedulePage() {
               key={slot.value}
               type="button"
               onClick={() => setSelectedSlot(slot)}
-              className={`rounded-lg px-4 py-2 text-sm shadow-sm border transition
-                ${isSelected ? "border-blue-600 bg-blue-50 text-blue-700" : "border-slate-200 bg-white hover:bg-slate-100"}`}
+              className={cn(
+                "rounded-xl px-4 py-2 text-sm font-semibold shadow-sm border transition",
+                isSelected
+                  ? "border-blue-600 bg-blue-50 text-blue-700"
+                  : "border-slate-200 bg-white hover:bg-slate-50 text-slate-800"
+              )}
             >
               {slot.label}
             </button>
@@ -213,13 +218,14 @@ export default function SchedulePage() {
       <div className="mx-auto max-w-2xl rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
         <header className="mb-6">
           <p className="text-xs font-semibold uppercase tracking-wide text-blue-600">
-            Step 4 of 4
+            Step 4 of 4 (optional)
           </p>
           <h1 className="mt-1 text-2xl font-bold text-slate-900">
             Schedule your review call
           </h1>
           <p className="mt-2 text-sm text-slate-600">
             Pick a time for your tax professional to go over your return and next steps.
+            You can also skip this step and schedule later.
           </p>
         </header>
 
@@ -229,6 +235,17 @@ export default function SchedulePage() {
           </div>
         )}
 
+        {/* ✅ Skip scheduling (optional) */}
+        <form action={skipScheduling} className="mb-4">
+          <input type="hidden" name="cognitoSub" value={user.sub} />
+          <button
+            type="submit"
+            className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+          >
+            Skip for now (schedule later)
+          </button>
+        </form>
+
         {/* IF NO APPOINTMENT YET → BOOK NEW */}
         {!currentAppointment && (
           <form action={bookAppointment} className="space-y-6">
@@ -236,24 +253,26 @@ export default function SchedulePage() {
             <input type="hidden" name="email" value={user.email} />
             <input type="hidden" name="scheduledAt" value={scheduledAtIso} />
 
-            {DateGrid}
+            {DatePicker}
             {TimeSlots}
 
             <div className="pt-2">
               <button
                 type="submit"
                 disabled={!canSubmit}
-                className={`w-full rounded-lg px-4 py-2.5 text-sm font-semibold text-white shadow-sm
-                  ${canSubmit ? "bg-blue-600 hover:bg-blue-700" : "bg-slate-300 cursor-not-allowed"}`}
+                className={cn(
+                  "w-full rounded-xl px-4 py-2.5 text-sm font-semibold text-white shadow-sm",
+                  canSubmit ? "bg-blue-600 hover:bg-blue-700" : "bg-slate-300 cursor-not-allowed"
+                )}
               >
                 Confirm appointment
               </button>
 
               <Link
-                href="/onboarding"
+                href="/onboarding/summary"
                 className="mt-3 block text-center text-xs font-medium text-slate-500 hover:text-slate-700"
               >
-                Back to onboarding
+                Back to summary
               </Link>
             </div>
           </form>
@@ -278,7 +297,7 @@ export default function SchedulePage() {
                   />
                   <button
                     type="submit"
-                    className="inline-flex items-center rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-700"
+                    className="inline-flex items-center rounded-xl bg-rose-600 px-3 py-2 text-xs font-semibold text-white hover:bg-rose-700"
                   >
                     Cancel appointment
                   </button>
@@ -287,7 +306,7 @@ export default function SchedulePage() {
                 <button
                   type="button"
                   onClick={() => setIsRescheduling((v) => !v)}
-                  className="inline-flex items-center rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                  className="inline-flex items-center rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
                 >
                   {isRescheduling ? "Close reschedule" : "Change time"}
                 </button>
@@ -301,24 +320,26 @@ export default function SchedulePage() {
                 <input type="hidden" name="email" value={user.email} />
                 <input type="hidden" name="scheduledAt" value={scheduledAtIso} />
 
-                {DateGrid}
+                {DatePicker}
                 {TimeSlots}
 
                 <div className="pt-2">
                   <button
                     type="submit"
                     disabled={!canSubmit}
-                    className={`w-full rounded-lg px-4 py-2.5 text-sm font-semibold text-white shadow-sm
-                      ${canSubmit ? "bg-blue-600 hover:bg-blue-700" : "bg-slate-300 cursor-not-allowed"}`}
+                    className={cn(
+                      "w-full rounded-xl px-4 py-2.5 text-sm font-semibold text-white shadow-sm",
+                      canSubmit ? "bg-blue-600 hover:bg-blue-700" : "bg-slate-300 cursor-not-allowed"
+                    )}
                   >
                     Confirm new time
                   </button>
 
                   <Link
-                    href="/onboarding"
+                    href="/onboarding/summary"
                     className="mt-3 block text-center text-xs font-medium text-slate-500 hover:text-slate-700"
                   >
-                    Back to onboarding
+                    Back to summary
                   </Link>
                 </div>
               </form>

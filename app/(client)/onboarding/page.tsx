@@ -1,27 +1,34 @@
 // app/(client)/onboarding/page.tsx
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { getCurrentUser, fetchAuthSession } from "aws-amplify/auth";
 import { configureAmplify } from "@/lib/amplifyClient";
 
 configureAmplify();
 
-type OnboardingStepCode = "PROFILE" | "DOCUMENTS" | "QUESTIONS" | "SCHEDULE";
+type StepCode = "PROFILE" | "DOCUMENTS" | "QUESTIONS" | "SCHEDULE" | "SUMMARY";
+type DbStep = StepCode | "SUBMITTED" | "DONE" | null;
 
 type Me = {
   email: string;
   firstName: string | null;
   lastName: string | null;
   name: string | null;
-  onboardingStep: OnboardingStepCode | null;
+  onboardingStep: DbStep;
 };
 
-const BASE_STEPS = [
+const STEPS: Array<{
+  id: number;
+  code: StepCode;
+  title: string;
+  description: string;
+  href: string;
+}> = [
   {
     id: 1,
-    code: "PROFILE" as OnboardingStepCode,
+    code: "PROFILE",
     title: "Confirm your details",
     description:
       "Review your contact info and basic profile so we know how to reach you.",
@@ -29,7 +36,7 @@ const BASE_STEPS = [
   },
   {
     id: 2,
-    code: "DOCUMENTS" as OnboardingStepCode,
+    code: "DOCUMENTS",
     title: "Upload your tax documents",
     description:
       "W-2s, 1099s, ID, prior-year returns and anything else that applies.",
@@ -37,7 +44,7 @@ const BASE_STEPS = [
   },
   {
     id: 3,
-    code: "QUESTIONS" as OnboardingStepCode,
+    code: "QUESTIONS",
     title: "Answer a few questions",
     description:
       "Tell us about your income, dependents, and deductions so we can maximize your refund.",
@@ -45,21 +52,26 @@ const BASE_STEPS = [
   },
   {
     id: 4,
-    code: "SCHEDULE" as OnboardingStepCode,
+    code: "SCHEDULE",
     title: "Schedule your review call",
     description:
       "Pick a time for your tax pro to review everything with you before filing.",
     href: "/onboarding/schedule",
   },
   {
-    id: 4,
-    code: "SUMMARY" as OnboardingStepCode,
+    id: 5,
+    code: "SUMMARY",
     title: "Summary & review",
     description:
-      "Pick a time for your tax pro to review everything with you before filing.",
+      "Review what you submitted and confirm everything looks correct.",
     href: "/onboarding/summary",
   },
 ];
+
+function normalizeEffectiveStep(step: DbStep): StepCode {
+  if (step === "SUBMITTED" || step === "DONE") return "SUMMARY";
+  return (step as StepCode) ?? "PROFILE";
+}
 
 export default function OnboardingPage() {
   const [me, setMe] = useState<Me | null>(null);
@@ -72,15 +84,10 @@ export default function OnboardingPage() {
         const session = await fetchAuthSession();
 
         const tokenEmail =
-          (session.tokens?.idToken?.payload["email"] as string | undefined) ??
-          "";
+          (session.tokens?.idToken?.payload["email"] as string | undefined) ?? "";
 
         const email =
           tokenEmail || (u.signInDetails?.loginId as string | undefined) || "";
-
-        console.log("ONBOARDING / CURRENT USER:", u);
-        console.log("ONBOARDING / TOKEN EMAIL:", tokenEmail);
-        console.log("ONBOARDING / FINAL EMAIL:", email);
 
         const res = await fetch("/api/me", {
           method: "POST",
@@ -92,7 +99,6 @@ export default function OnboardingPage() {
         });
 
         if (!res.ok) {
-          console.error("Failed to fetch /api/me", await res.text());
           setMe({
             email,
             firstName: null,
@@ -111,7 +117,7 @@ export default function OnboardingPage() {
           firstName: dbUser?.firstName ?? null,
           lastName: dbUser?.lastName ?? null,
           name: dbUser?.name ?? null,
-          onboardingStep: (dbUser?.onboardingStep as OnboardingStepCode | null) ?? null,
+          onboardingStep: (dbUser?.onboardingStep as DbStep) ?? null,
         });
       } catch (err) {
         console.error("Failed to load onboarding user:", err);
@@ -122,203 +128,223 @@ export default function OnboardingPage() {
     })();
   }, []);
 
-  const displayName =
-    me?.firstName ||
-    me?.name ||
-    (me?.email ? me.email.split("@")[0] : "there");
+  const displayName = useMemo(() => {
+    const first = me?.firstName?.trim();
+    if (first) return first;
+    const name = me?.name?.trim();
+    if (name) return name.split(" ")[0];
+    const email = me?.email?.trim();
+    if (email) return email.split("@")[0];
+    return "there";
+  }, [me]);
 
-  // Decide which step is “current” based on DB
-  const currentStepCode: OnboardingStepCode =
-    me?.onboardingStep ?? "PROFILE";
+  const dbStep: DbStep = me?.onboardingStep ?? null;
+  const isSubmitted = dbStep === "SUBMITTED" || dbStep === "DONE";
+  const effectiveStep: StepCode = normalizeEffectiveStep(dbStep);
 
   const currentStepObj =
-    BASE_STEPS.find((s) => s.code === currentStepCode) ?? BASE_STEPS[0];
+    STEPS.find((s) => s.code === effectiveStep) ?? STEPS[0];
 
-  const currentIndex = currentStepObj.id;
+  const currentIndex = isSubmitted ? STEPS.length : currentStepObj.id;
 
-  const stepsWithStatus = BASE_STEPS.map((step) => {
+  const stepsWithStatus = STEPS.map((s) => {
     let status: "done" | "current" | "upcoming" = "upcoming";
-    if (step.id < currentIndex) status = "done";
-    else if (step.id === currentIndex) status = "current";
-    return { ...step, status };
+
+    if (isSubmitted) status = "done";
+    else if (s.id < currentIndex) status = "done";
+    else if (s.id === currentIndex) status = "current";
+
+    return { ...s, status };
   });
 
   if (loading) {
     return (
-      <main className="min-h-screen bg-gradient-to-b from-slate-50 to-slate-100 px-4 py-10">
+      <main className="min-h-screen bg-background px-4 py-10">
         <div className="mx-auto max-w-4xl animate-pulse space-y-4">
-          <div className="h-6 w-48 rounded bg-slate-200" />
-          <div className="h-8 w-72 rounded bg-slate-200" />
-          <div className="h-24 rounded-xl bg-slate-200" />
+          <div className="h-6 w-48 rounded bg-muted" />
+          <div className="h-8 w-72 rounded bg-muted" />
+          <div className="h-24 rounded-2xl bg-muted" />
         </div>
       </main>
     );
   }
 
+  const statusText = isSubmitted ? "Submitted" : "In progress";
+
   return (
-    <main className="min-h-screen bg-gradient-to-b from-slate-50 to-slate-100 px-4 py-10">
+    <main className="min-h-screen bg-background px-4 py-10">
       <div className="mx-auto max-w-4xl">
         {/* Header */}
         <header className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-wide text-blue-600">
+            <p className="text-xs font-semibold uppercase tracking-wide text-primary">
               Taxpayer onboarding
             </p>
-            <h1 className="mt-1 text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">
-              Welcome back{displayName ? `, ${displayName}` : ""} 👋
+            <h1 className="mt-1 text-2xl font-bold tracking-tight text-foreground sm:text-3xl">
+              Welcome back, {displayName} 👋
             </h1>
-            <p className="mt-2 max-w-xl text-sm text-slate-600">
+            <p className="mt-2 max-w-xl text-sm text-muted-foreground">
               We’ll walk you through a few quick steps so your tax pro has
-              everything they need to prepare and file your return accurately.
+              everything needed to prepare and file accurately.
             </p>
           </div>
 
-          <div className="rounded-xl bg-white/80 px-4 py-3 text-right shadow-sm ring-1 ring-slate-200">
-            <p className="text-xs font-medium text-slate-500">
+          <div className="rounded-2xl bg-card px-4 py-3 text-right shadow-sm ring-1 ring-border">
+            <p className="text-xs font-medium text-muted-foreground">
               Onboarding status
             </p>
-            <p className="text-sm font-semibold text-emerald-700">
-              {currentIndex === BASE_STEPS.length
-                ? "Almost finished"
-                : "In progress"}
+            <p
+              className={[
+                "text-sm font-semibold",
+                isSubmitted ? "text-primary" : "text-foreground",
+              ].join(" ")}
+            >
+              {statusText}
             </p>
-            <p className="mt-1 text-[11px] text-slate-500">
-              You can come back and finish anytime.
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              You can come back anytime.
             </p>
           </div>
         </header>
 
         {/* Progress overview */}
         <section className="mb-6 grid gap-4 sm:grid-cols-3">
-          <div className="rounded-xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
-            <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500">
+          <div className="rounded-2xl bg-card p-4 shadow-sm ring-1 ring-border">
+            <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
               Step
             </p>
-            <p className="mt-1 text-2xl font-bold text-slate-900">
-              {currentIndex} / {BASE_STEPS.length}
+            <p className="mt-1 text-2xl font-bold text-foreground">
+              {currentIndex} / {STEPS.length}
             </p>
-            <p className="mt-1 text-xs text-slate-500">
-              {currentStepObj.title}
+            <p className="mt-1 text-xs text-muted-foreground">
+              {isSubmitted ? "All steps completed" : currentStepObj.title}
             </p>
           </div>
-          <div className="rounded-xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
-            <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500">
+
+          <div className="rounded-2xl bg-card p-4 shadow-sm ring-1 ring-border">
+            <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
               Estimated time
             </p>
-            <p className="mt-1 text-2xl font-bold text-slate-900">
-              10–15 min
-            </p>
-            <p className="mt-1 text-xs text-slate-500">
-              You can save and come back later if needed.
+            <p className="mt-1 text-2xl font-bold text-foreground">10–15 min</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Save and come back later if needed.
             </p>
           </div>
-          <div className="rounded-xl bg-blue-600 p-4 shadow-sm text-white">
-            <p className="text-[11px] font-medium uppercase tracking-wide text-blue-100">
+
+          <div className="rounded-2xl bg-primary p-4 shadow-sm text-primary-foreground">
+            <p className="text-[11px] font-medium uppercase tracking-wide opacity-90">
               Next action
             </p>
             <p className="mt-1 text-sm font-semibold">
-              {currentStepObj.title}
+              {isSubmitted ? "View your summary" : currentStepObj.title}
             </p>
             <Link
-              href={currentStepObj.href}
-              className="mt-3 inline-flex w-full items-center justify-center rounded-lg bg-white/10 px-3 py-2 text-xs font-semibold hover:bg-white/20"
+              href={isSubmitted ? "/onboarding/summary" : currentStepObj.href}
+              className="mt-3 inline-flex w-full items-center justify-center rounded-xl bg-primary-foreground/10 px-3 py-2 text-xs font-semibold hover:bg-primary-foreground/15"
             >
-              Continue where you left off
+              {isSubmitted ? "Open summary" : "Continue where you left off"}
             </Link>
           </div>
         </section>
 
         {/* Step list */}
-        <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
-          <h2 className="text-sm font-semibold text-slate-900">
+        <section className="rounded-2xl bg-card p-6 shadow-sm ring-1 ring-border">
+          <h2 className="text-sm font-semibold text-foreground">
             Your onboarding steps
           </h2>
-          <p className="mt-1 text-xs text-slate-600">
-            We recommend completing these in order, but you can come back to any
-            step if you need to update something.
+          <p className="mt-1 text-xs text-muted-foreground">
+            Complete in order for the fastest review, but you can revisit any
+            completed step anytime.
           </p>
 
           <ol className="mt-4 space-y-3">
-            {stepsWithStatus.map((step) => (
-              <li
-                key={step.id}
-                className="flex items-start gap-3 rounded-xl border border-slate-100 bg-slate-50/60 px-3 py-3"
-              >
-                {/* Step bullet */}
-                <div
-                  className={`mt-0.5 flex h-7 w-7 items-center justify-center rounded-full border text-xs font-semibold
-                  ${
-                    step.status === "done"
-                      ? "border-emerald-300 bg-emerald-50 text-emerald-700"
-                      : step.status === "current"
-                      ? "border-blue-200 bg-white text-blue-700"
-                      : "border-slate-200 bg-white text-slate-500"
-                  }`}
-                >
-                  {step.id}
-                </div>
+            {stepsWithStatus.map((step) => {
+              const locked = !isSubmitted && step.status === "upcoming";
 
-                {/* Content */}
-                <div className="flex-1">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <p className="text-sm font-semibold text-slate-900">
-                        {step.title}
-                      </p>
-                      <p className="mt-0.5 text-xs text-slate-600">
-                        {step.description}
-                      </p>
+              return (
+                <li
+                  key={step.code}
+                  className="flex items-start gap-3 rounded-2xl border border-border bg-secondary/40 px-3 py-3"
+                >
+                  {/* Step bullet */}
+                  <div
+                    className={[
+                      "mt-0.5 flex h-8 w-8 items-center justify-center rounded-full border text-xs font-semibold",
+                      step.status === "done"
+                        ? "border-primary/30 bg-primary/10 text-primary"
+                        : step.status === "current"
+                        ? "border-primary/30 bg-card text-primary"
+                        : "border-border bg-card text-muted-foreground",
+                    ].join(" ")}
+                  >
+                    {step.id}
+                  </div>
+
+                  {/* Content */}
+                  <div className="flex-1">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-semibold text-foreground">
+                          {step.title}
+                        </p>
+                        <p className="mt-0.5 text-xs text-muted-foreground">
+                          {step.description}
+                        </p>
+                      </div>
+
+                      {/* Status pill */}
+                      <span
+                        className={[
+                          "inline-flex rounded-full px-2.5 py-0.5 text-[11px] font-semibold ring-1",
+                          isSubmitted
+                            ? "bg-primary/10 text-primary ring-primary/20"
+                            : step.status === "current"
+                            ? "bg-primary/10 text-primary ring-primary/20"
+                            : step.status === "done"
+                            ? "bg-muted text-foreground ring-border"
+                            : "bg-muted text-muted-foreground ring-border",
+                        ].join(" ")}
+                      >
+                        {isSubmitted
+                          ? "Completed"
+                          : step.status === "current"
+                          ? "Next up"
+                          : step.status === "done"
+                          ? "Completed"
+                          : "Locked"}
+                      </span>
                     </div>
 
-                    {/* Status pill */}
-                    <span
-                      className={`inline-flex rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${
-                        step.status === "current"
-                          ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200"
-                          : step.status === "done"
-                          ? "bg-slate-100 text-slate-600 ring-1 ring-slate-200"
-                          : "bg-slate-50 text-slate-500 ring-1 ring-slate-200"
-                      }`}
-                    >
-                      {step.status === "current"
-                        ? "Next up"
-                        : step.status === "done"
-                        ? "Completed"
-                        : "Coming soon"}
-                    </span>
+                    {/* Button */}
+                    <div className="mt-2">
+                      {locked ? (
+                        <button
+                          type="button"
+                          disabled
+                          className="inline-flex items-center rounded-xl bg-muted px-3 py-2 text-xs font-semibold text-muted-foreground cursor-not-allowed"
+                        >
+                          Complete earlier steps first
+                        </button>
+                      ) : (
+                        <Link
+                          href={step.href}
+                          className="inline-flex items-center rounded-xl bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground hover:opacity-90"
+                        >
+                          {step.status === "done" || isSubmitted
+                            ? "Review"
+                            : "Start"}
+                        </Link>
+                      )}
+                    </div>
                   </div>
-
-                  {/* Button */}
-                  <div className="mt-2">
-                    {step.status === "upcoming" ? (
-                      <button
-                        type="button"
-                        disabled
-                        className="inline-flex items-center rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-400 cursor-not-allowed"
-                      >
-                        Locked until earlier steps are done
-                      </button>
-                    ) : (
-                      <Link
-                        href={step.href}
-                        className="inline-flex items-center rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-blue-700"
-                      >
-                        {step.status === "done"
-                          ? "Review this step"
-                          : "Start this step"}
-                      </Link>
-                    )}
-                  </div>
-                </div>
-              </li>
-            ))}
+                </li>
+              );
+            })}
           </ol>
         </section>
 
-        {/* Footer note */}
-        <p className="mt-4 text-center text-[11px] text-slate-500">
-          Need help during onboarding? Reply to any email from SW Tax Service or
-          contact support and we&apos;ll walk you through the steps.
+        <p className="mt-4 text-center text-[11px] text-muted-foreground">
+          Need help? Contact support and we’ll walk you through the steps.
         </p>
       </div>
     </main>

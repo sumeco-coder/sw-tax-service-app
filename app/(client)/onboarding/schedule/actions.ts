@@ -1,29 +1,86 @@
-// app/(client)/onboarding/schedule/actions.ts
 "use server";
 
 import { db } from "@/drizzle/db";
 import { appointments, users } from "@/drizzle/schema";
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { sendAppointmentEmail } from "@/lib/email/appointments";
 import { sendSms } from "@/lib/sms/sns";
+import { getServerRole } from "@/lib/auth/roleServer";
+
+// ---------- helpers ----------
+function clean(v: unknown, max = 500) {
+  const s = String(v ?? "").trim();
+  return s ? s.slice(0, max) : "";
+}
+
+function normalizeEmail(v: unknown) {
+  return clean(v, 255).toLowerCase();
+}
+
+function fmtLocal(dt: Date) {
+  // show in your timezone (matches your app context)
+  return dt.toLocaleString("en-US", { timeZone: "America/Los_Angeles" });
+}
+
+async function getUserBySubOrThrow(sub: string) {
+  const [userRow] = await db
+    .select()
+    .from(users)
+    .where(eq(users.cognitoSub, sub))
+    .limit(1);
+
+  if (!userRow) throw new Error("User record not found.");
+
+  return userRow;
+}
 
 /**
- * BOOK APPOINTMENT
+ * ✅ OPTIONAL: SKIP SCHEDULING (mark onboarding done without appointment)
+ * No form fields required; uses cookie auth.
+ */
+export async function skipScheduling(): Promise<void> {
+  const auth = await getServerRole();
+  const sub = auth?.sub ? String(auth.sub) : "";
+  if (!sub) throw new Error("Unauthorized. Please sign in again.");
+
+  const userRow = await getUserBySubOrThrow(sub);
+
+  await db
+    .update(users)
+    .set({
+      onboardingStep: "DONE" as any, // ✅ make sure enum allows this
+      updatedAt: new Date(),
+    })
+    .where(eq(users.id, userRow.id));
+
+  revalidatePath("/onboarding");
+  revalidatePath("/onboarding/schedule");
+  revalidatePath("/profile");
+
+  redirect("/profile");
+}
+
+/**
+ * BOOK APPOINTMENT (still allowed, but optional now)
  * Expects form fields:
- * - cognitoSub (string)
- * - email (string, optional if already on user)
- * - phone (string, optional)
  * - scheduledAt (ISO string)
+ * Optional form fields:
+ * - email, phone (fallbacks)
+ *
+ * Security:
+ * - ignores cognitoSub from the form (uses cookie sub)
  */
 export async function bookAppointment(formData: FormData): Promise<void> {
-  const cognitoSub = (formData.get("cognitoSub") as string | null)?.trim();
-  const emailFromForm = (formData.get("email") as string | null) ?? "";
-  const phoneFromForm = (formData.get("phone") as string | null) ?? "";
-  const scheduledAtIso = formData.get("scheduledAt") as string | null;
+  const auth = await getServerRole();
+  const sub = auth?.sub ? String(auth.sub) : "";
+  const cookieEmail = auth?.email ? normalizeEmail(auth.email) : "";
+  if (!sub) throw new Error("Unauthorized. Please sign in again.");
 
-  if (!cognitoSub || !scheduledAtIso) {
-    console.error("Missing booking data", { cognitoSub, scheduledAtIso });
+  const scheduledAtIso = clean(formData.get("scheduledAt"), 100);
+  if (!scheduledAtIso) {
+    console.error("bookAppointment: missing scheduledAt");
     return;
   }
 
@@ -33,99 +90,129 @@ export async function bookAppointment(formData: FormData): Promise<void> {
     return;
   }
 
-  // Ensure user exists in DB (linked to Cognito sub)
-  const [userRow] = await db
-    .select()
-    .from(users)
-    .where(eq(users.cognitoSub, cognitoSub))
-    .limit(1);
+  const userRow = await getUserBySubOrThrow(sub);
 
-  if (!userRow) {
-    console.error("User record not found for scheduling", { cognitoSub });
-    return;
-  }
+  const emailFromForm = normalizeEmail(formData.get("email"));
+  const phoneFromForm = clean(formData.get("phone"), 40);
 
-  const email = emailFromForm || userRow.email || "";
+  const email = cookieEmail || emailFromForm || (userRow as any).email || "";
   const phone = phoneFromForm || (userRow as any).phone || "";
 
-  // Create appointment (single start time + duration)
   const DEFAULT_DURATION_MINUTES = 30;
 
-  // ✅ Insert + return appointment id (needed for email params)
-  const [appt] = await db
-    .insert(appointments)
-    .values({
-      userId: userRow.id,
-      scheduledAt,
-      durationMinutes: DEFAULT_DURATION_MINUTES,
-      status: "scheduled",
-      notes: null,
-      cancelledReason: null,
-      cancelledAt: null,
-    })
-    .returning({
-      id: appointments.id,
-      scheduledAt: appointments.scheduledAt,
-      durationMinutes: appointments.durationMinutes,
-    });
+  // ✅ Prevent duplicates: if they already have a scheduled appt, update it instead of inserting another
+  const [existingAppt] = await db
+    .select()
+    .from(appointments)
+    .where(and(eq(appointments.userId, userRow.id), eq(appointments.status, "scheduled")))
+    .limit(1);
 
-  if (!appt?.id) {
-    console.error("Appointment insert failed (no id returned)");
-    return;
+  let appointmentId = "";
+  let finalStartsAt = scheduledAt;
+  let durationMinutes = DEFAULT_DURATION_MINUTES;
+
+  if (existingAppt) {
+    durationMinutes = (existingAppt as any).durationMinutes ?? DEFAULT_DURATION_MINUTES;
+
+    await db
+      .update(appointments)
+      .set({
+        scheduledAt,
+        status: "scheduled",
+        cancelledReason: null,
+        cancelledAt: null,
+        updatedAt: new Date(),
+      })
+      .where(eq(appointments.id, (existingAppt as any).id));
+
+    appointmentId = (existingAppt as any).id;
+  } else {
+    const [appt] = await db
+      .insert(appointments)
+      .values({
+        userId: userRow.id,
+        scheduledAt,
+        durationMinutes: DEFAULT_DURATION_MINUTES,
+        status: "scheduled",
+        notes: null,
+        cancelledReason: null,
+        cancelledAt: null,
+      })
+      .returning({
+        id: appointments.id,
+        scheduledAt: appointments.scheduledAt,
+        durationMinutes: appointments.durationMinutes,
+      });
+
+    if (!appt?.id) {
+      console.error("Appointment insert failed (no id returned)");
+      return;
+    }
+
+    appointmentId = appt.id;
+    finalStartsAt = appt.scheduledAt as any;
+    durationMinutes = appt.durationMinutes ?? DEFAULT_DURATION_MINUTES;
   }
 
+  // ✅ Mark onboarding done (since they finished this step)
   await db
     .update(users)
     .set({
-      onboardingStep: "DONE",
+      onboardingStep: "DONE" as any, // ✅ make sure enum allows this
       updatedAt: new Date(),
     })
     .where(eq(users.id, userRow.id));
 
-  const endsAt = new Date(
-    scheduledAt.getTime() + DEFAULT_DURATION_MINUTES * 60000
-  );
+  const endsAt = new Date(finalStartsAt.getTime() + durationMinutes * 60000);
 
   // Email
   if (email) {
     await sendAppointmentEmail({
       to: email,
-      kind: "BOOKED",
-      appointmentId: appt.id, // ✅ required
-      startsAt: scheduledAt,
+      kind: existingAppt ? "RESCHEDULED" : "BOOKED",
+      appointmentId,
+      startsAt: finalStartsAt,
       endsAt,
     });
   }
 
   // SMS
   if (phone) {
-    await sendSms(
-      phone,
-      `Your SW Tax Service appointment is booked for ${scheduledAt.toLocaleString()}.`
-    );
+    const text =
+      existingAppt
+        ? `Your SW Tax Service appointment was rescheduled to ${fmtLocal(finalStartsAt)}.`
+        : `Your SW Tax Service appointment is booked for ${fmtLocal(finalStartsAt)}.`;
+
+    await sendSms(phone, text);
   }
 
+  revalidatePath("/onboarding");
   revalidatePath("/onboarding/schedule");
+  revalidatePath("/profile");
+
+  redirect("/profile");
 }
 
 /**
  * CANCEL APPOINTMENT
- * Expects form fields:
- * - appointmentId (string)
- * - reason? (string)
+ * Security:
+ * - only the owner (cookie sub) can cancel their appointment (or admin)
  */
 export async function cancelAppointment(formData: FormData): Promise<void> {
-  const apptId = formData.get("appointmentId") as string | null;
+  const auth = await getServerRole();
+  const sub = auth?.sub ? String(auth.sub) : "";
+  const role = auth?.role ?? "unknown";
+  if (!sub) throw new Error("Unauthorized. Please sign in again.");
+
+  const apptId = clean(formData.get("appointmentId"), 200);
   const reason =
-    (formData.get("reason") as string | null)?.trim() ||
-    "Client cancelled from onboarding portal";
+    clean(formData.get("reason"), 300) || "Client cancelled from onboarding portal";
 
   if (!apptId) {
     console.error("cancelAppointment: missing appointmentId");
     return;
   }
 
-  // Load appointment
   const [appt] = await db
     .select()
     .from(appointments)
@@ -137,14 +224,22 @@ export async function cancelAppointment(formData: FormData): Promise<void> {
     return;
   }
 
-  // Load user for email/phone
   const [userRow] = await db
     .select()
     .from(users)
-    .where(eq(users.id, appt.userId))
+    .where(eq(users.id, (appt as any).userId))
     .limit(1);
 
-  // Mark cancelled
+  if (!userRow) {
+    console.error("cancelAppointment: user not found for appt", { apptId });
+    return;
+  }
+
+  // ✅ authorization: owner or admin
+  if (role !== "admin" && (userRow as any).cognitoSub !== sub) {
+    throw new Error("Forbidden.");
+  }
+
   const now = new Date();
   await db
     .update(appointments)
@@ -159,43 +254,46 @@ export async function cancelAppointment(formData: FormData): Promise<void> {
   const email = (userRow as any)?.email ?? "";
   const phone = (userRow as any)?.phone ?? "";
 
-  // Email notification
   if (email) {
-    const startsAt = appt.scheduledAt;
+    const startsAt = (appt as any).scheduledAt as Date;
     const endsAt = new Date(
-      appt.scheduledAt.getTime() + (appt.durationMinutes ?? 30) * 60000
+      startsAt.getTime() + (((appt as any).durationMinutes ?? 30) as number) * 60000
     );
 
     await sendAppointmentEmail({
       to: email,
       kind: "CANCELLED",
-      appointmentId: apptId, // ✅ required
+      appointmentId: apptId,
       startsAt,
       endsAt,
       cancelReason: reason,
     });
   }
 
-  // SMS notification
   if (phone) {
     await sendSms(
       phone,
-      `Your SW Tax Service appointment on ${appt.scheduledAt.toLocaleString()} was cancelled.`
+      `Your SW Tax Service appointment on ${fmtLocal((appt as any).scheduledAt)} was cancelled.`
     );
   }
 
   revalidatePath("/onboarding/schedule");
+  redirect("/onboarding/schedule");
 }
 
 /**
  * RESCHEDULE APPOINTMENT
- * Expects form fields:
- * - appointmentId (string)
- * - scheduledAt (ISO string)
+ * Security:
+ * - only the owner (cookie sub) can reschedule their appointment (or admin)
  */
 export async function rescheduleAppointment(formData: FormData): Promise<void> {
-  const apptId = formData.get("appointmentId") as string | null;
-  const scheduledAtIso = formData.get("scheduledAt") as string | null;
+  const auth = await getServerRole();
+  const sub = auth?.sub ? String(auth.sub) : "";
+  const role = auth?.role ?? "unknown";
+  if (!sub) throw new Error("Unauthorized. Please sign in again.");
+
+  const apptId = clean(formData.get("appointmentId"), 200);
+  const scheduledAtIso = clean(formData.get("scheduledAt"), 100);
 
   if (!apptId || !scheduledAtIso) {
     console.error("Missing reschedule data", { apptId, scheduledAtIso });
@@ -208,7 +306,6 @@ export async function rescheduleAppointment(formData: FormData): Promise<void> {
     return;
   }
 
-  // Load appointment
   const [appt] = await db
     .select()
     .from(appointments)
@@ -220,12 +317,21 @@ export async function rescheduleAppointment(formData: FormData): Promise<void> {
     return;
   }
 
-  // Load user
   const [userRow] = await db
     .select()
     .from(users)
-    .where(eq(users.id, appt.userId))
+    .where(eq(users.id, (appt as any).userId))
     .limit(1);
+
+  if (!userRow) {
+    console.error("rescheduleAppointment: user not found for appt", { apptId });
+    return;
+  }
+
+  // ✅ authorization: owner or admin
+  if (role !== "admin" && (userRow as any).cognitoSub !== sub) {
+    throw new Error("Forbidden.");
+  }
 
   const now = new Date();
   await db
@@ -242,27 +348,23 @@ export async function rescheduleAppointment(formData: FormData): Promise<void> {
   const email = (userRow as any)?.email ?? "";
   const phone = (userRow as any)?.phone ?? "";
 
-  const durationMinutes = appt.durationMinutes ?? 30;
+  const durationMinutes = ((appt as any).durationMinutes ?? 30) as number;
   const endsAt = new Date(scheduledAt.getTime() + durationMinutes * 60000);
 
-  // Email
   if (email) {
     await sendAppointmentEmail({
       to: email,
       kind: "RESCHEDULED",
-      appointmentId: apptId, // ✅ required
+      appointmentId: apptId,
       startsAt: scheduledAt,
       endsAt,
     });
   }
 
-  // SMS
   if (phone) {
-    await sendSms(
-      phone,
-      `Your SW Tax Service appointment was rescheduled to ${scheduledAt.toLocaleString()}.`
-    );
+    await sendSms(phone, `Your SW Tax Service appointment was rescheduled to ${fmtLocal(scheduledAt)}.`);
   }
 
   revalidatePath("/onboarding/schedule");
+  redirect("/onboarding/schedule");
 }

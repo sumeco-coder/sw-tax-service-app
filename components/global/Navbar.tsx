@@ -1,3 +1,4 @@
+// components/global/Navbar
 "use client";
 
 import { useState } from "react";

@@ -1,3 +1,4 @@
+// app/(client)/onboarding/profile/page.tsx
 "use client";
 
 import { useEffect, useState } from "react";
@@ -82,8 +83,7 @@ export default function OnboardingProfilePage() {
 
         const idTokenPayload = session.tokens?.idToken?.payload ?? {};
 
-        const tokenEmail =
-          (idTokenPayload["email"] as string | undefined) ?? "";
+        const tokenEmail = (idTokenPayload["email"] as string | undefined) ?? "";
         const givenName =
           (idTokenPayload["given_name"] as string | undefined) ?? "";
         const familyName =
@@ -91,13 +91,8 @@ export default function OnboardingProfilePage() {
         const phoneNumber =
           (idTokenPayload["phone_number"] as string | undefined) ?? "";
 
-        // Fallback to loginId if no email in token
         const email =
           tokenEmail || (u.signInDetails?.loginId as string | undefined) || "";
-
-        console.log("CURRENT USER:", u);
-        console.log("ID TOKEN PAYLOAD:", idTokenPayload);
-        console.log("FINAL EMAIL USED:", email);
 
         setUser({
           sub: u.userId,
@@ -117,26 +112,26 @@ export default function OnboardingProfilePage() {
 
   if (loading) {
     return (
-      <main className="min-h-screen flex items-center justify-center bg-slate-50">
-        <p className="text-sm text-slate-600">Loading your profile…</p>
+      <main className="min-h-screen flex items-center justify-center bg-background">
+        <p className="text-sm text-muted-foreground">Loading your profile…</p>
       </main>
     );
   }
 
   if (error || !user) {
     return (
-      <main className="min-h-screen flex items-center justify-center bg-slate-50 px-4">
-        <div className="max-w-md rounded-xl bg-white p-6 shadow">
-          <h1 className="text-lg font-semibold text-slate-900">
+      <main className="min-h-screen flex items-center justify-center bg-background px-4">
+        <div className="max-w-md w-full rounded-2xl bg-card p-6 shadow-sm ring-1 ring-border">
+          <h1 className="text-lg font-semibold text-foreground">
             Sign in required
           </h1>
-          <p className="mt-2 text-sm text-slate-600">
+          <p className="mt-2 text-sm text-muted-foreground">
             {error ??
               "We couldn’t find your session. Please sign in again to continue onboarding."}
           </p>
           <a
             href="/sign-in"
-            className="mt-4 inline-flex rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
+            className="mt-4 inline-flex w-full justify-center rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:opacity-90"
           >
             Go to sign-in
           </a>
@@ -145,85 +140,95 @@ export default function OnboardingProfilePage() {
     );
   }
 
+  const inputBase =
+    "w-full rounded-xl border border-input bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:ring-2 focus:ring-ring";
+  const labelBase = "mb-1 block text-sm font-medium text-foreground";
+  const helpBase = "mt-1 text-xs text-muted-foreground";
+
   return (
-    <main className="min-h-screen bg-gradient-to-b from-slate-50 to-slate-100 px-4 py-10">
-      <div className="mx-auto max-w-2xl rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
+    <main className="min-h-screen bg-gradient-to-b from-secondary to-background px-4 py-10">
+      <div className="mx-auto max-w-2xl rounded-2xl bg-card p-6 shadow-sm ring-1 ring-border">
         <header className="mb-6">
-          <p className="text-xs font-semibold uppercase tracking-wide text-blue-600">
-            Step 1 of 4
+          <p className="text-xs font-semibold uppercase tracking-wide text-primary">
+            Step 1 of 5
           </p>
-          <h1 className="mt-1 text-2xl font-bold text-slate-900">
+          <h1 className="mt-1 text-2xl font-bold text-foreground">
             Confirm your details
           </h1>
-          <p className="mt-2 text-sm text-slate-600">
-            We’ll use this information on your tax return and to keep you
-            updated about your file.
+          <p className="mt-2 text-sm text-muted-foreground">
+            We’ll use this information on your tax return and to keep you updated
+            about your file.
           </p>
         </header>
 
-        <form action={saveProfile} className="space-y-4">
-          {/* hidden fields for the server action */}
+        <form action={saveProfile} className="space-y-6">
+          {/* fallback identity (server action can still enforce via cookies later) */}
           <input type="hidden" name="cognitoSub" value={user.sub} />
           <input type="hidden" name="email" value={user.email} />
 
           {/* Email (locked) */}
           <div>
-            <label className="mb-1 block text-sm font-medium text-slate-700">
-              Email
-            </label>
+            <label className={labelBase}>Email</label>
             <input
               type="email"
               value={user.email}
               disabled
-              className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700"
+              className="w-full rounded-xl border border-input bg-muted px-3 py-2 text-sm text-foreground/80"
             />
-            <p className="mt-1 text-xs text-slate-500">
-              Email is locked to the account you used to sign up.
-            </p>
+            <p className={helpBase}>Email is locked to the account you used.</p>
           </div>
 
           {/* Legal name */}
-          <div>
-            <h2 className="text-sm font-semibold text-slate-900">Legal name</h2>
-            <p className="mt-1 text-xs text-slate-500">
-              Enter your name exactly as it appears on your Social Security
-              card.
-            </p>
+          <div className="space-y-3">
+            <div>
+              <h2 className="text-sm font-semibold text-foreground">Legal name</h2>
+              <p className={helpBase}>
+                Enter your name exactly as it appears on your Social Security card.
+              </p>
+            </div>
 
-            <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
-              <div>
-                <label className="mb-1 block text-xs font-medium text-slate-700">
-                  First name
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
+              <div className="sm:col-span-1">
+                <label className="mb-1 block text-xs font-medium text-foreground">
+                  First name <span className="text-destructive">*</span>
                 </label>
                 <input
                   name="firstName"
                   required
                   defaultValue={user.firstName ?? ""}
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                  className={inputBase}
                 />
               </div>
 
-              <div>
-                <label className="mb-1 block text-xs font-medium text-slate-700">
-                  Last name
+              <div className="sm:col-span-1">
+                <label className="mb-1 block text-xs font-medium text-foreground">
+                  Middle name
+                </label>
+                <input
+                  name="middleName"
+                  defaultValue=""
+                  className={inputBase}
+                  placeholder="Optional"
+                />
+              </div>
+
+              <div className="sm:col-span-1">
+                <label className="mb-1 block text-xs font-medium text-foreground">
+                  Last name <span className="text-destructive">*</span>
                 </label>
                 <input
                   name="lastName"
                   required
                   defaultValue={user.lastName ?? ""}
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                  className={inputBase}
                 />
               </div>
 
-              <div>
-                <label className="mb-1 block text-xs font-medium text-slate-700">
-                  Suffix (optional)
+              <div className="sm:col-span-1">
+                <label className="mb-1 block text-xs font-medium text-foreground">
+                  Suffix
                 </label>
-                <select
-                  name="suffix"
-                  defaultValue=""
-                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
-                >
+                <select name="suffix" defaultValue="" className={inputBase}>
                   <option value="">None</option>
                   <option value="Jr">Jr</option>
                   <option value="Sr">Sr</option>
@@ -236,103 +241,92 @@ export default function OnboardingProfilePage() {
           </div>
 
           {/* Contact & address */}
-          <div>
-            <h2 className="text-sm font-semibold text-slate-900">
-              Contact & address
-            </h2>
-            <p className="mt-1 text-xs text-slate-500">
-              This should be your current mailing address for IRS/state notices.
-            </p>
+          <div className="space-y-3">
+            <div>
+              <h2 className="text-sm font-semibold text-foreground">
+                Contact & address
+              </h2>
+              <p className={helpBase}>
+                This should be your current mailing address for IRS/state notices.
+              </p>
+            </div>
 
-            <div className="mt-3 space-y-3">
+            <div>
+              <label className={labelBase}>
+                Mobile phone <span className="text-destructive">*</span>
+              </label>
+              <input
+                name="phone"
+                type="tel"
+                required
+                defaultValue={user.phone ?? ""}
+                placeholder="(555) 555-5555"
+                className={inputBase}
+              />
+              <p className={helpBase}>
+                Used for appointment reminders and important updates.
+              </p>
+            </div>
+
+            <div>
+              <label className={labelBase}>
+                Address line 1 <span className="text-destructive">*</span>
+              </label>
+              <input
+                name="address1"
+                type="text"
+                required
+                placeholder="Street address"
+                className={inputBase}
+              />
+            </div>
+
+            <div>
+              <label className={labelBase}>Address line 2</label>
+              <input
+                name="address2"
+                type="text"
+                placeholder="Apt, suite, unit, etc. (optional)"
+                className={inputBase}
+              />
+            </div>
+
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               <div>
-                <label className="mb-1 block text-sm font-medium text-slate-700">
-                  Mobile phone
+                <label className={labelBase}>
+                  City <span className="text-destructive">*</span>
                 </label>
-                <input
-                  name="phone"
-                  type="tel"
-                  placeholder="(555) 555-5555"
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
-                />
-                <p className="mt-1 text-xs text-slate-500">
-                  We’ll only use this for appointment reminders and important
-                  updates.
-                </p>
+                <input name="city" type="text" required className={inputBase} />
               </div>
 
               <div>
-                <label className="mb-1 block text-sm font-medium text-slate-700">
-                  Address line 1
+                <label className={labelBase}>
+                  State <span className="text-destructive">*</span>
                 </label>
-                <input
-                  name="address1"
-                  type="text"
-                  required
-                  placeholder="Street address"
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-
-              <div>
-                <label className="mb-1 block text-sm font-medium text-slate-700">
-                  Address line 2 (optional)
-                </label>
-                <input
-                  name="address2"
-                  type="text"
-                  placeholder="Apt, suite, unit, etc."
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-slate-700">
-                    City
-                  </label>
-                  <input
-                    name="city"
-                    type="text"
-                    required
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-slate-700">
-                    State
-                  </label>
-                  <select
-                    name="state"
-                    required
-                    defaultValue=""
-                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
-                  >
-                    <option value="" disabled>
-                      Select state
+                <select name="state" required defaultValue="" className={inputBase}>
+                  <option value="" disabled>
+                    Select state
+                  </option>
+                  {US_STATES.map((s) => (
+                    <option key={s.value} value={s.value}>
+                      {s.value} – {s.label}
                     </option>
-                    {US_STATES.map((s) => (
-                      <option key={s.value} value={s.value}>
-                        {s.value} – {s.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                  ))}
+                </select>
+              </div>
 
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-slate-700">
-                    ZIP code
-                  </label>
-                  <input
-                    name="zip"
-                    type="text"
-                    inputMode="numeric"
-                    required
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
-                    placeholder="12345"
-                  />
-                </div>
+              <div>
+                <label className={labelBase}>
+                  ZIP code <span className="text-destructive">*</span>
+                </label>
+                <input
+                  name="zip"
+                  type="text"
+                  inputMode="numeric"
+                  required
+                  placeholder="12345"
+                  className={inputBase}
+                />
               </div>
             </div>
           </div>
@@ -340,19 +334,14 @@ export default function OnboardingProfilePage() {
           {/* DOB + SSN */}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
-              <label className="mb-1 block text-xs font-medium text-slate-700">
-                Date of birth
+              <label className="mb-1 block text-xs font-medium text-foreground">
+                Date of birth <span className="text-destructive">*</span>
               </label>
-              <input
-                type="date"
-                name="dob"
-                required
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
-              />
+              <input type="date" name="dob" required className={inputBase} />
             </div>
 
             <div>
-              <label className="mb-1 block text-xs font-medium text-slate-700">
+              <label className="mb-1 block text-xs font-medium text-foreground">
                 Social Security Number
               </label>
               <input
@@ -361,21 +350,21 @@ export default function OnboardingProfilePage() {
                 inputMode="numeric"
                 maxLength={11}
                 placeholder="XXX-XX-XXXX"
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                className={inputBase}
               />
-              <p className="mt-1 text-[11px] text-slate-500">
-                You can leave this blank and provide it over the phone if you
-                prefer.
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                Optional — you can provide this over the phone if you prefer.
               </p>
             </div>
           </div>
-          <div className="flex items-center justify-between pt-2">
-            <p className="text-[11px] text-slate-500">
+
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between pt-2">
+            <p className="text-[11px] text-muted-foreground">
               You can update this information later if something changes.
             </p>
             <button
               type="submit"
-              className="inline-flex items-center rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-blue-700"
+              className="inline-flex items-center justify-center rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground shadow-sm hover:opacity-90"
             >
               Save and continue to documents
             </button>

@@ -1,14 +1,23 @@
 // app/(client)/onboarding/summary/page.tsx
 import Link from "next/link";
 import AppointmentSummary from "../_components/AppointmentSummary";
-import { cookies } from "next/headers";
-import { decodeJwt } from "jose";
 import { db } from "@/drizzle/db";
-import { users } from "@/drizzle/schema";
-import { eq } from "drizzle-orm";
+import { users, appointments } from "@/drizzle/schema";
+import { eq, desc } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
+import { getServerRole } from "@/lib/auth/roleServer";
 
-type SectionStatus = "complete" | "incomplete" | "in_progress";
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
+const BRAND = {
+  primary: "#E00040",
+  accent: "#B04020",
+  dark: "#202030",
+};
+
+type SectionStatus = "complete" | "incomplete" | "in_progress" | "optional";
 
 type SectionConfig = {
   id: string;
@@ -16,6 +25,7 @@ type SectionConfig = {
   description: string;
   href: string;
   stepKey: "PROFILE" | "DOCUMENTS" | "QUESTIONS" | "SCHEDULE";
+  optional?: boolean;
 };
 
 type Section = SectionConfig & {
@@ -26,14 +36,14 @@ const sectionConfigs: SectionConfig[] = [
   {
     id: "profile",
     title: "Confirm your details",
-    description: "Your legal name, contact info, and basic profile.",
+    description: "Legal name, contact info, and basic profile.",
     href: "/onboarding/profile",
     stepKey: "PROFILE",
   },
   {
     id: "documents",
     title: "Tax documents",
-    description: "W-2s, 1099s, ID, and prior-year tax returns.",
+    description: "W-2s, 1099s, ID, and prior-year returns.",
     href: "/onboarding/documents",
     stepKey: "DOCUMENTS",
   },
@@ -46,14 +56,14 @@ const sectionConfigs: SectionConfig[] = [
   },
   {
     id: "schedule",
-    title: "Review call",
-    description: "Your appointment with a tax pro before filing.",
+    title: "Review call (optional)",
+    description: "Book a time with a tax pro (you can skip for now).",
     href: "/onboarding/schedule",
     stepKey: "SCHEDULE",
+    optional: true,
   },
 ];
 
-// Order of steps in your enum
 const STEP_ORDER = [
   "PROFILE",
   "DOCUMENTS",
@@ -63,6 +73,7 @@ const STEP_ORDER = [
   "SUBMITTED",
   "DONE",
 ] as const;
+
 type OnboardingStep = (typeof STEP_ORDER)[number] | null;
 
 function getStepIndex(step: OnboardingStep) {
@@ -77,257 +88,315 @@ function statusLabel(status: SectionStatus) {
       return "Complete";
     case "in_progress":
       return "In progress";
+    case "optional":
+      return "Optional";
     case "incomplete":
-      return "Not started";
     default:
-      return "";
+      return "Not started";
   }
 }
 
-function statusClasses(status: SectionStatus) {
+function statusPillClasses(status: SectionStatus) {
   switch (status) {
     case "complete":
       return "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200";
     case "in_progress":
       return "bg-amber-50 text-amber-700 ring-1 ring-amber-200";
+    case "optional":
+      return "bg-slate-50 text-slate-600 ring-1 ring-slate-200";
     case "incomplete":
     default:
       return "bg-slate-50 text-slate-500 ring-1 ring-slate-200";
   }
 }
 
+function iconFor(status: SectionStatus) {
+  if (status === "complete") return "✓";
+  if (status === "in_progress") return "…";
+  if (status === "optional") return "•";
+  return "–";
+}
+
 /**
  * Server action: mark onboarding as SUBMITTED for the current user.
+ * ✅ Scheduling is optional → require at least QUESTIONS.
  */
 async function submitOnboarding(_formData: FormData) {
   "use server";
 
   try {
-    const cookieStore = await cookies();
-
-    // If you store token in "accessToken" instead, change this:
-    const idToken = cookieStore.get("idToken")?.value;
-    // const idToken = cookieStore.get("accessToken")?.value;
-
-    if (!idToken) {
-      console.error("submitOnboarding: no idToken cookie found");
-      return;
+    const auth = await getServerRole();
+    if (!auth) {
+      // no session
+      redirect("/sign-in");
     }
 
-    const decoded: any = decodeJwt(idToken);
-    const sub = decoded?.sub as string | undefined;
-
+    const sub = auth.sub ? String(auth.sub) : "";
     if (!sub) {
-      console.error("submitOnboarding: no sub in JWT");
-      return;
+      console.error("submitOnboarding: no auth sub found");
+      redirect("/sign-in");
     }
 
-    // Find user
-    const [userRow] = await db
-      .select()
+    const [row] = await db
+      .select({ id: users.id, onboardingStep: users.onboardingStep })
       .from(users)
       .where(eq(users.cognitoSub, sub))
       .limit(1);
 
-    if (!userRow) {
+    if (!row) {
       console.error("submitOnboarding: user not found for sub", sub);
       return;
     }
 
-    const now = new Date();
+    const current = (row.onboardingStep as OnboardingStep) ?? null;
 
-    // Your onboardingStep enum: PROFILE, DOCUMENTS, QUESTIONS, SCHEDULE, SUMMARY, SUBMITTED, DONE
+    if (getStepIndex(current) < getStepIndex("SCHEDULE")) {
+      console.error("submitOnboarding: not ready to submit. step:", current);
+      return;
+    }
+
+    const next =
+      auth.role === "admin"
+        ? "/admin"
+        : auth.role === "lms-admin"
+        ? "/lms"
+        : auth.role === "lms-preparer"
+        ? "/preparer"
+        : "/profile"; // taxpayer dashboard
+
+    if (current === "SUBMITTED" || current === "DONE") {
+      redirect(next);
+    }
+
     await db
       .update(users)
       .set({
         onboardingStep: "SUBMITTED",
-        updatedAt: now,
+        updatedAt: new Date(),
       })
-      .where(eq(users.id, userRow.id));
+      .where(eq(users.id, row.id));
 
     revalidatePath("/onboarding");
     revalidatePath("/onboarding/summary");
+    revalidatePath("/profile");
+
+    redirect(next);
   } catch (err) {
     console.error("submitOnboarding error:", err);
   }
 }
 
+
 export default async function OnboardingSummaryPage() {
-  // 1) Figure out current onboardingStep from DB using Cognito sub
-  const cookieStore = await cookies();
-  const idToken = cookieStore.get("idToken")?.value;
+  const auth = await getServerRole();
+  const sub = auth?.sub ? String(auth.sub) : "";
+  if (!sub) redirect("/sign-in");
 
-  let onboardingStep: OnboardingStep = null;
+  const [userRow] = await db
+    .select({
+      id: users.id,
+      onboardingStep: users.onboardingStep,
+    })
+    .from(users)
+    .where(eq(users.cognitoSub, sub))
+    .limit(1);
 
-  if (idToken) {
-    try {
-      const decoded: any = decodeJwt(idToken);
-      const sub = decoded?.sub as string | undefined;
+  if (!userRow) redirect("/onboarding");
 
-      if (sub) {
-        const [userRow] = await db
-          .select({
-            onboardingStep: users.onboardingStep,
-          })
-          .from(users)
-          .where(eq(users.cognitoSub, sub))
-          .limit(1);
+  let onboardingStep: OnboardingStep =
+    ((userRow.onboardingStep as unknown) as OnboardingStep) ?? null;
 
-        onboardingStep = (userRow?.onboardingStep as OnboardingStep) ?? null;
-      }
-    } catch (err) {
-      console.error(
-        "OnboardingSummaryPage: error decoding token or fetching user",
-        err
-      );
-    }
+  // ✅ If they land here after QUESTIONS or SCHEDULE, mark SUMMARY (keeps UI/DB aligned)
+  if (onboardingStep === "QUESTIONS" || onboardingStep === "SCHEDULE") {
+    await db
+      .update(users)
+      .set({ onboardingStep: "SUMMARY", updatedAt: new Date() })
+      .where(eq(users.id, userRow.id));
+    onboardingStep = "SUMMARY";
+    revalidatePath("/onboarding");
+    revalidatePath("/onboarding/summary");
   }
 
-  // 2) Build sections with real status based on onboardingStep
+  // ✅ Check if they actually scheduled an appointment (used to mark Schedule section complete)
+  const [appt] = await db
+    .select({
+      id: appointments.id,
+      status: appointments.status,
+      scheduledAt: appointments.scheduledAt,
+    })
+    .from(appointments)
+    .where(eq(appointments.userId, userRow.id))
+    .orderBy(desc(appointments.scheduledAt))
+    .limit(1);
+
+  const hasScheduledAppointment = !!appt && appt.status === "scheduled";
+
   const currentIndex = getStepIndex(onboardingStep);
 
   const sections: Section[] = sectionConfigs.map((cfg) => {
     const sectionIndex = STEP_ORDER.indexOf(cfg.stepKey as any);
 
+    // Default
     let status: SectionStatus = "incomplete";
 
-    if (currentIndex > sectionIndex) {
-      status = "complete";
-    } else if (currentIndex === sectionIndex) {
-      // They're actively on /just finished this step
-      status = onboardingStep === "SUBMITTED" || onboardingStep === "DONE"
-        ? "complete"
-        : "in_progress";
-    } else {
-      status = "incomplete";
+    // Special: Schedule is optional and only “complete” when an appointment exists
+    if (cfg.stepKey === "SCHEDULE") {
+      if (hasScheduledAppointment) status = "complete";
+      else status = cfg.optional ? "optional" : "incomplete";
+      return { ...cfg, status };
     }
 
-    // If we've reached SUMMARY / SUBMITTED / DONE, treat all as complete
-    if (
-      onboardingStep === "SUMMARY" ||
-      onboardingStep === "SUBMITTED" ||
-      onboardingStep === "DONE"
-    ) {
-      status = "complete";
-    }
+    if (currentIndex > sectionIndex) status = "complete";
+    else if (currentIndex === sectionIndex) status = "in_progress";
+    else status = "incomplete";
+
+    // If submitted/done, show everything complete (schedule still based on appointment)
+    if (onboardingStep === "SUBMITTED" || onboardingStep === "DONE") status = "complete";
 
     return { ...cfg, status };
   });
 
-  const allComplete = sections.every((s) => s.status === "complete");
-  const isSubmitted =
-    onboardingStep === "SUBMITTED" || onboardingStep === "DONE";
+  const requiredSections = sections.filter((s) => !s.optional);
+  const requiredComplete = requiredSections.filter((s) => s.status === "complete").length;
+  const requiredTotal = requiredSections.length;
+  const progressPct = Math.round((requiredComplete / Math.max(1, requiredTotal)) * 100);
 
-  // Derived UI strings
-  let statusText = "Needs review";
-  let statusColor = "text-amber-700";
-  let statusSubText =
-    "You can update any section below before you submit.";
+  const isSubmitted = onboardingStep === "SUBMITTED" || onboardingStep === "DONE";
+  const readyToSubmit = requiredSections.every((s) => s.status === "complete") && !isSubmitted;
 
-  if (isSubmitted) {
-    statusText = "Submitted";
-    statusColor = "text-emerald-700";
-    statusSubText =
-      "We’ve received your onboarding. Your tax professional will review your information and follow up if anything else is needed.";
-  } else if (allComplete) {
-    statusText = "Ready to submit";
-    statusColor = "text-emerald-700";
-    statusSubText =
-      "Everything looks good. You can submit your onboarding when you’re ready.";
-  }
+  const statusText = isSubmitted ? "Submitted" : readyToSubmit ? "Ready to submit" : "Needs review";
+  const statusTone = isSubmitted
+    ? "text-emerald-200"
+    : readyToSubmit
+    ? "text-emerald-200"
+    : "text-amber-200";
 
   return (
-    <main className="min-h-screen bg-gradient-to-b from-slate-50 to-slate-100 px-4 py-10">
-      <div className="mx-auto max-w-5xl space-y-6">
-        {/* Header */}
-        <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-wide text-blue-600">
-              Taxpayer onboarding – summary
+    <main
+      className="min-h-screen px-4 py-10"
+      style={{
+        background: `radial-gradient(1200px 600px at 20% 0%, ${BRAND.primary}22, transparent 60%),
+                     radial-gradient(900px 500px at 80% 10%, ${BRAND.accent}22, transparent 55%),
+                     linear-gradient(180deg, ${BRAND.dark} 0%, #0b0b14 40%, #f8fafc 100%)`,
+      }}
+    >
+      <div className="mx-auto max-w-6xl space-y-6">
+        {/* Top header */}
+        <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+          <div className="text-white">
+            <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: BRAND.primary }}>
+              Taxpayer onboarding
             </p>
-            <h1 className="mt-1 text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">
-              Review & submit your information
+            <h1 className="mt-2 text-3xl font-black tracking-tight">
+              Review & submit
+              <span className="ml-2 inline-block rounded-full px-3 py-1 text-xs font-semibold align-middle ring-1 ring-white/15 bg-white/10">
+                {progressPct}% complete
+              </span>
             </h1>
-            <p className="mt-2 max-w-xl text-sm text-slate-600">
-              Take a quick look over everything before we assign your case to a
-              tax professional. You can still edit anything that doesn&apos;t
-              look right.
+            <p className="mt-2 max-w-xl text-sm text-white/70">
+              Check your details, documents, and answers. Scheduling a call is optional — you can submit without it.
             </p>
           </div>
 
-          <div className="rounded-xl bg-white/80 px-4 py-3 text-right shadow-sm ring-1 ring-slate-200">
-            <p className="text-xs font-medium text-slate-500">
-              Onboarding status
+          <div className="rounded-2xl bg-white/10 p-4 text-right text-white ring-1 ring-white/15 backdrop-blur">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-white/60">
+              Status
             </p>
-            <p className={`text-sm font-semibold ${statusColor}`}>
-              {statusText}
+            <p className={`mt-1 text-sm font-bold ${statusTone}`}>{statusText}</p>
+
+            <div className="mt-3 h-2 w-56 overflow-hidden rounded-full bg-white/10 ring-1 ring-white/10">
+              <div
+                className="h-full rounded-full"
+                style={{
+                  width: `${progressPct}%`,
+                  background: `linear-gradient(90deg, ${BRAND.primary}, ${BRAND.accent})`,
+                }}
+              />
+            </div>
+            <p className="mt-2 text-[11px] text-white/60">
+              Required: {requiredComplete}/{requiredTotal} sections complete
             </p>
-            <p className="mt-1 text-[11px] text-slate-500">{statusSubText}</p>
           </div>
         </header>
 
-        <div className="grid gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(0,1.3fr)]">
+        <div className="grid gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(0,1.15fr)]">
           {/* Left: checklist */}
-          <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
-            <h2 className="text-sm font-semibold text-slate-900">
-              Your onboarding checklist
-            </h2>
-            <p className="mt-1 text-xs text-slate-600">
-              Make sure each section is complete so your tax pro has everything
-              they need to work on your return.
-            </p>
+          <section className="rounded-3xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 className="text-sm font-extrabold text-slate-900">Your checklist</h2>
+                <p className="mt-1 text-xs text-slate-600">
+                  Finish anything marked “In progress” or “Not started”, then submit when ready.
+                </p>
+              </div>
 
-            <ol className="mt-4 space-y-3">
+              <Link
+                href="/onboarding"
+                className="inline-flex items-center rounded-xl px-3 py-2 text-xs font-semibold ring-1 ring-slate-200 bg-white hover:bg-slate-50"
+              >
+                Back to onboarding
+              </Link>
+            </div>
+
+            <ol className="mt-5 space-y-3">
               {sections.map((section) => (
                 <li
                   key={section.id}
-                  className="flex items-start gap-3 rounded-xl border border-slate-100 bg-slate-50/60 px-3 py-3"
+                  className="group flex items-start gap-4 rounded-2xl border border-slate-100 bg-slate-50/70 px-4 py-4 transition hover:bg-slate-50"
                 >
-                  {/* Status icon */}
-                  <div className="mt-0.5 flex h-8 w-8 items-center justify-center rounded-full bg-white shadow-sm ring-1 ring-slate-200">
-                    {section.status === "complete" ? (
-                      <span className="text-[13px] font-semibold text-emerald-600">
-                        ✓
-                      </span>
-                    ) : section.status === "in_progress" ? (
-                      <span className="text-[13px] font-semibold text-amber-500">
-                        …
-                      </span>
-                    ) : (
-                      <span className="text-[13px] font-semibold text-slate-400">
-                        –
-                      </span>
-                    )}
+                  <div
+                    className="mt-0.5 flex h-10 w-10 items-center justify-center rounded-2xl text-sm font-black shadow-sm ring-1 ring-slate-200 bg-white"
+                    style={{
+                      color:
+                        section.status === "complete"
+                          ? "#059669"
+                          : section.status === "in_progress"
+                          ? "#b45309"
+                          : section.status === "optional"
+                          ? "#475569"
+                          : "#94a3b8",
+                    }}
+                  >
+                    {iconFor(section.status)}
                   </div>
 
                   <div className="flex-1">
                     <div className="flex items-start justify-between gap-3">
                       <div>
-                        <p className="text-sm font-semibold text-slate-900">
+                        <p className="text-sm font-extrabold text-slate-900">
                           {section.title}
                         </p>
-                        <p className="mt-0.5 text-xs text-slate-600">
+                        <p className="mt-1 text-xs text-slate-600">
                           {section.description}
                         </p>
                       </div>
 
                       <span
                         className={
-                          "inline-flex rounded-full px-2.5 py-0.5 text-[11px] font-semibold " +
-                          statusClasses(section.status)
+                          "inline-flex rounded-full px-2.5 py-1 text-[11px] font-bold " +
+                          statusPillClasses(section.status)
                         }
                       >
                         {statusLabel(section.status)}
                       </span>
                     </div>
 
-                    <div className="mt-2 flex flex-wrap gap-2">
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
                       <Link
                         href={section.href}
-                        className="inline-flex items-center rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-700 hover:bg-slate-50"
+                        className="inline-flex items-center rounded-xl px-3 py-2 text-[11px] font-extrabold text-white shadow-sm"
+                        style={{
+                          background: `linear-gradient(90deg, ${BRAND.primary}, ${BRAND.accent})`,
+                        }}
                       >
-                        {section.status === "complete" ? "Review" : "Finish"}
+                        {section.status === "complete" ? "Review" : "Open"}
                       </Link>
+
+                      {section.optional ? (
+                        <span className="text-[11px] text-slate-500">
+                          Optional — doesn’t block submission
+                        </span>
+                      ) : null}
                     </div>
                   </div>
                 </li>
@@ -337,72 +406,101 @@ export default async function OnboardingSummaryPage() {
 
           {/* Right: appointment + submit */}
           <section className="space-y-4">
-            {/* Appointment card */}
-            <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
-              <h2 className="text-sm font-semibold text-slate-900">
-                Your review call
-              </h2>
-              <p className="mt-1 text-xs text-slate-600">
-                This is when your tax pro will walk through your information
-                with you before filing.
-              </p>
+            <div className="rounded-3xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h2 className="text-sm font-extrabold text-slate-900">Review call</h2>
+                  <p className="mt-1 text-xs text-slate-600">
+                    Optional. Book a time if you want to speak with a tax pro before filing.
+                  </p>
+                </div>
 
-              <div className="mt-3 rounded-xl bg-slate-50 px-3 py-3">
+                <Link
+                  href="/onboarding/schedule"
+                  className="text-[11px] font-extrabold hover:opacity-80"
+                  style={{ color: BRAND.primary }}
+                >
+                  Schedule / change
+                </Link>
+              </div>
+
+              <div className="mt-4 rounded-2xl bg-slate-50 p-4 ring-1 ring-slate-200">
                 <AppointmentSummary />
               </div>
 
-              <div className="mt-3 flex justify-end">
-                <Link
-                  href="/onboarding/schedule"
-                  className="text-[11px] font-semibold text-blue-600 hover:text-blue-700"
-                >
-                  Change appointment
-                </Link>
-              </div>
+              {!hasScheduledAppointment ? (
+                <p className="mt-3 text-[11px] text-slate-500">
+                  No appointment scheduled. You can still submit and schedule later.
+                </p>
+              ) : null}
             </div>
 
-            {/* Final submit card */}
-            <div className="rounded-2xl bg-blue-600 p-5 text-white shadow-sm">
-              <h2 className="text-sm font-semibold">
-                {isSubmitted ? "Onboarding submitted" : "Ready to submit?"}
+            <div
+              className="rounded-3xl p-5 text-white shadow-sm ring-1 ring-white/10"
+              style={{
+                background: `linear-gradient(135deg, ${BRAND.primary}, ${BRAND.accent})`,
+              }}
+            >
+              <h2 className="text-sm font-extrabold">
+                {isSubmitted ? "Onboarding submitted" : "Submit for review"}
               </h2>
-              <p className="mt-1 text-xs text-blue-100">
+              <p className="mt-1 text-xs text-white/85">
                 {isSubmitted
-                  ? "We’ve received your onboarding details. Your tax pro will review everything and reach out if anything else is needed. You can still upload extra documents later from your dashboard."
-                  : "When you’re done reviewing, submit your onboarding so our team can start working on your return. You’ll still be able to upload additional documents later if needed."}
+                  ? "We received your onboarding. Your tax pro will review and reach out if anything else is needed."
+                  : readyToSubmit
+                  ? "Everything required is complete. Submit when you’re ready."
+                  : "Complete the required sections first. Scheduling a call is optional."}
               </p>
 
               <div className="mt-4 space-y-2">
                 <form action={submitOnboarding}>
                   <button
                     type="submit"
-                    disabled={isSubmitted}
-                    className={
-                      "inline-flex w-full items-center justify-center rounded-lg px-4 py-2 text-xs font-semibold " +
-                      (isSubmitted
-                        ? "bg:white/10 cursor-not-allowed opacity-70 text-blue-100"
-                        : "bg-white/10 hover:bg-white/20")
-                    }
+                    disabled={isSubmitted || !requiredSections.every((s) => s.status === "complete")}
+                    className={[
+                      "inline-flex w-full items-center justify-center rounded-2xl px-4 py-2.5 text-xs font-extrabold",
+                      "ring-1 ring-white/20",
+                      isSubmitted || !requiredSections.every((s) => s.status === "complete")
+                        ? "bg-white/20 opacity-70 cursor-not-allowed"
+                        : "bg-white/15 hover:bg-white/25",
+                    ].join(" ")}
                   >
                     {isSubmitted
-                      ? "Onboarding already submitted"
-                      : "Submit onboarding for review"}
+                      ? "Already submitted"
+                      : requiredSections.every((s) => s.status === "complete")
+                      ? "Submit onboarding"
+                      : "Complete required sections to submit"}
                   </button>
                 </form>
 
-                <p className="text-[11px] text-blue-100 text-center">
-                  By submitting, you confirm that the information you&apos;ve
-                  provided is accurate to the best of your knowledge.
+                <p className="text-[11px] text-white/80 text-center">
+                  By submitting, you confirm your info is accurate to the best of your knowledge.
                 </p>
               </div>
+            </div>
+
+            <div className="rounded-3xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
+              <h3 className="text-sm font-extrabold text-slate-900">What happens next?</h3>
+              <ul className="mt-2 space-y-2 text-xs text-slate-600">
+                <li className="flex gap-2">
+                  <span className="mt-0.5 inline-block h-2 w-2 rounded-full" style={{ background: BRAND.primary }} />
+                  <span>We review your docs + answers.</span>
+                </li>
+                <li className="flex gap-2">
+                  <span className="mt-0.5 inline-block h-2 w-2 rounded-full" style={{ background: BRAND.accent }} />
+                  <span>We message you if anything is missing.</span>
+                </li>
+                <li className="flex gap-2">
+                  <span className="mt-0.5 inline-block h-2 w-2 rounded-full bg-slate-300" />
+                  <span>We prepare your return and confirm before filing.</span>
+                </li>
+              </ul>
             </div>
           </section>
         </div>
 
-        {/* Footer note */}
         <p className="text-[11px] text-center text-slate-500">
-          Need to fix something later? No problem — you can always log back in,
-          upload more documents, or message your tax pro from your dashboard.
+          You can always come back later to upload more documents or update answers.
         </p>
       </div>
     </main>

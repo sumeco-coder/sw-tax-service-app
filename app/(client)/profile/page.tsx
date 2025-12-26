@@ -1,3 +1,4 @@
+// app/(client)/profile/page.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
@@ -41,10 +42,8 @@ type FormState = {
 function toE164US(phoneRaw: string) {
   const digits = phoneRaw.replace(/\D/g, "");
   if (!digits) return "";
-  // If already has country code 1, keep it; otherwise prefix +1
   if (digits.length === 11 && digits.startsWith("1")) return `+${digits}`;
   if (digits.length === 10) return `+1${digits}`;
-  // fallback (user may be entering international)
   return phoneRaw.startsWith("+") ? phoneRaw : `+${digits}`;
 }
 
@@ -66,11 +65,8 @@ export default function ProfilePage() {
   );
 
   const [form, setForm] = useState<FormState>(initialForm);
-
-  // Snapshot for canceling edits
   const [snap, setSnap] = useState<FormState>(initialForm);
 
-  // Per-field edit toggles (for email/phone single-field UI)
   const [edit, setEdit] = useState<Record<EditKeys, boolean>>({
     email: false,
     phone: false,
@@ -82,7 +78,6 @@ export default function ProfilePage() {
     filingStatus: false,
   });
 
-  // Email/phone verification flows
   const [emailPending, setEmailPending] = useState(false);
   const [emailMsg, setEmailMsg] = useState("");
   const [emailCode, setEmailCode] = useState("");
@@ -91,26 +86,38 @@ export default function ProfilePage() {
   const [phoneMsg, setPhoneMsg] = useState("");
   const [phoneCode, setPhoneCode] = useState("");
 
-  // Block edit toggles
   const [editFiling, setEditFiling] = useState(false);
   const [editAddress, setEditAddress] = useState(false);
 
   useEffect(() => {
     (async () => {
       try {
-        await getCurrentUser().catch(() => null);
+        const cu = await getCurrentUser().catch(() => null);
+        if (!cu) return;
+
         const attrs = await fetchUserAttributes().catch(
           () => ({}) as Record<string, string>
         );
+
+        const tokenEmail = (attrs.email ?? "").toLowerCase();
+
+        // ✅ Ensure DB user shell exists (helps first-time users)
+        if (tokenEmail) {
+          await fetch("/api/me", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ cognitoSub: cu.userId, email: tokenEmail }),
+          }).catch(() => null);
+        }
 
         const res = await fetch("/api/profile", { cache: "no-store" });
         const data: Partial<FormState> = res.ok ? await res.json() : {};
 
         const next: FormState = {
-          name: data.name ?? attrs.name ?? "",
-          dob: data.dob ?? attrs.birthdate ?? "",
-          email: data.email ?? attrs.email ?? "",
-          phone: data.phone ?? attrs.phone_number ?? "",
+          name: data.name ?? (attrs.name ?? ""),
+          dob: data.dob ?? (attrs.birthdate ?? ""),
+          email: data.email ?? (attrs.email ?? ""),
+          phone: data.phone ?? (attrs.phone_number ?? ""),
           address1: data.address1 ?? "",
           address2: data.address2 ?? "",
           city: data.city ?? "",
@@ -122,16 +129,15 @@ export default function ProfilePage() {
         setForm(next);
         setSnap(next);
       } catch {
-        // swallow for now (optional toast)
+        // optional toast
       }
     })();
-  }, []);
+  }, [initialForm]);
 
   function toggle(field: EditKeys, on = true) {
     setEdit((e) => ({ ...e, [field]: on }));
 
     if (on === false) {
-      // cancel -> revert field to snapshot
       setForm((f) => ({ ...f, [field]: snap[field] as never }));
 
       if (field === "email") {
@@ -165,7 +171,7 @@ export default function ProfilePage() {
   async function saveEmail() {
     try {
       setEmailMsg("");
-      const email = form.email.trim();
+      const email = form.email.trim().toLowerCase();
       if (!email) {
         setEmailMsg("Email is required.");
         return;
@@ -185,10 +191,13 @@ export default function ProfilePage() {
         userAttributeKey: "email",
         confirmationCode: emailCode,
       });
+
+      // ✅ mirror to DB after verification
+      await patchProfile({ email: form.email });
+
       setEmailPending(false);
       setEmailCode("");
       setEmailMsg("Email verified ✅");
-      setSnap((s) => ({ ...s, email: form.email }));
       toggle("email", false);
     } catch (e: unknown) {
       setEmailMsg(e instanceof Error ? e.message : "Verification failed.");
@@ -232,10 +241,13 @@ export default function ProfilePage() {
         userAttributeKey: "phone_number",
         confirmationCode: phoneCode,
       });
+
+      // ✅ mirror to DB after verification
+      await patchProfile({ phone: form.phone });
+
       setPhonePending(false);
       setPhoneCode("");
       setPhoneMsg("Phone verified ✅");
-      setSnap((s) => ({ ...s, phone: form.phone }));
       toggle("phone", false);
     } catch (e: unknown) {
       setPhoneMsg(e instanceof Error ? e.message : "Verification failed.");
@@ -273,7 +285,7 @@ export default function ProfilePage() {
     if (ok) setEditFiling(false);
   }
 
-  // ---------- Address single-field save (used by InputWithIcons when field is address*) ----------
+  // ---------- Address single-field save ----------
   async function saveAddressField(field: EditKeys) {
     if (
       field !== "address1" &&
@@ -301,9 +313,7 @@ export default function ProfilePage() {
         {/* Read-only identity */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
-            <label className="block text-sm text-gray-600 mb-1">
-              Full name
-            </label>
+            <label className="block text-sm text-gray-600 mb-1">Full name</label>
             <input
               className="border p-2 rounded w-full bg-gray-50"
               value={form.name}
@@ -312,9 +322,7 @@ export default function ProfilePage() {
           </div>
 
           <div>
-            <label className="block text-sm text-gray-600 mb-1">
-              Date of birth
-            </label>
+            <label className="block text-sm text-gray-600 mb-1">Date of birth</label>
             <input
               className="border p-2 rounded w-full bg-gray-50"
               value={form.dob}
@@ -418,7 +426,6 @@ export default function ProfilePage() {
         />
 
         <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-6">
-          {/* Filing Status */}
           <FilingStatusSection
             editFiling={editFiling}
             setEditFiling={setEditFiling}
@@ -428,7 +435,6 @@ export default function ProfilePage() {
             onSave={saveFiling}
           />
 
-          {/* Password */}
           <PasswordSection />
         </div>
       </div>
