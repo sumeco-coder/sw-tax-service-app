@@ -91,9 +91,19 @@ async function sendTestEmailAction(formData: FormData) {
   }
 }
 
-export default async function AdminWaitlistPage() {
+export default async function AdminWaitlistPage({
+  searchParams,
+}: {
+  searchParams?: { [key: string]: string | string[] | undefined };
+}) {
   let entries: WaitlistRow[] = [];
   let errorMsg: string | null = null;
+
+  const testEmail = Array.isArray(searchParams?.testEmail)
+    ? searchParams?.testEmail?.[0]
+    : searchParams?.testEmail;
+
+  const msg = Array.isArray(searchParams?.msg) ? searchParams?.msg?.[0] : searchParams?.msg;
 
   // ✅ Load config (open/closed + instant/bulk + schedule)
   const cfg = await getWaitlistConfig();
@@ -124,6 +134,28 @@ export default async function AdminWaitlistPage() {
   return (
     <main className="min-h-screen bg-gray-50 px-4 py-8">
       <div className="mx-auto max-w-5xl space-y-6">
+        {/* ✅ Banner for test email results */}
+        {testEmail ? (
+          <div
+            className={`rounded-xl border p-3 text-sm ${
+              testEmail === "sent"
+                ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+                : testEmail === "missing"
+                ? "border-amber-200 bg-amber-50 text-amber-900"
+                : "border-rose-200 bg-rose-50 text-rose-900"
+            }`}
+          >
+            {testEmail === "sent" && <p>✅ Test email sent successfully.</p>}
+            {testEmail === "missing" && <p>⚠️ Please enter an email address.</p>}
+            {testEmail === "error" && (
+              <p>
+                ❌ Failed to send test email
+                {msg ? `: ${decodeURIComponent(msg)}` : "."}
+              </p>
+            )}
+          </div>
+        ) : null}
+
         <header className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h1 className="text-2xl font-bold text-gray-900">
@@ -156,8 +188,7 @@ export default async function AdminWaitlistPage() {
                   {cfg.open ? "OPEN" : "CLOSED"}
                 </span>
                 {" • "}
-                Mode:{" "}
-                <span className="font-semibold">{cfg.mode.toUpperCase()}</span>
+                Mode: <span className="font-semibold">{cfg.mode.toUpperCase()}</span>
                 {" • "}
                 Schedule:{" "}
                 <span className="font-semibold">
@@ -302,9 +333,7 @@ export default async function AdminWaitlistPage() {
                     <tr key={row.id} className="align-top hover:bg-gray-50/80">
                       <td className="px-4 py-3">
                         <div className="font-medium text-gray-900">{row.fullName}</div>
-                        {row.phone && (
-                          <div className="text-xs text-gray-500">{row.phone}</div>
-                        )}
+                        {row.phone && <div className="text-xs text-gray-500">{row.phone}</div>}
                       </td>
                       <td className="px-4 py-3 text-gray-800">{row.email}</td>
                       <td className="px-4 py-3 text-gray-700">
@@ -329,7 +358,6 @@ export default async function AdminWaitlistPage() {
                       <td className="px-4 py-3 text-xs text-gray-500">{created}</td>
                       <td className="px-4 py-3">
                         <div className="flex justify-end gap-2">
-                          {/* Approve */}
                           <form action={approveAction}>
                             <input type="hidden" name="id" value={row.id} />
                             <button
@@ -341,7 +369,6 @@ export default async function AdminWaitlistPage() {
                             </button>
                           </form>
 
-                          {/* Reject */}
                           <form action={rejectAction}>
                             <input type="hidden" name="id" value={row.id} />
                             <button
