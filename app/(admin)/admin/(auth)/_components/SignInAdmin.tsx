@@ -1,4 +1,4 @@
-// app/(admin)/admin/sign-in/SignInAdmin.tsx
+// app/(admin)/admin/(auth)/sign-in/SignInAdmin.tsx
 "use client";
 
 import { useEffect, useState, useCallback, useMemo } from "react";
@@ -13,11 +13,13 @@ import {
   getCurrentUser,
 } from "aws-amplify/auth";
 
-configureAmplify();
+// If you want to allow ANY email as admin (not recommended), set this to "".
+const ADMIN_EMAIL_DOMAIN = "swtaxservice.com";
 
 type Phase =
   | "checking"
   | "signin"
+  | "new-password"
   | "mfa-email"
   | "mfa-totp"
   | "setup-email"
@@ -26,6 +28,11 @@ type Phase =
 
 function normalizeUsername(email: string) {
   return email.trim().toLowerCase();
+}
+
+function emailDomain(email: string) {
+  const at = email.lastIndexOf("@");
+  return at >= 0 ? email.slice(at + 1).toLowerCase() : "";
 }
 
 function isAdminFromPayload(payload: any) {
@@ -39,7 +46,9 @@ function friendlyError(err: any) {
   if (msg.includes("Incorrect username or password")) return "Invalid email or password.";
   if (msg.includes("User does not exist")) return "No account found for that email.";
   if (msg.includes("User is disabled")) return "This account is disabled.";
-  if (msg.includes("Too many failed attempts")) return "Too many attempts. Try again later.";
+  if (msg.includes("Too many failed attempts") || msg.includes("Attempt limit exceeded"))
+    return "Too many attempts. Try again later.";
+  if (msg.toLowerCase().includes("network")) return "Network error. Check your connection and try again.";
   return msg;
 }
 
@@ -81,13 +90,50 @@ export default function SignInAdmin() {
   const [phase, setPhase] = useState<Phase>("checking");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+
+  // MFA / setup code input
   const [code, setCode] = useState("");
+
+  // NEW_PASSWORD_REQUIRED
+  const [newPassword, setNewPassword] = useState("");
+
   const [totpUri, setTotpUri] = useState<string | null>(null);
 
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState("");
 
+  useEffect(() => {
+    configureAmplify();
+  }, []);
+
+  const username = useMemo(() => normalizeUsername(email), [email]);
+
   const canSubmit = useMemo(() => !loading, [loading]);
+
+  const domainOk = useMemo(() => {
+    if (!ADMIN_EMAIL_DOMAIN) return true;
+    if (!username.includes("@")) return true; // don't block while typing
+    return emailDomain(username) === ADMIN_EMAIL_DOMAIN;
+  }, [username]);
+
+  const canSignIn = useMemo(
+    () => username.includes("@") && password.length > 0 && domainOk,
+    [username, password, domainOk]
+  );
+
+  const canSetNewPassword = useMemo(
+    () => username.includes("@") && newPassword.length >= 8,
+    [username, newPassword]
+  );
+
+  const redirectNotAuthorized = useCallback(
+    async (message?: string) => {
+      if (message) setMsg(message);
+      await hardSignOut();
+      router.replace("/not-authorized?reason=admin_only");
+    },
+    [router]
+  );
 
   const finishAdminLogin = useCallback(async () => {
     const session = await syncServerCookiesFromSession();
@@ -101,8 +147,7 @@ export default function SignInAdmin() {
     }
 
     if (!isAdminFromPayload(payload)) {
-      await hardSignOut();
-      router.replace("/not-authorized");
+      await redirectNotAuthorized("This account isn’t an admin. Use Client sign-in instead.");
       return;
     }
 
@@ -110,17 +155,25 @@ export default function SignInAdmin() {
     setMsg("Signed in. Redirecting…");
     router.replace("/admin");
     router.refresh();
-  }, [router]);
+  }, [router, redirectNotAuthorized]);
 
   const applyNextStep = useCallback(
     async (nextStep: any) => {
       const step = nextStep?.signInStep;
 
+      // Choice-based sign-in: pick EMAIL_OTP as factor
       if (step === "CONTINUE_SIGN_IN_WITH_FIRST_FACTOR_SELECTION") {
         const { nextStep: ns } = await confirmSignIn({
           challengeResponse: "EMAIL_OTP" as any,
         });
         return applyNextStep(ns);
+      }
+
+      // NEW PASSWORD REQUIRED
+      if (step === "CONFIRM_SIGN_IN_WITH_NEW_PASSWORD_REQUIRED") {
+        setPhase("new-password");
+        setMsg("A new password is required for this admin account. Set a new password to continue.");
+        return;
       }
 
       if (step === "CONFIRM_SIGN_IN_WITH_EMAIL_CODE") {
@@ -159,6 +212,7 @@ export default function SignInAdmin() {
     [finishAdminLogin]
   );
 
+  // On load: if already signed in, validate admin and redirect
   useEffect(() => {
     let cancelled = false;
 
@@ -177,6 +231,12 @@ export default function SignInAdmin() {
           return;
         }
 
+        // Signed in but not admin -> boot them
+        if (session && !isAdminFromPayload(payload)) {
+          await redirectNotAuthorized("This account isn’t an admin. Use Client sign-in instead.");
+          return;
+        }
+
         await hardSignOut();
       } catch {
         // not signed in
@@ -188,19 +248,24 @@ export default function SignInAdmin() {
     return () => {
       cancelled = true;
     };
-  }, [router]);
+  }, [router, redirectNotAuthorized]);
 
   const handleSignIn = useCallback(
     async (e?: React.FormEvent) => {
       e?.preventDefault();
       setMsg("");
-      setLoading(true);
 
+      if (!domainOk) {
+        setMsg(`Admin sign-in is limited to @${ADMIN_EMAIL_DOMAIN} accounts.`);
+        return;
+      }
+
+      setLoading(true);
       try {
         await hardSignOut();
 
         const { nextStep } = await signIn({
-          username: normalizeUsername(email),
+          username,
           password,
         });
 
@@ -211,7 +276,7 @@ export default function SignInAdmin() {
         setLoading(false);
       }
     },
-    [email, password, applyNextStep]
+    [domainOk, username, password, applyNextStep]
   );
 
   const handleConfirm = useCallback(
@@ -221,10 +286,14 @@ export default function SignInAdmin() {
       setLoading(true);
 
       try {
-        const { nextStep } = await confirmSignIn({
-          challengeResponse:
-            phase === "setup-email" ? normalizeUsername(email) : code.trim(),
-        });
+        const challengeResponse =
+          phase === "setup-email"
+            ? username
+            : phase === "new-password"
+              ? newPassword
+              : code.trim();
+
+        const { nextStep } = await confirmSignIn({ challengeResponse });
 
         await applyNextStep(nextStep);
       } catch (err: any) {
@@ -233,13 +302,14 @@ export default function SignInAdmin() {
         setLoading(false);
       }
     },
-    [phase, code, email, applyNextStep]
+    [phase, code, username, newPassword, applyNextStep]
   );
 
   const resetToSignin = useCallback(() => {
     setPhase("signin");
     setCode("");
     setTotpUri(null);
+    setNewPassword("");
     setMsg("");
   }, []);
 
@@ -280,6 +350,11 @@ export default function SignInAdmin() {
                 inputMode="email"
                 required
               />
+              {!domainOk ? (
+                <p className="mt-1 text-xs text-amber-700">
+                  Admin sign-in is limited to <span className="font-medium">@{ADMIN_EMAIL_DOMAIN}</span>.
+                </p>
+              ) : null}
             </label>
 
             <label className="block">
@@ -294,18 +369,18 @@ export default function SignInAdmin() {
               />
             </label>
 
-            {/* ✅ Option 1: disable forgot password until SES approved */}
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-slate-500">Having trouble signing in?</span>
-              <span className="text-xs text-slate-600">
-                Reset disabled — contact{" "}
-                <span className="font-medium">support@swtaxservice.com</span>
-              </span>
+            <div className="flex items-center justify-between text-sm">
+              <Link href="/admin/forgot-password" className="text-slate-600 hover:underline">
+                Forgot your password?
+              </Link>
+              <Link href="/sign-in" className="text-slate-600 hover:underline">
+                Client sign-in
+              </Link>
             </div>
 
             <button
               type="submit"
-              disabled={!canSubmit}
+              disabled={!canSubmit || !canSignIn}
               className="w-full rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
             >
               {loading ? "Signing in..." : "Sign in"}
@@ -324,6 +399,61 @@ export default function SignInAdmin() {
               className="w-full rounded-xl border px-4 py-2 text-sm font-semibold text-slate-700 disabled:opacity-60"
             >
               Force sign out
+            </button>
+          </form>
+        )}
+
+        {phase === "new-password" && (
+          <form onSubmit={handleConfirm} className="space-y-3">
+            <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+              A new password is required for this admin account.
+            </div>
+
+            <label className="block">
+              <span className="text-sm font-medium text-slate-700">Email</span>
+              <input
+                className="mt-1 w-full rounded-xl border px-3 py-2 text-sm bg-slate-50"
+                value={email}
+                readOnly
+              />
+            </label>
+
+            <label className="block">
+              <span className="text-sm font-medium text-slate-700">New password</span>
+              <input
+                className="mt-1 w-full rounded-xl border px-3 py-2 text-sm"
+                type="password"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                autoComplete="new-password"
+                required
+              />
+              <p className="mt-1 text-xs text-slate-500">
+                Use 8+ characters. Your pool may require upper/lowercase, number, and symbol.
+              </p>
+            </label>
+
+            <div className="flex items-center justify-between text-sm">
+              <button
+                type="button"
+                onClick={resetToSignin}
+                className="text-slate-600 hover:underline"
+                disabled={loading}
+              >
+                Back
+              </button>
+
+              <Link href="/admin/forgot-password" className="text-slate-600 hover:underline">
+                Forgot password?
+              </Link>
+            </div>
+
+            <button
+              type="submit"
+              disabled={!canSubmit || !canSetNewPassword}
+              className="w-full rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
+            >
+              {loading ? "Updating..." : "Set new password & continue"}
             </button>
           </form>
         )}
@@ -352,20 +482,19 @@ export default function SignInAdmin() {
               {loading ? "Confirming..." : "Confirm"}
             </button>
 
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between text-sm">
               <button
                 type="button"
                 onClick={resetToSignin}
-                className="text-sm font-semibold text-slate-700 hover:underline"
+                className="font-semibold text-slate-700 hover:underline"
+                disabled={loading}
               >
                 Back
               </button>
 
-              {/* ✅ remove forgot-password link here too */}
-              <span className="text-sm text-slate-600">
-                Reset disabled — contact{" "}
-                <span className="font-medium">support@swtaxservice.com</span>
-              </span>
+              <Link href="/admin/forgot-password" className="text-slate-600 hover:underline">
+                Forgot password?
+              </Link>
             </div>
           </form>
         )}
@@ -411,13 +540,20 @@ export default function SignInAdmin() {
               {loading ? "Continuing..." : "Continue"}
             </button>
 
-            <button
-              type="button"
-              onClick={resetToSignin}
-              className="text-sm font-semibold text-slate-700 hover:underline"
-            >
-              Back
-            </button>
+            <div className="flex items-center justify-between text-sm">
+              <button
+                type="button"
+                onClick={resetToSignin}
+                className="font-semibold text-slate-700 hover:underline"
+                disabled={loading}
+              >
+                Back
+              </button>
+
+              <Link href="/admin/forgot-password" className="text-slate-600 hover:underline">
+                Forgot password?
+              </Link>
+            </div>
           </form>
         )}
 
