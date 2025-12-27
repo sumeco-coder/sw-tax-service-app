@@ -1,4 +1,5 @@
 // lib/s3/s3.ts
+import "server-only";
 import { S3Client, PutObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
 
 function required(name: string): string {
@@ -7,8 +8,16 @@ function required(name: string): string {
   return v;
 }
 
+function requireRegion(): string {
+  const region = (process.env.AWS_REGION ?? process.env.S3_REGION ?? "").trim();
+  if (!region) {
+    throw new Error("AWS_REGION (or S3_REGION) is not set");
+  }
+  return region;
+}
+
 function getS3() {
-  const region = required("S3_REGION");
+  const region = requireRegion();
 
   const credentials =
     process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY

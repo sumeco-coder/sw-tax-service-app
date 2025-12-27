@@ -1,12 +1,11 @@
 // lib/email/sendEmail.ts
 import "server-only";
 
-import { sendSesEmail } from "./ses";
 import { sendResendEmail, type ResendAttachment } from "./resend";
 
 export type EmailAttachment = {
   filename: string;
-  content?: string; // base64
+  content?: string; // base64 (for Resend attachments)
   path?: string; // public URL
   contentId?: string;
   contentType?: string; // optional metadata (Resend ignores)
@@ -59,8 +58,10 @@ export async function sendEmail(args: SendEmailArgs): Promise<void> {
     return;
   }
 
-  // ✅ SES is ONLY used when you explicitly opt-in
+  // ✅ SES is ONLY used when you explicitly opt-in.
+  // Lazy import prevents SES module from loading in Resend mode.
   if (provider === "ses") {
+    const { sendSesEmail } = await import("./ses");
     await sendSesEmail(args);
     return;
   }
