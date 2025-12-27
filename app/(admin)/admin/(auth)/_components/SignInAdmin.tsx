@@ -15,6 +15,8 @@ import {
 
 // If you want to allow ANY email as admin (not recommended), set this to "".
 const ADMIN_EMAIL_DOMAIN = "swtaxservice.com";
+const MIN_ADMIN_PASSWORD_LEN = 8;
+const MAX_ADMIN_PASSWORD_LEN = 20;
 
 type Phase =
   | "checking"
@@ -43,12 +45,18 @@ function isAdminFromPayload(payload: any) {
 
 function friendlyError(err: any) {
   const msg = String(err?.message ?? "Sign-in failed.");
-  if (msg.includes("Incorrect username or password")) return "Invalid email or password.";
-  if (msg.includes("User does not exist")) return "No account found for that email.";
+  if (msg.includes("Incorrect username or password"))
+    return "Invalid email or password.";
+  if (msg.includes("User does not exist"))
+    return "No account found for that email.";
   if (msg.includes("User is disabled")) return "This account is disabled.";
-  if (msg.includes("Too many failed attempts") || msg.includes("Attempt limit exceeded"))
+  if (
+    msg.includes("Too many failed attempts") ||
+    msg.includes("Attempt limit exceeded")
+  )
     return "Too many attempts. Try again later.";
-  if (msg.toLowerCase().includes("network")) return "Network error. Check your connection and try again.";
+  if (msg.toLowerCase().includes("network"))
+    return "Network error. Check your connection and try again.";
   return msg;
 }
 
@@ -122,7 +130,10 @@ export default function SignInAdmin() {
   );
 
   const canSetNewPassword = useMemo(
-    () => username.includes("@") && newPassword.length >= 8,
+    () =>
+      username.includes("@") &&
+      newPassword.length >= MIN_ADMIN_PASSWORD_LEN &&
+      newPassword.length <= MAX_ADMIN_PASSWORD_LEN,
     [username, newPassword]
   );
 
@@ -147,7 +158,9 @@ export default function SignInAdmin() {
     }
 
     if (!isAdminFromPayload(payload)) {
-      await redirectNotAuthorized("This account isn’t an admin. Use Client sign-in instead.");
+      await redirectNotAuthorized(
+        "This account isn’t an admin. Use Client sign-in instead."
+      );
       return;
     }
 
@@ -172,7 +185,9 @@ export default function SignInAdmin() {
       // NEW PASSWORD REQUIRED
       if (step === "CONFIRM_SIGN_IN_WITH_NEW_PASSWORD_REQUIRED") {
         setPhase("new-password");
-        setMsg("A new password is required for this admin account. Set a new password to continue.");
+        setMsg(
+          "A new password is required for this admin account. Set a new password to continue."
+        );
         return;
       }
 
@@ -195,7 +210,8 @@ export default function SignInAdmin() {
       }
 
       if (step === "CONTINUE_SIGN_IN_WITH_TOTP_SETUP") {
-        const uri = (nextStep as any)?.totpSetupDetails?.getSetupUri?.() ?? null;
+        const uri =
+          (nextStep as any)?.totpSetupDetails?.getSetupUri?.() ?? null;
         if (uri) setTotpUri(uri);
         setPhase("setup-totp");
         setMsg("Scan the QR / use the key, then enter a 6-digit code.");
@@ -207,7 +223,9 @@ export default function SignInAdmin() {
         return;
       }
 
-      setMsg(step ? `Additional step required: ${step}` : "Sign-in incomplete.");
+      setMsg(
+        step ? `Additional step required: ${step}` : "Sign-in incomplete."
+      );
     },
     [finishAdminLogin]
   );
@@ -233,7 +251,9 @@ export default function SignInAdmin() {
 
         // Signed in but not admin -> boot them
         if (session && !isAdminFromPayload(payload)) {
-          await redirectNotAuthorized("This account isn’t an admin. Use Client sign-in instead.");
+          await redirectNotAuthorized(
+            "This account isn’t an admin. Use Client sign-in instead."
+          );
           return;
         }
 
@@ -320,7 +340,9 @@ export default function SignInAdmin() {
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
             SW Tax Service • Admin
           </p>
-          <h1 className="mt-1 text-2xl font-bold text-slate-900">Admin Sign In</h1>
+          <h1 className="mt-1 text-2xl font-bold text-slate-900">
+            Admin Sign In
+          </h1>
           <p className="mt-1 text-sm text-slate-600">
             This area is restricted to authorized admins.
           </p>
@@ -352,13 +374,16 @@ export default function SignInAdmin() {
               />
               {!domainOk ? (
                 <p className="mt-1 text-xs text-amber-700">
-                  Admin sign-in is limited to <span className="font-medium">@{ADMIN_EMAIL_DOMAIN}</span>.
+                  Admin sign-in is limited to{" "}
+                  <span className="font-medium">@{ADMIN_EMAIL_DOMAIN}</span>.
                 </p>
               ) : null}
             </label>
 
             <label className="block">
-              <span className="text-sm font-medium text-slate-700">Password</span>
+              <span className="text-sm font-medium text-slate-700">
+                Password
+              </span>
               <input
                 className="mt-1 w-full rounded-xl border px-3 py-2 text-sm"
                 type="password"
@@ -370,7 +395,10 @@ export default function SignInAdmin() {
             </label>
 
             <div className="flex items-center justify-between text-sm">
-              <Link href="/admin/forgot-password" className="text-slate-600 hover:underline">
+              <Link
+                href="/admin/forgot-password"
+                className="text-slate-600 hover:underline"
+              >
                 Forgot your password?
               </Link>
               <Link href="/sign-in" className="text-slate-600 hover:underline">
@@ -419,17 +447,26 @@ export default function SignInAdmin() {
             </label>
 
             <label className="block">
-              <span className="text-sm font-medium text-slate-700">New password</span>
+              <span className="text-sm font-medium text-slate-700">
+                New password
+              </span>
               <input
-                className="mt-1 w-full rounded-xl border px-3 py-2 text-sm"
                 type="password"
                 value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
+                onChange={(e) =>
+                  setNewPassword(
+                    e.target.value.slice(0, MAX_ADMIN_PASSWORD_LEN)
+                  )
+                }
+                minLength={MIN_ADMIN_PASSWORD_LEN}
+                maxLength={MAX_ADMIN_PASSWORD_LEN}
                 autoComplete="new-password"
                 required
               />
+
               <p className="mt-1 text-xs text-slate-500">
-                Use 8+ characters. Your pool may require upper/lowercase, number, and symbol.
+                Use 8+ characters. Your pool may require upper/lowercase,
+                number, and symbol.
               </p>
             </label>
 
@@ -443,7 +480,10 @@ export default function SignInAdmin() {
                 Back
               </button>
 
-              <Link href="/admin/forgot-password" className="text-slate-600 hover:underline">
+              <Link
+                href="/admin/forgot-password"
+                className="text-slate-600 hover:underline"
+              >
                 Forgot password?
               </Link>
             </div>
@@ -492,7 +532,10 @@ export default function SignInAdmin() {
                 Back
               </button>
 
-              <Link href="/admin/forgot-password" className="text-slate-600 hover:underline">
+              <Link
+                href="/admin/forgot-password"
+                className="text-slate-600 hover:underline"
+              >
                 Forgot password?
               </Link>
             </div>
@@ -510,7 +553,9 @@ export default function SignInAdmin() {
 
             {phase === "setup-email" ? (
               <label className="block">
-                <span className="text-sm font-medium text-slate-700">Email for codes</span>
+                <span className="text-sm font-medium text-slate-700">
+                  Email for codes
+                </span>
                 <input
                   className="mt-1 w-full rounded-xl border px-3 py-2 text-sm"
                   value={email}
@@ -521,7 +566,9 @@ export default function SignInAdmin() {
               </label>
             ) : (
               <label className="block">
-                <span className="text-sm font-medium text-slate-700">6-digit code</span>
+                <span className="text-sm font-medium text-slate-700">
+                  6-digit code
+                </span>
                 <input
                   className="mt-1 w-full rounded-xl border px-3 py-2 text-sm"
                   value={code}
@@ -550,7 +597,10 @@ export default function SignInAdmin() {
                 Back
               </button>
 
-              <Link href="/admin/forgot-password" className="text-slate-600 hover:underline">
+              <Link
+                href="/admin/forgot-password"
+                className="text-slate-600 hover:underline"
+              >
                 Forgot password?
               </Link>
             </div>
