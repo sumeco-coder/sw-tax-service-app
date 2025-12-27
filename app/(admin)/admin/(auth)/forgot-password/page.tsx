@@ -9,6 +9,9 @@ import { configureAmplify } from "@/lib/amplifyClient";
 
 type Step = "request" | "confirm";
 
+const MIN_ADMIN_PASSWORD_LEN = 8;
+const MAX_ADMIN_PASSWORD_LEN = 20;
+
 function normalizeEmail(v: string) {
   return v.trim().toLowerCase();
 }
@@ -17,16 +20,25 @@ function friendlyError(err: any) {
   const raw = String(err?.message ?? "Something went wrong.");
   const name = String(err?.name ?? err?.__type ?? "");
 
-  if (raw.includes("Attempt limit exceeded") || raw.includes("Too many failed attempts")) {
+  if (
+    raw.includes("Attempt limit exceeded") ||
+    raw.includes("Too many failed attempts")
+  ) {
     return "Too many attempts. Please wait a bit and try again.";
   }
-  if (raw.includes("Invalid verification code") || raw.includes("Invalid code")) {
+  if (
+    raw.includes("Invalid verification code") ||
+    raw.includes("Invalid code")
+  ) {
     return "That code didn’t work. Double-check it and try again.";
   }
   if (raw.toLowerCase().includes("expired")) {
     return "That code expired. Please resend a new one.";
   }
-  if (raw.includes("Password did not conform") || raw.includes("InvalidPassword")) {
+  if (
+    raw.includes("Password did not conform") ||
+    raw.includes("InvalidPassword")
+  ) {
     return "Password doesn’t meet requirements. Try a stronger password (mix of upper/lowercase, number, symbol).";
   }
 
@@ -36,7 +48,7 @@ function friendlyError(err: any) {
 export default function AdminForgotPasswordPage() {
   const router = useRouter();
 
-  // ✅ Configure Amplify on the client after mount (safer than module-level)
+  // ✅ Configure Amplify on the client after mount
   useEffect(() => {
     configureAmplify();
   }, []);
@@ -55,16 +67,14 @@ export default function AdminForgotPasswordPage() {
   const codeRef = useRef<HTMLInputElement | null>(null);
   const passwordRef = useRef<HTMLInputElement | null>(null);
 
-  // prevent double auto-submits
-  const lastAutoSubmitRef = useRef<{ code: string; pw: string } | null>(null);
-
   const username = useMemo(() => normalizeEmail(email), [email]);
 
   const canSend = username.length > 3 && username.includes("@");
   const canConfirm =
     canSend &&
-    /^\d{6}$/.test(code.trim()) && // require 6 digits for admin reset
-    newPassword.length >= 8;
+    /^\d{6}$/.test(code.trim()) &&
+    newPassword.length >= MIN_ADMIN_PASSWORD_LEN &&
+    newPassword.length <= MAX_ADMIN_PASSWORD_LEN;
 
   // focus code input when moving to confirm step
   useEffect(() => {
@@ -85,8 +95,10 @@ export default function AdminForgotPasswordPage() {
       e?.preventDefault();
       setMsg("");
 
-      if (!canSend) {
-        setMsg("Enter a valid email address.");
+      if (!canConfirm) {
+        setMsg(
+          `Enter your email, the 6-digit code, and a password (${MIN_ADMIN_PASSWORD_LEN}–${MAX_ADMIN_PASSWORD_LEN} chars).`
+        );
         return;
       }
 
@@ -130,7 +142,9 @@ export default function AdminForgotPasswordPage() {
       setMsg("");
 
       if (!canConfirm) {
-        setMsg("Enter your email, the 6-digit code, and a stronger password (8+ chars).");
+        setMsg(
+          `Enter your email, the 6-digit code, and a stronger password (${MIN_ADMIN_PASSWORD_LEN}+ chars).`
+        );
         return;
       }
 
@@ -154,36 +168,11 @@ export default function AdminForgotPasswordPage() {
     [username, code, newPassword, canConfirm, router]
   );
 
-  // ✅ Auto-submit when code becomes 6 digits AND password is valid
-  useEffect(() => {
-    if (step !== "confirm") return;
-    if (loading) return;
-
-    const c = code.trim();
-    const pw = newPassword;
-
-    if (!/^\d{6}$/.test(c)) return;
-
-    // If password not ready, push focus to password
-    if (pw.length < 8) {
-      passwordRef.current?.focus();
-      return;
-    }
-
-    // Prevent re-submitting same values
-    const last = lastAutoSubmitRef.current;
-    if (last && last.code === c && last.pw === pw) return;
-
-    lastAutoSubmitRef.current = { code: c, pw };
-    confirm();
-  }, [step, code, newPassword, loading, confirm]);
-
   const resetToRequest = useCallback(() => {
     setStep("request");
     setCode("");
     setNewPassword("");
     setMsg("");
-    lastAutoSubmitRef.current = null;
   }, []);
 
   return (
@@ -193,7 +182,9 @@ export default function AdminForgotPasswordPage() {
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
             SW Tax Service • Admin
           </p>
-          <h1 className="mt-1 text-2xl font-bold text-slate-900">Reset Password</h1>
+          <h1 className="mt-1 text-2xl font-bold text-slate-900">
+            Reset Password
+          </h1>
           <p className="mt-1 text-sm text-slate-600">
             {step === "request"
               ? "Enter your admin email to receive a reset code."
@@ -227,11 +218,18 @@ export default function AdminForgotPasswordPage() {
               disabled={loading || !canSend || cooldown > 0}
               className="w-full rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
             >
-              {loading ? "Sending..." : cooldown > 0 ? `Wait ${cooldown}s` : "Send reset code"}
+              {loading
+                ? "Sending..."
+                : cooldown > 0
+                  ? `Wait ${cooldown}s`
+                  : "Send reset code"}
             </button>
 
             <div className="mt-2 flex items-center justify-between text-sm">
-              <Link href="/admin/sign-in" className="text-slate-600 hover:underline">
+              <Link
+                href="/admin/sign-in"
+                className="text-slate-600 hover:underline"
+              >
                 Back to admin sign-in
               </Link>
               <Link href="/" className="text-slate-600 hover:underline">
@@ -255,7 +253,9 @@ export default function AdminForgotPasswordPage() {
             </label>
 
             <label className="block">
-              <span className="text-sm font-medium text-slate-700">Reset code</span>
+              <span className="text-sm font-medium text-slate-700">
+                Reset code
+              </span>
               <input
                 ref={codeRef}
                 className="mt-1 w-full rounded-xl border px-3 py-2 text-sm"
@@ -268,9 +268,6 @@ export default function AdminForgotPasswordPage() {
                   if (digits.length === 6) {
                     setTimeout(() => passwordRef.current?.focus(), 0);
                   }
-
-                  // reset auto-submit lock when code changes
-                  lastAutoSubmitRef.current = null;
                 }}
                 inputMode="numeric"
                 autoComplete="one-time-code"
@@ -281,23 +278,30 @@ export default function AdminForgotPasswordPage() {
             </label>
 
             <label className="block">
-              <span className="text-sm font-medium text-slate-700">New password</span>
+              <span className="text-sm font-medium text-slate-700">
+                New password
+              </span>
               <input
                 ref={passwordRef}
                 className="mt-1 w-full rounded-xl border px-3 py-2 text-sm"
                 type="password"
                 value={newPassword}
                 onChange={(e) => {
-                  setNewPassword(e.target.value);
-                  // reset auto-submit lock when password changes
-                  lastAutoSubmitRef.current = null;
+                  // enforce max length while typing
+                  setNewPassword(
+                    e.target.value.slice(0, MAX_ADMIN_PASSWORD_LEN)
+                  );
                 }}
                 autoComplete="new-password"
+                minLength={MIN_ADMIN_PASSWORD_LEN}
+                maxLength={MAX_ADMIN_PASSWORD_LEN}
                 required
                 disabled={loading}
               />
               <p className="mt-1 text-xs text-slate-500">
-                Use 8+ characters. Your pool may require upper/lowercase, number, and symbol.
+                Use {MIN_ADMIN_PASSWORD_LEN}–{MAX_ADMIN_PASSWORD_LEN}{" "}
+                characters. Your pool may require upper/lowercase, number, and
+                symbol.
               </p>
             </label>
 
@@ -329,7 +333,10 @@ export default function AdminForgotPasswordPage() {
                   Change email
                 </button>
 
-                <Link href="/admin/sign-in" className="text-slate-600 hover:underline">
+                <Link
+                  href="/admin/sign-in"
+                  className="text-slate-600 hover:underline"
+                >
                   Back to sign-in
                 </Link>
               </div>
