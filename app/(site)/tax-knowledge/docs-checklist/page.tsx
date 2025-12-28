@@ -99,7 +99,7 @@ export default function DocsChecklistPage() {
 
             <div className="mt-4">
               <Link
-                href="/site/waitlist"
+                href="/waitlist"
                 className="inline-flex items-center justify-center rounded-xl bg-card px-5 py-3 font-semibold text-foreground
                        hover:bg-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
               >

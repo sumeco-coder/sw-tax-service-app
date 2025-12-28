@@ -241,7 +241,7 @@ export default function WaitlistForm() {
       setPhoneValue("");
 
       if (USE_REDIRECT_AFTER_SUBMIT) {
-        router.push("/waitlist/thanks");
+        router.push("/thanks");
       } else {
         setOk(true);
         (e.currentTarget as HTMLFormElement).reset();
