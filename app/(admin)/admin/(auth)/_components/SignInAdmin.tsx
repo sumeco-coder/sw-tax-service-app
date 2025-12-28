@@ -451,6 +451,7 @@ export default function SignInAdmin() {
                 New password
               </span>
               <input
+                className="mt-1 w-full rounded-xl border px-3 py-2 text-sm"
                 type="password"
                 value={newPassword}
                 onChange={(e) =>
@@ -465,8 +466,9 @@ export default function SignInAdmin() {
               />
 
               <p className="mt-1 text-xs text-slate-500">
-                Use 8+ characters. Your pool may require upper/lowercase,
-                number, and symbol.
+                Use {MIN_ADMIN_PASSWORD_LEN}–{MAX_ADMIN_PASSWORD_LEN}{" "}
+                characters. Your pool may require upper/lowercase, number, and
+                symbol.
               </p>
             </label>
 

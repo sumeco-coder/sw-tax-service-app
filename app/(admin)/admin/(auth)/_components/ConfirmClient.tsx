@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useCallback } from "react";
+import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { configureAmplify } from "@/lib/amplifyClient";
@@ -12,10 +12,14 @@ function normalizeEmail(v: string) {
 
 function friendlyError(err: any) {
   const raw = String(err?.message ?? "Confirmation failed.");
-  if (raw.toLowerCase().includes("expired")) return "That code expired. Please resend a new one.";
+  if (raw.toLowerCase().includes("expired"))
+    return "That code expired. Please resend a new one.";
   if (raw.includes("Invalid verification code") || raw.includes("Invalid code"))
     return "That code didn’t work. Double-check it and try again.";
-  if (raw.includes("Attempt limit exceeded")) return "Too many attempts. Wait a bit and try again.";
+  if (raw.includes("Attempt limit exceeded"))
+    return "Too many attempts. Wait a bit and try again.";
+  if (raw.toLowerCase().includes("network"))
+    return "Network error. Check your connection and try again.";
   return raw;
 }
 
@@ -27,12 +31,10 @@ export default function ConfirmClient() {
   const router = useRouter();
   const sp = useSearchParams();
 
-  // Read from URL but also allow editing (in case user opens wrong link)
   const emailFromUrl = useMemo(() => normalizeEmail(sp.get("email") ?? ""), [sp]);
   const [email, setEmail] = useState(emailFromUrl);
 
   useEffect(() => {
-    // Keep in sync if URL changes
     setEmail(emailFromUrl);
   }, [emailFromUrl]);
 
@@ -41,14 +43,39 @@ export default function ConfirmClient() {
   const [error, setError] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
 
+  // resend cooldown
+  const [cooldown, setCooldown] = useState(0);
+
+  const codeRef = useRef<HTMLInputElement | null>(null);
+  const lastAutoSubmitRef = useRef<string | null>(null);
+
   const username = useMemo(() => normalizeEmail(email), [email]);
-  const canSubmit = username.includes("@") && code.trim().length >= 4;
+  const canSubmit = username.includes("@") && /^\d{6}$/.test(code.trim());
+
+  // focus code input
+  useEffect(() => {
+    const t = setTimeout(() => codeRef.current?.focus(), 50);
+    return () => clearTimeout(t);
+  }, []);
+
+  // cooldown timer
+  useEffect(() => {
+    if (cooldown <= 0) return;
+    const t = setInterval(() => setCooldown((c) => Math.max(0, c - 1)), 1000);
+    return () => clearInterval(t);
+  }, [cooldown]);
 
   const onSubmit = useCallback(
-    async (e: React.FormEvent) => {
-      e.preventDefault();
+    async (e?: React.FormEvent) => {
+      e?.preventDefault();
       setError(null);
       setMsg(null);
+
+      if (!canSubmit) {
+        setError("Enter your email and the 6-digit code.");
+        return;
+      }
+
       setPending(true);
 
       try {
@@ -64,30 +91,56 @@ export default function ConfirmClient() {
         setPending(false);
       }
     },
-    [username, code, router]
+    [username, code, router, canSubmit]
   );
+
+  // ✅ auto-submit once code reaches 6 digits
+  useEffect(() => {
+    if (pending) return;
+    const c = code.trim();
+    if (!/^\d{6}$/.test(c)) return;
+
+    if (lastAutoSubmitRef.current === c) return;
+    lastAutoSubmitRef.current = c;
+
+    onSubmit();
+  }, [code, pending, onSubmit]);
 
   const onResend = useCallback(async () => {
     setError(null);
     setMsg(null);
-    setPending(true);
 
+    if (!username.includes("@")) {
+      setError("Enter a valid email address first.");
+      return;
+    }
+
+    if (cooldown > 0) {
+      setMsg(`Please wait ${cooldown}s before resending.`);
+      return;
+    }
+
+    setPending(true);
     try {
       await resendSignUpCode({ username });
-      setMsg("A new verification code has been sent.");
+
+      // Keep response generic to avoid leaking whether user exists
+      setMsg("If the account exists, a new verification code has been sent.");
+      setCooldown(30);
     } catch (err: any) {
       setError(friendlyError(err));
     } finally {
       setPending(false);
     }
-  }, [username]);
+  }, [username, cooldown]);
 
   return (
     <div className="min-h-[calc(100vh-140px)] flex items-center justify-center px-4 py-10">
       <div className="w-full max-w-md rounded-3xl border bg-white p-6 shadow-sm">
         <h1 className="text-2xl font-bold text-slate-900">Confirm admin email</h1>
         <p className="mt-1 text-sm text-slate-600">
-          Enter the code sent to <span className="font-medium">{username || "your email"}</span>.
+          Enter the code sent to{" "}
+          <span className="font-medium">{username || "your email"}</span>.
         </p>
 
         {error ? (
@@ -108,7 +161,10 @@ export default function ConfirmClient() {
             <input
               className="mt-1 w-full rounded-xl border px-3 py-2 text-sm"
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              onChange={(e) => {
+                setEmail(e.target.value);
+                lastAutoSubmitRef.current = null; // reset auto-submit lock when email changes
+              }}
               inputMode="email"
               autoComplete="username"
               required
@@ -119,15 +175,17 @@ export default function ConfirmClient() {
           <label className="block">
             <span className="text-sm font-medium text-slate-700">Verification code</span>
             <input
+              ref={codeRef}
               className="mt-1 w-full rounded-xl border px-3 py-2 text-sm"
               value={code}
               onChange={(e) => {
-                // allow digits only; keep it simple
-                const digits = e.target.value.replace(/\D/g, "");
+                const digits = e.target.value.replace(/\D/g, "").slice(0, 6);
                 setCode(digits);
+                lastAutoSubmitRef.current = null; // allow re-submit if they change the code
               }}
               inputMode="numeric"
               autoComplete="one-time-code"
+              placeholder="6-digit code"
               required
               disabled={pending}
             />
@@ -147,7 +205,7 @@ export default function ConfirmClient() {
             disabled={pending || !username.includes("@")}
             className="w-full rounded-xl border px-4 py-2 text-sm font-semibold text-slate-900 hover:bg-slate-50 disabled:opacity-60"
           >
-            {pending ? "Sending..." : "Resend code"}
+            {pending ? "Sending..." : cooldown > 0 ? `Resend in ${cooldown}s` : "Resend code"}
           </button>
         </form>
 
