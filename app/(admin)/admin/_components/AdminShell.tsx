@@ -4,13 +4,12 @@
 import * as React from "react";
 import Link from "next/link";
 import AdminSidebar from "./AdminSidebar";
-import { useRouter } from "next/navigation";
-import { LogOut, ChevronDown } from "lucide-react";
+import { ChevronDown } from "lucide-react";
 
 const portalLinks = [
   { label: "Client Portal", href: "/dashboard" },
-  { label: "Preparer Portal", href: "/preparer" }, // change if needed
-  { label: "LMS Portal", href: "/lms" }, // change if needed
+  { label: "Preparer Portal", href: "/preparer" },
+  { label: "LMS Portal", href: "/lms" },
 ];
 
 type AdminShellProps = {
@@ -26,23 +25,10 @@ export default function AdminShell({
   description = "Manage waitlist, email, templates, and social.",
   actions,
 }: AdminShellProps) {
-  const router = useRouter();
-  const [loggingOut, setLoggingOut] = React.useState(false);
-
-  async function handleLogout() {
-    try {
-      setLoggingOut(true);
-      await fetch("/api/auth/logout", { method: "POST" });
-      router.replace("/admin/sign-in");
-      router.refresh();
-    } finally {
-      setLoggingOut(false);
-    }
-  }
   return (
     <div className="min-h-screen bg-[#0b0b10]">
       <div className="mx-auto flex min-h-screen max-w-7xl">
-        {/* Sidebar (your component can handle desktop + mobile drawer) */}
+        {/* Sidebar (desktop + mobile drawer) */}
         <AdminSidebar />
 
         {/* Main */}
@@ -59,10 +45,8 @@ export default function AdminShell({
               </div>
 
               <div className="flex flex-wrap items-center gap-2">
-                {/* Optional page-level actions (buttons, etc.) */}
-                {actions ? (
-                  <div className="hidden md:block">{actions}</div>
-                ) : null}
+                {/* Optional page-level actions */}
+                {actions ? <div className="hidden md:block">{actions}</div> : null}
 
                 {/* Jump to other portals (desktop) */}
                 <div className="hidden items-center gap-2 md:flex">
@@ -97,7 +81,7 @@ export default function AdminShell({
                   </div>
                 </details>
 
-                {/* Always keep View Site */}
+                {/* View Site */}
                 <Link
                   href="/"
                   className="rounded-2xl border border-white/15 bg-white/5 px-3 py-2 text-sm text-white transition hover:bg-white/10"
@@ -105,18 +89,7 @@ export default function AdminShell({
                   View Site
                 </Link>
 
-                {/* Logout */}
-                <button
-                  onClick={handleLogout}
-                  disabled={loggingOut}
-                  className="inline-flex items-center gap-2 rounded-2xl border border-white/15 bg-white/5 px-3 py-2 text-sm text-white transition hover:bg-white/10 disabled:opacity-60"
-                  title="Logout"
-                >
-                  <LogOut className="h-4 w-4" />
-                  <span className="hidden sm:inline">
-                    {loggingOut ? "Logging out…" : "Logout"}
-                  </span>
-                </button>
+                {/* ✅ NO logout in header (logout lives in AdminSidebar only) */}
               </div>
             </div>
           </header>

@@ -10,7 +10,7 @@ export const metadata: Metadata = {
 export default function ServicesPage() {
   const services = [
     {
-      slug: "/site/individual-tax-filing",
+      slug: "/individual-tax-filing",
       title: "Individual Tax Filing",
       blurb:
         "Fast, accurate e‑filing with year‑round support. We maximize credits and deductions while keeping you compliant.",
@@ -22,7 +22,7 @@ export default function ServicesPage() {
       cta: "Learn more",
     },
     {
-      slug: "/site/business-tax-setup",
+      slug: "/business-tax-setup",
       title: "Business Tax Setup",
       blurb:
         "From entity selection to EIN and state registration, we set your business up cleanly so tax season is smooth.",
@@ -34,7 +34,7 @@ export default function ServicesPage() {
       cta: "Learn more",
     },
     {
-      slug: "/site/bookkeeping",
+      slug: "/bookkeeping",
       title: "Bookkeeping",
       blurb:
         "Clear, monthly books you can trust. Close your month with confidence and make tax time effortless.",
@@ -46,7 +46,7 @@ export default function ServicesPage() {
       cta: "Learn more",
     },
     {
-      slug: "/site/amendments",
+      slug: "/amendments",
       title: "Amendments (1040‑X)",
       blurb:
         "Need to fix a past return? We correct errors, add missed forms/credits, and manage the IRS paper trail.",

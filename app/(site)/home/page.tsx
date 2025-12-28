@@ -45,7 +45,7 @@ export default function HomePage() {
             </button>
 
             <Link
-              href="/taxpayer-signup"
+              href="/waitlist"
               className="px-8 py-3 rounded-full font-semibold text-white shadow-sm hover:opacity-95"
               style={{ background: "var(--brand-gradient)" }}
             >

@@ -15,7 +15,7 @@ const BRAND = {
 };
 
 async function hardSignOut() {
-  // 1) Clear Amplify client session
+  // 1) Clear Amplify/Cognito session
   try {
     await signOut({ global: true });
   } catch {
@@ -39,9 +39,10 @@ async function hardSignOut() {
 
 export default function AdminSidebar() {
   const [open, setOpen] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
   const router = useRouter();
 
-  // ✅ configure Amplify once, safely, inside the client component
+  // ✅ configure Amplify once (client-safe)
   const configuredRef = useRef(false);
   useEffect(() => {
     if (!configuredRef.current) {
@@ -71,10 +72,16 @@ export default function AdminSidebar() {
   }, [open]);
 
   async function handleLogout() {
-    await hardSignOut();
-    setOpen(false);
-    router.replace("/admin/sign-in");
-    router.refresh();
+    if (loggingOut) return;
+    setLoggingOut(true);
+    try {
+      await hardSignOut();
+      setOpen(false);
+      router.replace("/admin/sign-in");
+      router.refresh();
+    } finally {
+      setLoggingOut(false);
+    }
   }
 
   return (
@@ -102,10 +109,11 @@ export default function AdminSidebar() {
           <button
             type="button"
             onClick={handleLogout}
-            className="mt-4 flex w-full items-center gap-3 rounded-2xl px-3 py-2 text-sm font-semibold text-white/80 transition hover:bg-white/10 hover:text-white"
+            disabled={loggingOut}
+            className="mt-4 flex w-full items-center gap-3 rounded-2xl px-3 py-2 text-sm font-semibold text-white/80 transition hover:bg-white/10 hover:text-white disabled:opacity-60"
           >
             <LogOut className="h-4 w-4 text-white/70" />
-            Logout
+            {loggingOut ? "Logging out…" : "Logout"}
           </button>
 
           <p className="mt-4 text-xs text-white/50">SW Tax Service • Admin</p>
@@ -154,10 +162,11 @@ export default function AdminSidebar() {
               <button
                 type="button"
                 onClick={handleLogout}
-                className="mt-4 flex w-full items-center gap-3 rounded-2xl px-3 py-2 text-sm font-semibold text-white/80 transition hover:bg-white/10 hover:text-white"
+                disabled={loggingOut}
+                className="mt-4 flex w-full items-center gap-3 rounded-2xl px-3 py-2 text-sm font-semibold text-white/80 transition hover:bg-white/10 hover:text-white disabled:opacity-60"
               >
                 <LogOut className="h-4 w-4 text-white/70" />
-                Logout
+                {loggingOut ? "Logging out…" : "Logout"}
               </button>
 
               <p className="mt-4 text-xs text-white/50">SW Tax Service • Admin</p>
@@ -197,9 +206,7 @@ function BrandHeader() {
           <p className="text-xs font-semibold uppercase tracking-wide text-white/60">
             Admin Panel
           </p>
-          <h2 className="truncate text-base font-semibold text-white">
-            SW Tax Service
-          </h2>
+          <h2 className="truncate text-base font-semibold text-white">SW Tax Service</h2>
         </div>
       </div>
     </div>
@@ -211,10 +218,18 @@ function QuickLinks({ onNavigate }: { onNavigate?: () => void }) {
     <div className="rounded-3xl border border-white/10 bg-white/5 p-4 text-sm text-white/80">
       <p className="font-semibold text-white">Quick Links</p>
       <div className="mt-3 flex flex-col gap-2">
-        <Link className="hover:underline" href="/tax-knowledge/wheres-my-refund" onClick={onNavigate}>
+        <Link
+          className="hover:underline"
+          href="/tax-knowledge/wheres-my-refund"
+          onClick={onNavigate}
+        >
           Where’s My Refund →
         </Link>
-        <Link className="hover:underline" href="/tax-knowledge/docs-checklist" onClick={onNavigate}>
+        <Link
+          className="hover:underline"
+          href="/tax-knowledge/docs-checklist"
+          onClick={onNavigate}
+        >
           Docs Checklist →
         </Link>
       </div>
