@@ -1,4 +1,4 @@
-// app/(admin)/admin/protected/waitlist/schedule-actions.ts
+// app/(admin)/admin/(protected)/waitlist/schedule-actions.ts
 "use server";
 
 import { revalidatePath } from "next/cache";
@@ -10,7 +10,7 @@ function toUtcIsoFromLocalDateTime(local: string, tzOffsetMinutes: number) {
   const [y, m, d] = datePart.split("-").map(Number);
   const [hh, mm] = timePart.split(":").map(Number);
 
-  // Treat the entered time as "local" and convert to UTC using the browser offset.
+  // ✅ Convert entered LOCAL time into UTC using browser offset (minutes behind UTC)
   const utcMs = Date.UTC(y, m - 1, d, hh, mm) + tzOffsetMinutes * 60_000;
   return new Date(utcMs).toISOString();
 }
@@ -32,6 +32,7 @@ export async function saveWaitlistScheduleAction(formData: FormData) {
 
 export async function clearWaitlistScheduleAction() {
   await setWaitlistSchedule(null, null);
+
   revalidatePath("/waitlist");
   revalidatePath("/admin/waitlist");
   revalidatePath("/admin");

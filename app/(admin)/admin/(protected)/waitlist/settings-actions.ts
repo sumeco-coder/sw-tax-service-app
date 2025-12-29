@@ -1,4 +1,4 @@
-// app/(admin)/waitlist/settings-actions.ts
+// app/(admin)/admin/(protected)/waitlist/settings-actions.ts
 "use server";
 
 import { revalidatePath } from "next/cache";
@@ -38,6 +38,7 @@ export async function sendPendingInvitesAction(formData: FormData): Promise<void
     .limit(limit);
 
   for (const row of pending) {
+    // ✅ idempotent + resend-safe (won’t create duplicates)
     await approveWaitlistAndCreateInvite(row.id);
   }
 

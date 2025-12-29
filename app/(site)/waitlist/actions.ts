@@ -1,111 +1,41 @@
-// app/(home)/site/waitlist/actions.ts
+// app/(site)/waitlist/actions.ts  (or app/(home)/site/waitlist/actions.ts)
 "use server";
 
 import { db } from "@/drizzle/db";
 import { waitlist } from "@/drizzle/schema";
-import { approveWaitlistAndCreateInvite } from "../../(admin)/admin/(protected)/waitlist/actions";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { parsePhoneNumberFromString } from "libphonenumber-js";
+import { getWaitlistConfig } from "@/lib/waitlist/config";
 
-// small helpers
-const optTrim = (v: unknown) => (typeof v === "string" ? v.trim() : "");
-const optOrUndef = (v: unknown) => {
-  const s = optTrim(v);
-  return s.length ? s : undefined;
-};
+// ✅ import from lib, not from app routes
+import { approveWaitlistAndCreateInvite } from "@/lib/waitlist/approveInvite.server";
 
 const WaitlistInput = z
   .object({
     fullName: z.string().trim().min(2, "Please enter your full name."),
-    email: z
-      .string()
-      .trim()
-      .toLowerCase()
-      .email("Please enter a valid email address."),
+    email: z.string().trim().toLowerCase().email("Please enter a valid email address."),
 
-    // optional fields: treat "" as undefined
-    phone: z
-      .string()
-      .trim()
-      .optional()
-      .transform((v) => (v && v.length ? v : undefined)),
-
-    plan: z
-      .string()
-      .trim()
-      .optional()
-      .transform((v) => (v && v.length ? v : undefined)),
-
-    notes: z
-      .string()
-      .trim()
-      .optional()
-      .transform((v) => (v && v.length ? v : undefined)),
+    phone: z.string().trim().optional().transform((v) => (v && v.length ? v : undefined)),
+    plan: z.string().trim().optional().transform((v) => (v && v.length ? v : undefined)),
+    notes: z.string().trim().optional().transform((v) => (v && v.length ? v : undefined)),
 
     roleType: z.enum(["taxpayer", "business", "other"]).optional(),
+    agencyId: z.string().trim().optional().transform((v) => (v && v.length ? v : undefined)),
 
-    agencyId: z
-      .string()
-      .trim()
-      .optional()
-      .transform((v) => (v && v.length ? v : undefined)),
+    utmSource: z.string().trim().optional().transform((v) => (v && v.length ? v : undefined)),
+    utmMedium: z.string().trim().optional().transform((v) => (v && v.length ? v : undefined)),
+    utmCampaign: z.string().trim().optional().transform((v) => (v && v.length ? v : undefined)),
+    utmContent: z.string().trim().optional().transform((v) => (v && v.length ? v : undefined)),
+    utmTerm: z.string().trim().optional().transform((v) => (v && v.length ? v : undefined)),
 
-    // ✅ Tracking fields (match your DB columns)
-    utmSource: z
-      .string()
-      .trim()
-      .optional()
-      .transform((v) => (v && v.length ? v : undefined)),
-    utmMedium: z
-      .string()
-      .trim()
-      .optional()
-      .transform((v) => (v && v.length ? v : undefined)),
-    utmCampaign: z
-      .string()
-      .trim()
-      .optional()
-      .transform((v) => (v && v.length ? v : undefined)),
-    utmContent: z
-      .string()
-      .trim()
-      .optional()
-      .transform((v) => (v && v.length ? v : undefined)),
-    utmTerm: z
-      .string()
-      .trim()
-      .optional()
-      .transform((v) => (v && v.length ? v : undefined)),
+    gclid: z.string().trim().optional().transform((v) => (v && v.length ? v : undefined)),
+    fbclid: z.string().trim().optional().transform((v) => (v && v.length ? v : undefined)),
 
-    gclid: z
-      .string()
-      .trim()
-      .optional()
-      .transform((v) => (v && v.length ? v : undefined)),
-    fbclid: z
-      .string()
-      .trim()
-      .optional()
-      .transform((v) => (v && v.length ? v : undefined)),
-
-    landingPath: z
-      .string()
-      .trim()
-      .optional()
-      .transform((v) => (v && v.length ? v : undefined)),
-    referrer: z
-      .string()
-      .trim()
-      .optional()
-      .transform((v) => (v && v.length ? v : undefined)),
+    landingPath: z.string().trim().optional().transform((v) => (v && v.length ? v : undefined)),
+    referrer: z.string().trim().optional().transform((v) => (v && v.length ? v : undefined)),
   })
   .strict();
-
-// ✅ easiest toggle (env var) — later you can swap to DB setting
-function isWaitlistOpen() {
-  return process.env.WAITLIST_OPEN === "true";
-}
 
 export async function joinWaitlist(data: {
   fullName: string;
@@ -130,13 +60,16 @@ export async function joinWaitlist(data: {
     throw new Error(parsed.error.issues[0]?.message ?? "Invalid form data.");
   }
 
+  // ✅ DB config controls behavior (admin dashboard + site use same source)
+  const cfg = await getWaitlistConfig();
+  const shouldAutoInvite = cfg.open && cfg.mode === "instant";
+
   const {
     fullName,
     plan,
     notes,
     roleType,
     agencyId,
-
     utmSource,
     utmMedium,
     utmCampaign,
@@ -148,31 +81,19 @@ export async function joinWaitlist(data: {
     referrer,
   } = parsed.data;
 
-  // ✅ normalize email
   const email = parsed.data.email.trim().toLowerCase();
 
-  // ✅ Validate phone (optional) + normalize to E.164
+  // ✅ phone optional → normalize to E.164
   let phoneE164: string | null = null;
-
   if (parsed.data.phone) {
-    const raw = parsed.data.phone.trim();
-
-    // keep only digits
-    const digits = raw.replace(/\D/g, "");
-
-    // ✅ strict US length (10 digits)
+    const digits = parsed.data.phone.trim().replace(/\D/g, "");
     if (digits.length !== 10) {
-      throw new Error(
-        "Phone must be 10 digits (ex: 678-546-4528) or leave it blank."
-      );
+      throw new Error("Phone must be 10 digits (ex: 678-546-4528) or leave it blank.");
     }
-
-    // parse as US and normalize
     const pn = parsePhoneNumberFromString(digits, "US");
     if (!pn || !pn.isValid()) {
       throw new Error("Please enter a valid phone number or leave it blank.");
     }
-
     phoneE164 = pn.number; // +1XXXXXXXXXX
   }
 
@@ -183,26 +104,25 @@ export async function joinWaitlist(data: {
       .where(eq(waitlist.email, email))
       .limit(1);
 
+    // ✅ If they already exist, update missing fields (no duplicates)
     if (existing) {
-      // (optional) fill missing fields if they were blank before
       const updates: Record<string, any> = {};
+
       if (!existing.phone && phoneE164) updates.phone = phoneE164;
       if (!existing.plan && plan) updates.plan = plan;
-      if ((!existing.notes || existing.notes.length === 0) && notes)
-        updates.notes = notes;
+      if ((!existing.notes || existing.notes.length === 0) && notes) updates.notes = notes;
       if (!existing.agencyId && agencyId) updates.agencyId = agencyId;
+
       if (!existing.utmSource && utmSource) updates.utmSource = utmSource;
       if (!existing.utmMedium && utmMedium) updates.utmMedium = utmMedium;
-      if (!existing.utmCampaign && utmCampaign)
-        updates.utmCampaign = utmCampaign;
+      if (!existing.utmCampaign && utmCampaign) updates.utmCampaign = utmCampaign;
       if (!existing.utmContent && utmContent) updates.utmContent = utmContent;
       if (!existing.utmTerm && utmTerm) updates.utmTerm = utmTerm;
 
       if (!existing.gclid && gclid) updates.gclid = gclid;
       if (!existing.fbclid && fbclid) updates.fbclid = fbclid;
 
-      if (!existing.landingPath && landingPath)
-        updates.landingPath = landingPath;
+      if (!existing.landingPath && landingPath) updates.landingPath = landingPath;
       if (!existing.referrer && referrer) updates.referrer = referrer;
 
       let row = existing;
@@ -215,9 +135,13 @@ export async function joinWaitlist(data: {
         if (updated) row = updated;
       }
 
-      // If OPEN and still pending, auto-send invite (no new row created)
-      if (isWaitlistOpen() && row.status === "pending") {
-        await approveWaitlistAndCreateInvite(row.id);
+      // ✅ only auto-invite when OPEN + INSTANT, and only if pending
+      if (shouldAutoInvite && row.status === "pending") {
+        try {
+          await approveWaitlistAndCreateInvite(row.id);
+        } catch (err) {
+          console.error("auto-invite failed:", err);
+        }
       }
 
       return row;
@@ -228,17 +152,19 @@ export async function joinWaitlist(data: {
       .values({
         fullName,
         email,
-        phone: phoneE164, // ✅ E.164 or null
+        phone: phoneE164,
         roleType: roleType ?? "taxpayer",
         plan: plan ?? null,
         notes: notes ?? null,
         agencyId: agencyId ?? null,
         status: "pending",
-         utmSource: utmSource ?? null,
+
+        utmSource: utmSource ?? null,
         utmMedium: utmMedium ?? null,
         utmCampaign: utmCampaign ?? null,
         utmContent: utmContent ?? null,
         utmTerm: utmTerm ?? null,
+
         gclid: gclid ?? null,
         fbclid: fbclid ?? null,
         landingPath: landingPath ?? null,
@@ -246,18 +172,17 @@ export async function joinWaitlist(data: {
       })
       .returning();
 
-    // ✅ AUTO INVITE + EMAIL when waitlist is OPEN
-    if (isWaitlistOpen()) {
-      await approveWaitlistAndCreateInvite(row.id);
+    if (shouldAutoInvite) {
+      try {
+        await approveWaitlistAndCreateInvite(row.id);
+      } catch (err) {
+        console.error("auto-invite failed:", err);
+      }
     }
 
     return row;
   } catch (err: any) {
-    // Race condition fallback (duplicate email)
-    if (err?.code === "23505") {
-      throw new Error("You’re already on the waitlist.");
-    }
-
+    if (err?.code === "23505") throw new Error("You’re already on the waitlist.");
     console.error("waitlist insert error:", err);
     throw new Error("Something went wrong. Please try again.");
   }

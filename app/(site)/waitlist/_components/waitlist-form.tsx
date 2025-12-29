@@ -1,13 +1,12 @@
-// app/(home)/site/waitlist/waitlist-form.tsx
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { joinWaitlist } from "../actions"; // 🔑 your server action
+import { joinWaitlist } from "../actions"; // ✅ server action
 
 // Toggle this to switch behavior
-const USE_REDIRECT_AFTER_SUBMIT = true; // set to false for in-page success
+const USE_REDIRECT_AFTER_SUBMIT = true; // false = in-page success message
 
 type Tracking = {
   agency?: string;
@@ -22,7 +21,7 @@ type Tracking = {
   gclid?: string;
   fbclid?: string;
 
-  ref?: string; // optional custom param
+  ref?: string;
 };
 
 const TRACKING_STORE_KEY = "swts_waitlist_tracking_v1";
@@ -75,16 +74,14 @@ export default function WaitlistForm() {
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [ok, setOk] = useState(false); // used for in-page success
+  const [ok, setOk] = useState(false);
 
-  // landing context
   const [landingPath, setLandingPath] = useState<string>("");
   const [referrer, setReferrer] = useState<string>("");
 
   // 1) Read from URL
   const urlTracking = useMemo<Tracking>(() => {
     const pluck = (k: string) => safeTrim(params.get(k));
-
     return {
       agency: pluck("agency"),
       plan: pluck("plan"),
@@ -102,22 +99,19 @@ export default function WaitlistForm() {
     };
   }, [params]);
 
-  // 2) Merge with sessionStorage (persist UTMs even if query params disappear)
+  // 2) Merge with sessionStorage
   const tracking = useMemo<Tracking>(() => {
     const stored = readStoredTracking();
     const merged: Tracking = {
       ...stored,
-      ...Object.fromEntries(
-        Object.entries(urlTracking).filter(([, v]) => !!v)
-      ),
+      ...Object.fromEntries(Object.entries(urlTracking).filter(([, v]) => !!v)),
     } as Tracking;
 
     return merged;
   }, [urlTracking]);
 
-  // 3) Persist merged tracking on mount / when params change
+  // 3) Persist merged tracking
   useEffect(() => {
-    // only store if we have something meaningful
     const hasAny = Object.values(tracking).some(Boolean);
     if (hasAny) writeStoredTracking(tracking);
   }, [tracking]);
@@ -129,30 +123,29 @@ export default function WaitlistForm() {
   }, []);
 
   const pageSource = useMemo(() => {
-  const url = typeof window !== "undefined" ? window.location.href : "";
+    const url = typeof window !== "undefined" ? window.location.href : "";
 
-  const parts = [
-    `landing:${landingPath || "/waitlist"}`,
-    tracking.agency ? `agency=${tracking.agency}` : "",
-    tracking.plan ? `plan=${tracking.plan}` : "",
+    const parts = [
+      `landing:${landingPath || "/waitlist"}`,
+      tracking.agency ? `agency=${tracking.agency}` : "",
+      tracking.plan ? `plan=${tracking.plan}` : "",
 
-    tracking.utm_source ? `utm_source=${tracking.utm_source}` : "",
-    tracking.utm_medium ? `utm_medium=${tracking.utm_medium}` : "",
-    tracking.utm_campaign ? `utm_campaign=${tracking.utm_campaign}` : "",
-    tracking.utm_term ? `utm_term=${tracking.utm_term}` : "",
-    tracking.utm_content ? `utm_content=${tracking.utm_content}` : "",
+      tracking.utm_source ? `utm_source=${tracking.utm_source}` : "",
+      tracking.utm_medium ? `utm_medium=${tracking.utm_medium}` : "",
+      tracking.utm_campaign ? `utm_campaign=${tracking.utm_campaign}` : "",
+      tracking.utm_term ? `utm_term=${tracking.utm_term}` : "",
+      tracking.utm_content ? `utm_content=${tracking.utm_content}` : "",
 
-    tracking.gclid ? `gclid=${tracking.gclid}` : "",
-    tracking.fbclid ? `fbclid=${tracking.fbclid}` : "",
+      tracking.gclid ? `gclid=${tracking.gclid}` : "",
+      tracking.fbclid ? `fbclid=${tracking.fbclid}` : "",
 
-    tracking.ref ? `ref=${tracking.ref}` : "",
-    referrer ? `referrer=${encodeURIComponent(referrer)}` : "",
-    url ? `url=${encodeURIComponent(url)}` : "",
-  ].filter(Boolean);
+      tracking.ref ? `ref=${tracking.ref}` : "",
+      referrer ? `referrer=${encodeURIComponent(referrer)}` : "",
+      url ? `url=${encodeURIComponent(url)}` : "",
+    ].filter(Boolean);
 
-  return parts.join(" | ");
-}, [tracking, landingPath, referrer]);
-
+    return parts.join(" | ");
+  }, [tracking, landingPath, referrer]);
 
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -183,32 +176,25 @@ export default function WaitlistForm() {
     if (!email || !isValidEmail(email))
       return setError("Please enter a valid email address.");
     if (phone && !isValidPhone(phone))
-      return setError(
-        "Please enter a valid 10-digit phone number or leave it blank."
-      );
+      return setError("Please enter a valid 10-digit phone number or leave it blank.");
 
     if (taxYear !== undefined) {
-      if (!Number.isInteger(taxYear))
-        return setError("Tax year must be a whole number.");
+      if (!Number.isInteger(taxYear)) return setError("Tax year must be a whole number.");
       if (taxYear < 2000 || taxYear > 2100)
         return setError("Tax year must be between 2000 and 2100.");
     }
 
-    // Fold extra info into a single notes field (matches your waitlist schema)
     const extras = [
       contactMethod ? `Preferred contact: ${contactMethod}` : "",
       taxYear ? `Tax year: ${taxYear}` : "",
       lastPreparer ? `Last preparer: ${lastPreparer}` : "",
-      priorTaxReturnsLabel
-        ? `Needs prior-year returns: ${priorTaxReturnsLabel}`
-        : "",
+      priorTaxReturnsLabel ? `Needs prior-year returns: ${priorTaxReturnsLabel}` : "",
       pageSource ? `Source: ${pageSource}` : "",
     ]
       .filter(Boolean)
       .join(" | ");
 
-    const notes =
-      [messageRaw, extras].filter(Boolean).join("\n").trim() || undefined;
+    const notes = [messageRaw, extras].filter(Boolean).join("\n").trim() || undefined;
 
     setLoading(true);
     try {
@@ -217,11 +203,10 @@ export default function WaitlistForm() {
         email,
         phone: phone || undefined,
 
-        plan: tracking.plan, // from ?plan=
+        plan: tracking.plan,
         notes,
         roleType: "taxpayer",
 
-        // ✅ NEW: attribution fields (match your DB columns)
         utmSource: tracking.utm_source,
         utmMedium: tracking.utm_medium,
         utmCampaign: tracking.utm_campaign,
@@ -233,14 +218,12 @@ export default function WaitlistForm() {
 
         landingPath: landingPath || "/waitlist",
         referrer: referrer || undefined,
-
-        // agencyId: if you later map agency slug -> firm UUID, set it here
       });
 
-      // ✅ reset controlled phone input no matter what
       setPhoneValue("");
 
       if (USE_REDIRECT_AFTER_SUBMIT) {
+        // ✅ route-group safe path
         router.push("/thanks");
       } else {
         setOk(true);
@@ -248,11 +231,7 @@ export default function WaitlistForm() {
       }
     } catch (err) {
       console.error(err);
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Something went wrong. Please try again."
-      );
+      setError(err instanceof Error ? err.message : "Something went wrong. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -260,19 +239,16 @@ export default function WaitlistForm() {
 
   useEffect(() => {
     if (!error) return;
-    const el = document.getElementById("form-error");
-    el?.focus();
+    document.getElementById("form-error")?.focus();
   }, [error]);
 
-  // In-page success (popup style)
   if (!USE_REDIRECT_AFTER_SUBMIT && ok) {
     return (
       <div className="relative overflow-hidden rounded-2xl border border-emerald-200 bg-emerald-50/80 p-6 text-emerald-900 shadow-md">
         <div className="absolute -top-16 -right-16 h-48 w-48 rounded-full bg-emerald-200/40 blur-3xl" />
         <h2 className="text-xl font-semibold">You’re on the list! 🎉</h2>
         <p className="mt-2">
-          Thanks for joining the waitlist. We’ll email you as soon as booking
-          opens.
+          Thanks for joining the waitlist. We’ll email you as soon as booking opens.
         </p>
         <button
           onClick={() => {
@@ -290,27 +266,18 @@ export default function WaitlistForm() {
 
   return (
     <section className="relative isolate">
-      {/* decorative blobs (use your theme tokens) */}
-      <div
-        className="pointer-events-none absolute -top-16 -left-10 h-52 w-52 rounded-full bg-primary/15 blur-3xl"
-        aria-hidden="true"
-      />
-      <div
-        className="pointer-events-none absolute -bottom-16 -right-10 h-60 w-60 rounded-full bg-accent/15 blur-3xl"
-        aria-hidden="true"
-      />
+      <div className="pointer-events-none absolute -top-16 -left-10 h-52 w-52 rounded-full bg-primary/15 blur-3xl" aria-hidden="true" />
+      <div className="pointer-events-none absolute -bottom-16 -right-10 h-60 w-60 rounded-full bg-accent/15 blur-3xl" aria-hidden="true" />
 
       <div className="mx-auto max-w-2xl rounded-2xl border border-border bg-card/80 backdrop-blur p-6 sm:p-8 shadow-xl">
         <header className="mb-6 text-center">
           <div className="mx-auto mb-3 inline-flex items-center gap-2 rounded-full bg-secondary px-3 py-1 text-xs font-semibold text-primary ring-1 ring-inset ring-border">
             <span>✨ Priority Access</span>
-
             {tracking.plan && (
               <span className="rounded-full bg-card px-2 py-0.5 text-primary shadow-sm border border-border">
                 Plan: {tracking.plan}
               </span>
             )}
-
             {tracking.agency && (
               <span className="rounded-full bg-card px-2 py-0.5 text-primary shadow-sm border border-border">
                 {tracking.agency}
@@ -318,25 +285,14 @@ export default function WaitlistForm() {
             )}
           </div>
 
-          <h2 className="text-2xl font-bold tracking-tight text-foreground">
-            Join the Waitlist
-          </h2>
-
+          <h2 className="text-2xl font-bold tracking-tight text-foreground">Join the Waitlist</h2>
           <p className="mt-1 text-sm text-muted-foreground">
             Be first to book when tax-season slots open. No spam — ever.
           </p>
         </header>
 
         <form onSubmit={onSubmit} className="grid grid-cols-1 gap-4">
-          {/* Honeypot field */}
-          <input
-            aria-hidden="true"
-            type="text"
-            name="_hp"
-            className="hidden"
-            tabIndex={-1}
-            autoComplete="off"
-          />
+          <input aria-hidden="true" type="text" name="_hp" className="hidden" tabIndex={-1} autoComplete="off" />
 
           {error && (
             <div
@@ -352,9 +308,7 @@ export default function WaitlistForm() {
 
           {/* Name */}
           <div className="relative">
-            <label className="mb-1 block text-sm font-medium text-foreground">
-              Full name *
-            </label>
+            <label className="mb-1 block text-sm font-medium text-foreground">Full name *</label>
             <div className="relative">
               <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">
                 <svg className="h-5 w-5" viewBox="0 0 24 24" fill="currentColor">
@@ -370,10 +324,7 @@ export default function WaitlistForm() {
                 placeholder="Jane Doe"
                 minLength={2}
                 maxLength={80}
-                pattern="^[A-Za-z][A-Za-z\s.'-]{1,79}$"
-                title="Enter your full name (letters, spaces, apostrophes, hyphens)."
-                className="w-full rounded-xl border border-input bg-background px-10 py-3 text-sm outline-none transition
-                       focus:ring-2 focus:ring-ring"
+                className="w-full rounded-xl border border-input bg-background px-10 py-3 text-sm outline-none transition focus:ring-2 focus:ring-ring"
               />
             </div>
           </div>
@@ -381,9 +332,7 @@ export default function WaitlistForm() {
           {/* Email + Phone */}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="relative">
-              <label className="mb-1 block text-sm font-medium text-foreground">
-                Email *
-              </label>
+              <label className="mb-1 block text-sm font-medium text-foreground">Email *</label>
               <span className="pointer-events-none absolute left-3 top-[42px] text-muted-foreground">
                 <svg className="h-5 w-5" viewBox="0 0 24 24" fill="currentColor">
                   <path d="M12 13l-12-8h24l-12 8zm-12-6l12 8 12-8v11h-24v-11z" />
@@ -401,17 +350,12 @@ export default function WaitlistForm() {
                 spellCheck={false}
                 maxLength={254}
                 placeholder="jane@example.com"
-                pattern="^[^\s@]+@[^\s@]+\.[^\s@]{2,}$"
-                title="Enter a valid email address (example: name@example.com)"
-                className="w-full rounded-xl border border-input bg-background px-10 py-3 text-sm outline-none transition
-                       focus:ring-2 focus:ring-ring"
+                className="w-full rounded-xl border border-input bg-background px-10 py-3 text-sm outline-none transition focus:ring-2 focus:ring-ring"
               />
             </div>
 
             <div className="relative">
-              <label className="mb-1 block text-sm font-medium text-foreground">
-                Phone *
-              </label>
+              <label className="mb-1 block text-sm font-medium text-foreground">Phone (optional)</label>
               <span className="pointer-events-none absolute left-3 top-[42px] text-muted-foreground">
                 <svg className="h-5 w-5" viewBox="0 0 24 24" fill="currentColor">
                   <path d="M6.6 10.8c1.2 2.4 3.2 4.4 5.6 5.6l2-2c.3-.3.8-.4 1.2-.2 1 .4 2.1.6 3.2.6.6 0 1 .4 1 1v3.1c0 .6-.4 1-1 1C9.4 20 4 14.6 4 8.4c0-.6.4-1 1-1H8c.6 0 1 .4 1 1 0 1.1.2 2.2.6 3.2.2.4.1.9-.2 1.2l-1.8 2z" />
@@ -423,7 +367,6 @@ export default function WaitlistForm() {
                 type="tel"
                 inputMode="tel"
                 autoComplete="tel"
-                required
                 placeholder="(555) 555-5555"
                 value={phoneValue}
                 onChange={(e) => {
@@ -436,8 +379,7 @@ export default function WaitlistForm() {
                       : `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
                   setPhoneValue(formatted);
                 }}
-                className="w-full rounded-xl border border-input bg-background px-10 py-3 text-sm outline-none transition
-                       focus:ring-2 focus:ring-ring"
+                className="w-full rounded-xl border border-input bg-background px-10 py-3 text-sm outline-none transition focus:ring-2 focus:ring-ring"
               />
             </div>
           </div>
@@ -445,14 +387,11 @@ export default function WaitlistForm() {
           {/* Contact + Year */}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
-              <label className="mb-1 block text-sm font-medium text-foreground">
-                Preferred contact
-              </label>
+              <label className="mb-1 block text-sm font-medium text-foreground">Preferred contact</label>
               <select
                 name="contactMethod"
                 defaultValue="email"
-                className="w-full rounded-xl border border-input bg-background px-3 py-3 text-sm outline-none transition
-                       focus:ring-2 focus:ring-ring"
+                className="w-full rounded-xl border border-input bg-background px-3 py-3 text-sm outline-none transition focus:ring-2 focus:ring-ring"
               >
                 <option value="email">Email</option>
                 <option value="sms">SMS</option>
@@ -461,9 +400,7 @@ export default function WaitlistForm() {
             </div>
 
             <div>
-              <label className="mb-1 block text-sm font-medium text-foreground">
-                Tax year (optional)
-              </label>
+              <label className="mb-1 block text-sm font-medium text-foreground">Tax year (optional)</label>
               <input
                 name="taxYear"
                 type="number"
@@ -473,11 +410,9 @@ export default function WaitlistForm() {
                 step={1}
                 placeholder="2024"
                 onKeyDown={(e) => {
-                  if (["e", "E", "+", "-", "."].includes(e.key))
-                    e.preventDefault();
+                  if (["e", "E", "+", "-", "."].includes(e.key)) e.preventDefault();
                 }}
-                className="w-full rounded-xl border border-input bg-background px-3 py-3 text-sm outline-none transition
-                       focus:ring-2 focus:ring-ring"
+                className="w-full rounded-xl border border-input bg-background px-3 py-3 text-sm outline-none transition focus:ring-2 focus:ring-ring"
               />
             </div>
           </div>
@@ -491,8 +426,7 @@ export default function WaitlistForm() {
               <select
                 name="lastPreparer"
                 defaultValue="myself"
-                className="w-full rounded-xl border border-input bg-background px-3 py-3 text-sm outline-none transition
-                       focus:ring-2 focus:ring-ring"
+                className="w-full rounded-xl border border-input bg-background px-3 py-3 text-sm outline-none transition focus:ring-2 focus:ring-ring"
               >
                 <option value="firm">Tax Professional (another firm)</option>
                 <option value="myself">I prepared them myself</option>
@@ -508,8 +442,7 @@ export default function WaitlistForm() {
               <select
                 name="priorTaxReturns"
                 defaultValue="yes"
-                className="w-full rounded-xl border border-input bg-background px-3 py-3 text-sm outline-none transition
-                       focus:ring-2 focus:ring-ring"
+                className="w-full rounded-xl border border-input bg-background px-3 py-3 text-sm outline-none transition focus:ring-2 focus:ring-ring"
               >
                 <option value="yes">Yes</option>
                 <option value="no">No</option>
@@ -519,15 +452,12 @@ export default function WaitlistForm() {
 
           {/* Message */}
           <div>
-            <label className="mb-1 block text-sm font-medium text-foreground">
-              Anything else? (optional)
-            </label>
+            <label className="mb-1 block text-sm font-medium text-foreground">Anything else? (optional)</label>
             <textarea
               name="message"
               placeholder="Tell us what you need help with or your preferred dates."
               rows={4}
-              className="w-full rounded-xl border border-input bg-background px-3 py-3 text-sm outline-none transition
-                     focus:ring-2 focus:ring-ring"
+              className="w-full rounded-xl border border-input bg-background px-3 py-3 text-sm outline-none transition focus:ring-2 focus:ring-ring"
             />
           </div>
 
@@ -535,41 +465,13 @@ export default function WaitlistForm() {
           <button
             type="submit"
             disabled={loading}
-            className="mt-2 inline-flex w-full items-center justify-center rounded-xl px-4 py-3 font-semibold text-white shadow-md transition-all
-                   hover:shadow-lg disabled:cursor-not-allowed disabled:opacity-60 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+            className="mt-2 inline-flex w-full items-center justify-center rounded-xl px-4 py-3 font-semibold text-white shadow-md transition-all hover:shadow-lg disabled:cursor-not-allowed disabled:opacity-60 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
             style={{ background: "var(--brand-gradient)" }}
           >
-            {loading ? (
-              <span className="inline-flex items-center gap-2">
-                <svg
-                  className="h-5 w-5 animate-spin"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                >
-                  <circle
-                    className="opacity-25"
-                    cx="12"
-                    cy="12"
-                    r="10"
-                    stroke="currentColor"
-                    strokeWidth="4"
-                  />
-                  <path
-                    className="opacity-75"
-                    fill="currentColor"
-                    d="M4 12a8 8 0 018-8v8H4z"
-                  />
-                </svg>
-                Joining…
-              </span>
-            ) : (
-              "Join the Waitlist"
-            )}
+            {loading ? "Joining…" : "Join the Waitlist"}
           </button>
 
-          <p className="text-center text-xs text-muted-foreground">
-            We respect your time and privacy. No spam.
-          </p>
+          <p className="text-center text-xs text-muted-foreground">We respect your time and privacy. No spam.</p>
         </form>
       </div>
     </section>

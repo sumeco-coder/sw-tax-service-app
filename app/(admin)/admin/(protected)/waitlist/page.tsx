@@ -1,11 +1,19 @@
-// app/(admin)/waitlist/page.tsx
+// app/(admin)/admin/(protected)/waitlist/page.tsx
 import { db } from "@/drizzle/db";
 import { waitlist } from "@/drizzle/schema";
-import { approveWaitlistAndCreateInvite, rejectWaitlist } from "./actions";
-import { desc } from "drizzle-orm";
+import { desc, eq, and, ne } from "drizzle-orm";
+import { redirect } from "next/navigation";
+
+import {
+  approveWaitlistAndCreateInvite,
+  rejectWaitlist,
+  resetWaitlistToPending,
+  archiveWaitlist,
+  deleteWaitlistHard,
+} from "./actions";
+
 import { sendEmail } from "@/lib/email/sendEmail.server";
 import { getWaitlistConfig } from "@/lib/waitlist/config";
-import { redirect } from "next/navigation";
 
 import {
   toggleWaitlistOpenAction,
@@ -20,27 +28,51 @@ export const revalidate = 0;
 
 type WaitlistRow = typeof waitlist.$inferSelect;
 
-// Server action wrapper for form submit (Approve)
+function oneParam(v: string | string[] | undefined) {
+  return Array.isArray(v) ? v[0] : v;
+}
+
+/** Approve */
 async function approveAction(formData: FormData) {
   "use server";
-
   const id = formData.get("id") as string | null;
   if (!id) return;
-
   await approveWaitlistAndCreateInvite(id);
 }
 
-// Server action wrapper for form submit (Reject)
+/** Reject */
 async function rejectAction(formData: FormData) {
   "use server";
-
   const id = formData.get("id") as string | null;
   if (!id) return;
-
   await rejectWaitlist(id);
 }
 
-// Server action to send a test email
+/** Reset */
+async function resetAction(formData: FormData) {
+  "use server";
+  const id = formData.get("id") as string | null;
+  if (!id) return;
+  await resetWaitlistToPending(id);
+}
+
+/** Archive */
+async function archiveAction(formData: FormData) {
+  "use server";
+  const id = formData.get("id") as string | null;
+  if (!id) return;
+  await archiveWaitlist(id);
+}
+
+/** Hard delete (optional) */
+async function deleteAction(formData: FormData) {
+  "use server";
+  const id = formData.get("id") as string | null;
+  if (!id) return;
+  await deleteWaitlistHard(id);
+}
+
+/** Test email */
 async function sendTestEmailAction(formData: FormData) {
   "use server";
 
@@ -72,44 +104,49 @@ async function sendTestEmailAction(formData: FormData) {
   `;
 
   try {
-    await sendEmail({
-      to,
-      subject,
-      htmlBody,
-      textBody,
-    });
-
-    redirect("/admin/waitlist?testEmail=sent");
+    await sendEmail({ to, subject, htmlBody, textBody });
   } catch (err: any) {
     console.error("sendTestEmailAction failed:", err);
-
     redirect(
       `/admin/waitlist?testEmail=error&msg=${encodeURIComponent(
         err?.message ?? "Unknown error"
       )}`
     );
   }
+
+  redirect("/admin/waitlist?testEmail=sent");
 }
 
 export default async function AdminWaitlistPage({
   searchParams,
 }: {
-  searchParams?: { [key: string]: string | string[] | undefined };
+  searchParams?: Promise<{ [key: string]: string | string[] | undefined }>;
 }) {
+  // ✅ Next 15: searchParams is Promise
+  const sp = (await searchParams) ?? {};
+
+  const testEmail = oneParam(sp.testEmail);
+  const msg = oneParam(sp.msg);
+
+  // Optional: show archived entries if ?show=all
+  const show = oneParam(sp.show);
+  const showAll = show === "all";
+
+  // ✅ Load config
+  const cfg = await getWaitlistConfig();
+
   let entries: WaitlistRow[] = [];
   let errorMsg: string | null = null;
 
-  const testEmail = Array.isArray(searchParams?.testEmail)
-    ? searchParams?.testEmail?.[0]
-    : searchParams?.testEmail;
-
-  const msg = Array.isArray(searchParams?.msg) ? searchParams?.msg?.[0] : searchParams?.msg;
-
-  // ✅ Load config (open/closed + instant/bulk + schedule)
-  const cfg = await getWaitlistConfig();
-
   try {
-    entries = await db.select().from(waitlist).orderBy(desc(waitlist.createdAt));
+    // ✅ Hide archived by default (recommended)
+    entries = showAll
+      ? await db.select().from(waitlist).orderBy(desc(waitlist.createdAt))
+      : await db
+          .select()
+          .from(waitlist)
+          .where(ne(waitlist.status, "archived"))
+          .orderBy(desc(waitlist.createdAt));
   } catch (err: any) {
     console.error("Waitlist DB error:", err);
     errorMsg = err?.message ?? "Unknown database error";
@@ -158,12 +195,20 @@ export default async function AdminWaitlistPage({
 
         <header className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">
-              Waitlist Dashboard
-            </h1>
+            <h1 className="text-2xl font-bold text-gray-900">Waitlist Dashboard</h1>
             <p className="text-sm text-gray-600">
               Review waitlist entries and approve clients to generate onboarding invites.
             </p>
+          </div>
+
+          <div className="flex gap-2">
+            <a
+              href={showAll ? "/admin/waitlist" : "/admin/waitlist?show=all"}
+              className="rounded-lg border bg-white px-3 py-2 text-xs font-semibold hover:bg-gray-50"
+              title="Toggle archived visibility"
+            >
+              {showAll ? "Hide Archived" : "Show Archived"}
+            </a>
           </div>
         </header>
 
@@ -180,20 +225,14 @@ export default async function AdminWaitlistPage({
 
               <p className="mt-2 text-xs">
                 Status:{" "}
-                <span
-                  className={`font-semibold ${
-                    cfg.open ? "text-emerald-700" : "text-rose-700"
-                  }`}
-                >
+                <span className={`font-semibold ${cfg.open ? "text-emerald-700" : "text-rose-700"}`}>
                   {cfg.open ? "OPEN" : "CLOSED"}
                 </span>
                 {" • "}
                 Mode: <span className="font-semibold">{cfg.mode.toUpperCase()}</span>
                 {" • "}
                 Schedule:{" "}
-                <span className="font-semibold">
-                  {cfg.scheduleOpen ? "ACTIVE" : "INACTIVE"}
-                </span>
+                <span className="font-semibold">{cfg.scheduleOpen ? "ACTIVE" : "INACTIVE"}</span>
               </p>
             </div>
 
@@ -203,9 +242,7 @@ export default async function AdminWaitlistPage({
                 <button
                   type="submit"
                   className={`rounded-lg px-4 py-2 text-xs font-semibold text-white ${
-                    cfg.manualOpen
-                      ? "bg-rose-600 hover:bg-rose-700"
-                      : "bg-emerald-600 hover:bg-emerald-700"
+                    cfg.manualOpen ? "bg-rose-600 hover:bg-rose-700" : "bg-emerald-600 hover:bg-emerald-700"
                   }`}
                   title="Manual toggle (schedule can still open it automatically if active)"
                 >
@@ -220,9 +257,7 @@ export default async function AdminWaitlistPage({
                   value="instant"
                   type="submit"
                   className={`rounded-lg px-4 py-2 text-xs font-semibold ${
-                    cfg.mode === "instant"
-                      ? "bg-gray-900 text-white"
-                      : "border bg-white hover:bg-gray-50"
+                    cfg.mode === "instant" ? "bg-gray-900 text-white" : "border bg-white hover:bg-gray-50"
                   }`}
                 >
                   Instant
@@ -232,9 +267,7 @@ export default async function AdminWaitlistPage({
                   value="bulk"
                   type="submit"
                   className={`rounded-lg px-4 py-2 text-xs font-semibold ${
-                    cfg.mode === "bulk"
-                      ? "bg-gray-900 text-white"
-                      : "border bg-white hover:bg-gray-50"
+                    cfg.mode === "bulk" ? "bg-gray-900 text-white" : "border bg-white hover:bg-gray-50"
                   }`}
                 >
                   Bulk
@@ -264,18 +297,12 @@ export default async function AdminWaitlistPage({
 
         {/* 🔵 Test email sender */}
         <section className="rounded-xl border border-blue-100 bg-blue-50/70 p-4 text-sm text-slate-800">
-          <h2 className="text-sm font-semibold text-slate-900">
-            Send a test onboarding email
-          </h2>
+          <h2 className="text-sm font-semibold text-slate-900">Send a test onboarding email</h2>
           <p className="mt-1 text-xs text-slate-600">
-            Use this to confirm Resend / SES is configured correctly before approving real
-            waitlist entries.
+            Use this to confirm Resend / SES is configured correctly before approving real waitlist entries.
           </p>
 
-          <form
-            action={sendTestEmailAction}
-            className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center"
-          >
+          <form action={sendTestEmailAction} className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center">
             <input
               type="email"
               name="to"
@@ -294,7 +321,7 @@ export default async function AdminWaitlistPage({
 
         {entries.length === 0 ? (
           <div className="rounded-xl border border-dashed border-gray-300 bg-white p-8 text-center text-sm text-gray-500">
-            No one on the waitlist yet. Share your waitlist link to start collecting leads.
+            No entries found.
           </div>
         ) : (
           <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white shadow-sm">
@@ -310,6 +337,7 @@ export default async function AdminWaitlistPage({
                   <th className="px-4 py-3 text-right">Actions</th>
                 </tr>
               </thead>
+
               <tbody className="divide-y divide-gray-100">
                 {entries.map((row) => {
                   const created =
@@ -335,11 +363,15 @@ export default async function AdminWaitlistPage({
                         <div className="font-medium text-gray-900">{row.fullName}</div>
                         {row.phone && <div className="text-xs text-gray-500">{row.phone}</div>}
                       </td>
+
                       <td className="px-4 py-3 text-gray-800">{row.email}</td>
+
                       <td className="px-4 py-3 text-gray-700">
                         {row.plan || <span className="italic text-gray-400">—</span>}
                       </td>
+
                       <td className="px-4 py-3 text-gray-700">{row.roleType}</td>
+
                       <td className="px-4 py-3">
                         <span
                           className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold ${
@@ -349,13 +381,17 @@ export default async function AdminWaitlistPage({
                               ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200"
                               : row.status === "rejected"
                               ? "bg-rose-50 text-rose-700 ring-1 ring-rose-200"
+                              : row.status === "archived"
+                              ? "bg-gray-100 text-gray-700 ring-1 ring-gray-200"
                               : "bg-gray-50 text-gray-600 ring-1 ring-gray-200"
                           }`}
                         >
                           {row.status}
                         </span>
                       </td>
+
                       <td className="px-4 py-3 text-xs text-gray-500">{created}</td>
+
                       <td className="px-4 py-3">
                         <div className="flex justify-end gap-2">
                           <form action={approveAction}>
@@ -377,6 +413,39 @@ export default async function AdminWaitlistPage({
                               className="inline-flex items-center rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-rose-700 disabled:cursor-not-allowed disabled:bg-gray-300"
                             >
                               Reject
+                            </button>
+                          </form>
+
+                          <form action={resetAction}>
+                            <input type="hidden" name="id" value={row.id} />
+                            <button
+                              type="submit"
+                              className="inline-flex items-center rounded-lg border bg-white px-3 py-1.5 text-xs font-semibold hover:bg-gray-50"
+                              title="Set back to pending so you can approve again"
+                            >
+                              Reset
+                            </button>
+                          </form>
+
+                          <form action={archiveAction}>
+                            <input type="hidden" name="id" value={row.id} />
+                            <button
+                              type="submit"
+                              className="inline-flex items-center rounded-lg bg-gray-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-gray-800"
+                              title="Hide from workflow (soft remove)"
+                            >
+                              Archive
+                            </button>
+                          </form>
+
+                          <form action={deleteAction}>
+                            <input type="hidden" name="id" value={row.id} />
+                            <button
+                              type="submit"
+                              className="inline-flex items-center rounded-lg border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-100"
+                              title="Hard delete row (use only for testing)"
+                            >
+                              Delete
                             </button>
                           </form>
                         </div>
