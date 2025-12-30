@@ -8,7 +8,9 @@ import {
   Mail,
   Megaphone,
   Settings,
-  CalendarClock, // ✅ add this
+  CalendarClock, 
+  ClipboardList,
+  BarChart3,
 } from "lucide-react";
 
 const BRAND = {
@@ -20,11 +22,12 @@ const nav = [
   { label: "Dashboard", href: "/admin", icon: LayoutDashboard },
   { label: "Waitlist", href: "/admin/waitlist", icon: Users },
   { label: "Email", href: "/admin/email", icon: Mail },
-  { label: "Scheduler", href: "/admin/email/scheduler", icon: CalendarClock }, // ✅ keep here (near Email)
+  { label: "Campaigns", href: "/admin/email/campaigns", icon: Mail },
+  { label: "Scheduler", href: "/admin/email/scheduler", icon: CalendarClock },
+  { label: "Tasks", href: "/admin/tasks", icon: ClipboardList },
+  { label: "Analytics", href: "/admin/analytics", icon: BarChart3 },
   { label: "Social", href: "/admin/social", icon: Megaphone },
   { label: "Settings", href: "/admin/settings", icon: Settings },
-  { label: "Campaigns", href: "/admin/email/campaigns", icon: Mail },
-  { label: "Analytics", href: "/admin/analytics", icon: Mail }
 
 ];
 

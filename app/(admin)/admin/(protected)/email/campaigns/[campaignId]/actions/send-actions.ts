@@ -29,6 +29,7 @@ function getSiteUrl() {
   const base =
     process.env.APP_ORIGIN ??
     process.env.APP_URL ??
+    process.env.SITE_URL
     "https://www.swtaxservice.com";
 
   return String(base).trim().replace(/\/$/, "");

@@ -20,6 +20,8 @@ type Phase = "signup" | "confirm";
 
 export default function OnboardingSignUpForm({ email, token, plan }: Props) {
   const router = useRouter();
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
   const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
   const [phase, setPhase] = useState<Phase>("signup");
@@ -32,12 +34,19 @@ export default function OnboardingSignUpForm({ email, token, plan }: Props) {
     setLoading(true);
 
     try {
+      const fn = firstName.trim();
+      const ln = lastName.trim();
+      const fullName = `${fn} ${ln}`.trim();
+
       const { isSignUpComplete, nextStep } = await signUp({
         username: email,
         password,
         options: {
           userAttributes: {
             email,
+            given_name: fn,
+            family_name: ln,
+            name: fullName || fn,
             // later: "custom:source": "waitlist", "custom:plan": plan, ...
           },
         },
@@ -67,13 +76,11 @@ export default function OnboardingSignUpForm({ email, token, plan }: Props) {
     setLoading(true);
 
     try {
-      // 1️⃣ Confirm the account
       await confirmSignUp({
         username: email,
         confirmationCode: code.trim(),
       });
 
-      // 2️⃣ Immediately sign them in so /onboarding sees the correct Cognito user
       if (password) {
         try {
           await signIn({
@@ -85,14 +92,12 @@ export default function OnboardingSignUpForm({ email, token, plan }: Props) {
         }
       }
 
-      // 3️⃣ Mark the invite as accepted in Postgres
       try {
         await completeInvite(token);
       } catch (err) {
         console.error("completeInvite failed:", err);
       }
 
-      // 4️⃣ Send them into your onboarding flow
       setMsg("Account confirmed! Taking you to onboarding…");
       router.push("/onboarding");
     } catch (err: any) {
@@ -125,6 +130,36 @@ export default function OnboardingSignUpForm({ email, token, plan }: Props) {
 
       {phase === "signup" ? (
         <form onSubmit={handleSignUp} className="space-y-4">
+          {/* Name */}
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-700">
+                First name
+              </label>
+              <input
+                type="text"
+                required
+                value={firstName}
+                onChange={(e) => setFirstName(e.target.value)}
+                autoComplete="given-name"
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-700">
+                Last name
+              </label>
+              <input
+                type="text"
+                value={lastName}
+                onChange={(e) => setLastName(e.target.value)}
+                autoComplete="family-name"
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+          </div>
+          
           {/* Email (locked) */}
           <div>
             <label className="mb-1 block text-sm font-medium text-slate-700">

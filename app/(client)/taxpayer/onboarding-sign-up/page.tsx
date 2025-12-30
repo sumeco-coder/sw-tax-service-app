@@ -1,4 +1,3 @@
-// app/(client)/taxpayer/onboarding-sign-up/page.tsx
 import { db } from "@/drizzle/db";
 import { invites } from "@/drizzle/schema";
 import { eq } from "drizzle-orm";
@@ -6,17 +5,24 @@ import OnboardingSignUpForm from "../_components/OnboardingSignUpForm";
 
 type InviteRow = typeof invites.$inferSelect;
 
-interface PageProps {
-  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
+function oneParam(v: string | string[] | undefined) {
+  return Array.isArray(v) ? v[0] : v;
 }
 
-export default async function TaxpayerOnboardingSignUpPage({
-  searchParams,
-}: PageProps) {
-  const sp = await searchParams;
+interface PageProps {
+  // supports Next 15 (Promise) and older usage
+  searchParams:
+    | Promise<{ [key: string]: string | string[] | undefined }>
+    | { [key: string]: string | string[] | undefined };
+}
 
-  const rawToken = sp.token;
-  const token = Array.isArray(rawToken) ? rawToken[0] : rawToken;
+export default async function TaxpayerOnboardingSignUpPage({ searchParams }: PageProps) {
+  const sp = (await Promise.resolve(searchParams)) as {
+    [key: string]: string | string[] | undefined;
+  };
+
+  // ✅ accept either token or invite
+  const token = oneParam(sp.token) || oneParam(sp.invite);
 
   if (!token) {
     return (
@@ -35,12 +41,7 @@ export default async function TaxpayerOnboardingSignUpPage({
   let invite: InviteRow | undefined;
 
   try {
-    const rows = await db
-      .select()
-      .from(invites)
-      .where(eq(invites.token, token))
-      .limit(1);
-
+    const rows = await db.select().from(invites).where(eq(invites.token, token)).limit(1);
     invite = rows[0];
   } catch (err) {
     console.error("Error loading invite:", err);
@@ -49,7 +50,6 @@ export default async function TaxpayerOnboardingSignUpPage({
   const now = new Date();
   const expired = !!invite?.expiresAt && invite.expiresAt < now;
 
-  // ✅ Case 1: invalid / wrong type / expired / not found
   if (!invite || invite.type !== "taxpayer" || expired) {
     return (
       <main className="min-h-screen bg-gray-50 px-4 py-10">
@@ -64,7 +64,6 @@ export default async function TaxpayerOnboardingSignUpPage({
     );
   }
 
-  // ✅ Case 2: already used (accepted / cancelled / etc.)
   if (invite.status !== "pending") {
     return (
       <main className="min-h-screen bg-gray-50 px-4 py-10">
@@ -85,7 +84,6 @@ export default async function TaxpayerOnboardingSignUpPage({
     );
   }
 
-  // ✅ Case 3: pending + valid → show signup form
   const plan =
     (invite.meta as any)?.plan && typeof (invite.meta as any).plan === "string"
       ? (invite.meta as any).plan

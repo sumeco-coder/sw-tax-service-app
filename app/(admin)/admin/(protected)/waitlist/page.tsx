@@ -3,7 +3,7 @@ import { db } from "@/drizzle/db";
 import { waitlist } from "@/drizzle/schema";
 import { desc, eq, and, ne } from "drizzle-orm";
 import { redirect } from "next/navigation";
-
+import DirectInviteCard from "./_components/DirectInviteCard";
 import {
   approveWaitlistAndCreateInvite,
   rejectWaitlist,
@@ -178,12 +178,14 @@ export default async function AdminWaitlistPage({
               testEmail === "sent"
                 ? "border-emerald-200 bg-emerald-50 text-emerald-900"
                 : testEmail === "missing"
-                ? "border-amber-200 bg-amber-50 text-amber-900"
-                : "border-rose-200 bg-rose-50 text-rose-900"
+                  ? "border-amber-200 bg-amber-50 text-amber-900"
+                  : "border-rose-200 bg-rose-50 text-rose-900"
             }`}
           >
             {testEmail === "sent" && <p>✅ Test email sent successfully.</p>}
-            {testEmail === "missing" && <p>⚠️ Please enter an email address.</p>}
+            {testEmail === "missing" && (
+              <p>⚠️ Please enter an email address.</p>
+            )}
             {testEmail === "error" && (
               <p>
                 ❌ Failed to send test email
@@ -195,9 +197,12 @@ export default async function AdminWaitlistPage({
 
         <header className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">Waitlist Dashboard</h1>
+            <h1 className="text-2xl font-bold text-gray-900">
+              Waitlist Dashboard
+            </h1>
             <p className="text-sm text-gray-600">
-              Review waitlist entries and approve clients to generate onboarding invites.
+              Review waitlist entries and approve clients to generate onboarding
+              invites.
             </p>
           </div>
 
@@ -216,23 +221,32 @@ export default async function AdminWaitlistPage({
         <section className="rounded-xl border bg-white p-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <h2 className="text-sm font-semibold text-gray-900">Waitlist Controls</h2>
+              <h2 className="text-sm font-semibold text-gray-900">
+                Waitlist Controls
+              </h2>
               <p className="mt-1 text-xs text-gray-600">
-                OPEN + <b>Instant</b> = new signups get invite email automatically.
+                OPEN + <b>Instant</b> = new signups get invite email
+                automatically.
                 <br />
-                <b>Bulk</b> = signups stay pending until you click “Send Pending Invites”.
+                <b>Bulk</b> = signups stay pending until you click “Send Pending
+                Invites”.
               </p>
 
               <p className="mt-2 text-xs">
                 Status:{" "}
-                <span className={`font-semibold ${cfg.open ? "text-emerald-700" : "text-rose-700"}`}>
+                <span
+                  className={`font-semibold ${cfg.open ? "text-emerald-700" : "text-rose-700"}`}
+                >
                   {cfg.open ? "OPEN" : "CLOSED"}
                 </span>
                 {" • "}
-                Mode: <span className="font-semibold">{cfg.mode.toUpperCase()}</span>
+                Mode:{" "}
+                <span className="font-semibold">{cfg.mode.toUpperCase()}</span>
                 {" • "}
                 Schedule:{" "}
-                <span className="font-semibold">{cfg.scheduleOpen ? "ACTIVE" : "INACTIVE"}</span>
+                <span className="font-semibold">
+                  {cfg.scheduleOpen ? "ACTIVE" : "INACTIVE"}
+                </span>
               </p>
             </div>
 
@@ -242,7 +256,9 @@ export default async function AdminWaitlistPage({
                 <button
                   type="submit"
                   className={`rounded-lg px-4 py-2 text-xs font-semibold text-white ${
-                    cfg.manualOpen ? "bg-rose-600 hover:bg-rose-700" : "bg-emerald-600 hover:bg-emerald-700"
+                    cfg.manualOpen
+                      ? "bg-rose-600 hover:bg-rose-700"
+                      : "bg-emerald-600 hover:bg-emerald-700"
                   }`}
                   title="Manual toggle (schedule can still open it automatically if active)"
                 >
@@ -257,7 +273,9 @@ export default async function AdminWaitlistPage({
                   value="instant"
                   type="submit"
                   className={`rounded-lg px-4 py-2 text-xs font-semibold ${
-                    cfg.mode === "instant" ? "bg-gray-900 text-white" : "border bg-white hover:bg-gray-50"
+                    cfg.mode === "instant"
+                      ? "bg-gray-900 text-white"
+                      : "border bg-white hover:bg-gray-50"
                   }`}
                 >
                   Instant
@@ -267,7 +285,9 @@ export default async function AdminWaitlistPage({
                   value="bulk"
                   type="submit"
                   className={`rounded-lg px-4 py-2 text-xs font-semibold ${
-                    cfg.mode === "bulk" ? "bg-gray-900 text-white" : "border bg-white hover:bg-gray-50"
+                    cfg.mode === "bulk"
+                      ? "bg-gray-900 text-white"
+                      : "border bg-white hover:bg-gray-50"
                   }`}
                 >
                   Bulk
@@ -295,14 +315,23 @@ export default async function AdminWaitlistPage({
           closeAtUtcIso={cfg.closeAtUtc?.toISOString() ?? null}
         />
 
+        {/* ✅ DIRECT INVITE (no waitlist required) */}
+        <DirectInviteCard />
+
         {/* 🔵 Test email sender */}
         <section className="rounded-xl border border-blue-100 bg-blue-50/70 p-4 text-sm text-slate-800">
-          <h2 className="text-sm font-semibold text-slate-900">Send a test onboarding email</h2>
+          <h2 className="text-sm font-semibold text-slate-900">
+            Send a test onboarding email
+          </h2>
           <p className="mt-1 text-xs text-slate-600">
-            Use this to confirm Resend / SES is configured correctly before approving real waitlist entries.
+            Use this to confirm Resend / SES is configured correctly before
+            approving real waitlist entries.
           </p>
 
-          <form action={sendTestEmailAction} className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center">
+          <form
+            action={sendTestEmailAction}
+            className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center"
+          >
             <input
               type="email"
               name="to"
@@ -360,17 +389,27 @@ export default async function AdminWaitlistPage({
                   return (
                     <tr key={row.id} className="align-top hover:bg-gray-50/80">
                       <td className="px-4 py-3">
-                        <div className="font-medium text-gray-900">{row.fullName}</div>
-                        {row.phone && <div className="text-xs text-gray-500">{row.phone}</div>}
+                        <div className="font-medium text-gray-900">
+                          {row.fullName}
+                        </div>
+                        {row.phone && (
+                          <div className="text-xs text-gray-500">
+                            {row.phone}
+                          </div>
+                        )}
                       </td>
 
                       <td className="px-4 py-3 text-gray-800">{row.email}</td>
 
                       <td className="px-4 py-3 text-gray-700">
-                        {row.plan || <span className="italic text-gray-400">—</span>}
+                        {row.plan || (
+                          <span className="italic text-gray-400">—</span>
+                        )}
                       </td>
 
-                      <td className="px-4 py-3 text-gray-700">{row.roleType}</td>
+                      <td className="px-4 py-3 text-gray-700">
+                        {row.roleType}
+                      </td>
 
                       <td className="px-4 py-3">
                         <span
@@ -378,19 +417,21 @@ export default async function AdminWaitlistPage({
                             row.status === "pending"
                               ? "bg-amber-50 text-amber-700 ring-1 ring-amber-200"
                               : row.status === "approved"
-                              ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200"
-                              : row.status === "rejected"
-                              ? "bg-rose-50 text-rose-700 ring-1 ring-rose-200"
-                              : row.status === "archived"
-                              ? "bg-gray-100 text-gray-700 ring-1 ring-gray-200"
-                              : "bg-gray-50 text-gray-600 ring-1 ring-gray-200"
+                                ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200"
+                                : row.status === "rejected"
+                                  ? "bg-rose-50 text-rose-700 ring-1 ring-rose-200"
+                                  : row.status === "archived"
+                                    ? "bg-gray-100 text-gray-700 ring-1 ring-gray-200"
+                                    : "bg-gray-50 text-gray-600 ring-1 ring-gray-200"
                           }`}
                         >
                           {row.status}
                         </span>
                       </td>
 
-                      <td className="px-4 py-3 text-xs text-gray-500">{created}</td>
+                      <td className="px-4 py-3 text-xs text-gray-500">
+                        {created}
+                      </td>
 
                       <td className="px-4 py-3">
                         <div className="flex justify-end gap-2">
@@ -459,8 +500,8 @@ export default async function AdminWaitlistPage({
         )}
 
         <p className="text-xs text-gray-500">
-          Approving a waitlist entry will create an invite record, mark the entry{" "}
-          <strong>approved</strong>, and send an onboarding email using{" "}
+          Approving a waitlist entry will create an invite record, mark the
+          entry <strong>approved</strong>, and send an onboarding email using{" "}
           <code>sendEmail</code>.
         </p>
       </div>

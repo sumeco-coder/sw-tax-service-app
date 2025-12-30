@@ -1,4 +1,3 @@
-// lib/waitlist/approveInvite.server.ts
 "use server";
 
 import crypto from "crypto";
@@ -9,31 +8,41 @@ import { sendEmail } from "@/lib/email/sendEmail.server";
 
 type ApproveOpts = {
   invitedBy?: "admin" | "system";
-  // override invite type if you ever support more
   inviteType?: "taxpayer" | "lms-preparer";
 };
 
 function makeToken() {
-  // ✅ auto-generated per invite — you do NOT put this in .env
+  // ✅ generated per invite; never goes in .env
   return crypto.randomBytes(24).toString("base64url");
 }
 
+function normalizeBaseUrl(raw: string) {
+  let s = String(raw || "").trim();
+  if (!s) s = "https://swtaxservice.com";
+  if (!/^https?:\/\//i.test(s)) s = `https://${s}`;
+  s = s.replace(/\/+$/, ""); // remove trailing slashes
+  return s;
+}
+
 function getSiteUrl() {
-  return (
+  return normalizeBaseUrl(
     process.env.SITE_URL ||
-    process.env.APP_ORGIN ||
-    process.env.NEXT_PUBLIC_SITE_URL ||
-    "https://www.swtaxservice.com"
+      process.env.APP_ORIGIN || // ✅ fixed key
+      process.env.NEXT_PUBLIC_SITE_URL ||
+      "https://swtaxservice.com"
   );
 }
 
 function buildInviteUrl(token: string) {
   const base = getSiteUrl();
-  const path = process.env.WAITLIST_INVITE_PATH || "/onboarding";
-  const param = process.env.WAITLIST_INVITE_PARAM || "invite";
 
-  const url = new URL(path, base);
+  // ✅ set defaults to your real onboarding sign-up route + param
+  const path = (process.env.WAITLIST_INVITE_PATH || "/taxpayer/onboarding-sign-up").trim();
+  const param = (process.env.WAITLIST_INVITE_PARAM || "token").trim();
+
+  const url = new URL(path.startsWith("/") ? path : `/${path}`, base);
   url.searchParams.set(param, token);
+
   return url.toString();
 }
 
@@ -43,7 +52,7 @@ async function findExistingPendingInviteForWaitlist(email: string, waitlistId: s
     .from(invites)
     .where(
       and(
-        eq(invites.email, email),
+        eq(invites.email, email.toLowerCase().trim()),
         eq(invites.status, "pending"),
         sql`(${invites.meta} ->> 'waitlistId') = ${waitlistId}`
       )
@@ -53,10 +62,7 @@ async function findExistingPendingInviteForWaitlist(email: string, waitlistId: s
   return existing ?? null;
 }
 
-export async function approveWaitlistAndCreateInvite(
-  waitlistId: string,
-  opts: ApproveOpts = {}
-) {
+export async function approveWaitlistAndCreateInvite(waitlistId: string, opts: ApproveOpts = {}) {
   const invitedBy = opts.invitedBy ?? "system";
   const inviteType: "taxpayer" | "lms-preparer" = opts.inviteType ?? "taxpayer";
 
@@ -68,24 +74,22 @@ export async function approveWaitlistAndCreateInvite(
 
   if (!row) throw new Error("Waitlist entry not found.");
 
-  // ✅ If already approved, we still allow re-sending invite (idempotent)
-  // (keeps production robust)
-  const existingInvite = await findExistingPendingInviteForWaitlist(row.email, row.id);
+  const email = row.email.toLowerCase().trim();
 
+  // ✅ re-use existing PENDING invite for this waitlist row
+  const existingInvite = await findExistingPendingInviteForWaitlist(email, row.id);
   let inviteRow = existingInvite;
 
   if (!inviteRow) {
-    // expires in 7 days (safe default)
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
-    // small collision-safe loop (token is unique)
     for (let attempt = 0; attempt < 3; attempt++) {
       const token = makeToken();
       try {
         const [created] = await db
           .insert(invites)
           .values({
-            email: row.email,
+            email,
             type: inviteType,
             agencyId: row.agencyId ?? null,
             token,
@@ -102,23 +106,18 @@ export async function approveWaitlistAndCreateInvite(
         inviteRow = created;
         break;
       } catch (err: any) {
-        // token collision (rare) → retry
+        // unique token collision → retry
         if (String(err?.code) === "23505") continue;
         throw err;
       }
     }
 
-    if (!inviteRow) {
-      throw new Error("Failed to generate a unique invite token. Try again.");
-    }
+    if (!inviteRow) throw new Error("Failed to generate a unique invite token. Try again.");
   }
 
-  // ✅ Ensure waitlist is marked approved
+  // ✅ mark waitlist approved
   if (row.status !== "approved") {
-    await db
-      .update(waitlist)
-      .set({ status: "approved", updatedAt: new Date() })
-      .where(eq(waitlist.id, row.id));
+    await db.update(waitlist).set({ status: "approved" }).where(eq(waitlist.id, row.id));
   }
 
   const inviteUrl = buildInviteUrl(inviteRow.token);
@@ -128,7 +127,7 @@ export async function approveWaitlistAndCreateInvite(
   const textBody = [
     `Hi ${row.fullName || ""},`.trim(),
     "",
-    "Your onboarding link is ready. Use the link below to get started:",
+    "Your onboarding link is ready. Click below to get started:",
     inviteUrl,
     "",
     "If you didn’t request this, you can ignore this email.",
@@ -153,12 +152,7 @@ export async function approveWaitlistAndCreateInvite(
     </div>
   `;
 
-  await sendEmail({
-    to: row.email,
-    subject,
-    htmlBody,
-    textBody,
-  });
+  await sendEmail({ to: email, subject, htmlBody, textBody });
 
   return { waitlist: row, invite: inviteRow, inviteUrl };
 }
