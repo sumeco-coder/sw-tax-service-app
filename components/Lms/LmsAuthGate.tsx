@@ -28,7 +28,7 @@ export function LmsAuthGate({ children }: Props) {
       const { role } = info;
 
       const isLmsRole =
-        role === "lms-preparer" || role === "lms-admin" || role === "admin";
+        role === "LMS_PREPARER" || role === "LMS_ADMIN" || role === "ADMIN";
 
       if (isLmsRole) {
         setState("allowed");

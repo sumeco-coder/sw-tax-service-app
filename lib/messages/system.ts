@@ -6,9 +6,6 @@ import { messages, conversations } from "@/drizzle/schema";
 import { eq, sql } from "drizzle-orm";
 import Pusher from "pusher";
 
-/* ─────────────────────────────────────────────
-   Pusher (server-only)
-───────────────────────────────────────────── */
 const pusher = new Pusher({
   appId: process.env.PUSHER_APP_ID!,
   key: process.env.NEXT_PUBLIC_PUSHER_KEY!,
@@ -17,32 +14,42 @@ const pusher = new Pusher({
   useTLS: true,
 });
 
-/* ─────────────────────────────────────────────
-   System message sender
-───────────────────────────────────────────── */
+function clean(v: unknown, max = 4000) {
+  const s = String(v ?? "").trim();
+  return s ? s.slice(0, max) : "";
+}
+
 export async function sendSystemMessage(conversationId: string, body: string) {
-  /* 1️⃣ Insert system message */
+  const cid = clean(conversationId, 200);
+  const text = clean(body, 4000);
+
+  if (!cid) throw new Error("sendSystemMessage: missing conversationId");
+  if (!text) return;
+
+  // ✅ If you have a real encryption helper used elsewhere, replace this with that.
+  const encryptedBody = text;
+
   await db.insert(messages).values({
-    conversationId,
-    body,
+    conversationId: cid,
+    body: text,                // keep if you store plaintext
+    encryptedBody,             // ✅ required by your schema
     isSystem: true,
     senderUserId: null,
-    senderRole: null,
+    senderRole: "SYSTEM",      // ✅ now allowed by your enum
   });
 
-  /* 2️⃣ Update conversation metadata */
   await db
     .update(conversations)
     .set({
       lastMessageAt: new Date(),
-      lastSenderRole: "system",
+      lastSenderRole: "SYSTEM",
       clientUnread: sql`${conversations.clientUnread} + 1`,
     })
-    .where(eq(conversations.id, conversationId));
+    .where(eq(conversations.id, cid));
 
-  /* 3️⃣ Realtime push */
-  await pusher.trigger(`conversation-${conversationId}`, "new-message", {
-    conversationId,
-    senderRole: "system",
+  await pusher.trigger(`conversation-${cid}`, "new-message", {
+    conversationId: cid,
+    senderRole: "SYSTEM",
+    isSystem: true,
   });
 }
