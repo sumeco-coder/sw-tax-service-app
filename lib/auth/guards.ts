@@ -25,7 +25,7 @@ export async function requireRole(
   const allowAdmin = options.allowAdmin ?? true;
   const ok =
     allowed.includes(roleInfo.role) ||
-    (allowAdmin && roleInfo.role === "admin");
+    (allowAdmin && roleInfo.role === "ADMIN");
 
   if (!ok) redirect(options.notAuthorizedTo ?? "/not-authorized");
 
@@ -33,7 +33,7 @@ export async function requireRole(
 }
 
 export async function requireAdmin(options: GuardOptions = {}) {
-  return requireRole(["admin"], {
+  return requireRole(["ADMIN"], {
     redirectTo: options.redirectTo ?? "/admin/sign-in",
     notAuthorizedTo: options.notAuthorizedTo ?? "/not-authorized",
     allowAdmin: false,

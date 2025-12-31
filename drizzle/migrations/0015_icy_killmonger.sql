@@ -1,0 +1,1 @@
+ALTER TABLE "conversations" ALTER COLUMN "last_sender_role" DROP NOT NULL;

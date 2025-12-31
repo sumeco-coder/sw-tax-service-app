@@ -1,0 +1,1299 @@
+"use client";
+
+import * as React from "react";
+import {
+  useForm,
+  Controller,
+  type ControllerRenderProps,
+  type SubmitHandler,
+  type Resolver,
+} from "react-hook-form";
+
+import { z } from "zod";
+import { zodResolver } from "@hookform/resolvers/zod";
+
+import ChildcareExpenseSection from "./ChildcareExpenseSection";
+
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+
+const BRAND = {
+  pink: "#E72B69",
+  copper: "#BA4A26",
+  charcoal: "#2C2B33",
+};
+
+const brandGradient = {
+  background: `linear-gradient(135deg, ${BRAND.pink}, ${BRAND.copper})`,
+};
+
+const FieldRow = ({ children }: { children: React.ReactNode }) => (
+  <div className="grid grid-cols-1 gap-4 md:grid-cols-2">{children}</div>
+);
+
+const SwitchRow = ({
+  label,
+  checked,
+  onCheckedChange,
+}: {
+  label: string;
+  checked: boolean | undefined;
+  onCheckedChange: (v: boolean) => void;
+}) => (
+  <div className="flex items-start justify-between rounded-xl border border-slate-200 bg-white p-3">
+    <Label className="text-sm font-medium text-slate-800">{label}</Label>
+    <Switch checked={!!checked} onCheckedChange={onCheckedChange} />
+  </div>
+);
+
+function digitsOnly(v: string, maxLen: number) {
+  return v.replace(/\D/g, "").slice(0, maxLen);
+}
+
+const REL_OPTIONS = [
+  "Child",
+  "Stepchild",
+  "Foster child",
+  "Sibling",
+  "Parent",
+  "Other",
+] as const;
+const YESNO = ["yes", "no"] as const;
+const YESNO_NA = ["yes", "no", "na"] as const;
+
+// Page 6 docs
+const RESIDENCY_DOCS = [
+  { value: "school_records", label: "School records or statement" },
+  {
+    value: "landlord_statement",
+    label: "Landlord or property management statement",
+  },
+  {
+    value: "healthcare_provider_statement",
+    label: "Healthcare provider statement",
+  },
+  { value: "medical_records", label: "Medical records" },
+  { value: "childcare_provider_records", label: "Childcare provider records" },
+  { value: "placement_agency_statement", label: "Placement agency statement" },
+  {
+    value: "social_services_records",
+    label: "Social services records or statement",
+  },
+  { value: "place_of_worship_statement", label: "Place of worship statement" },
+  {
+    value: "indian_tribal_official_statement",
+    label: "Indian tribal official statement",
+  },
+  { value: "employer_statement", label: "Employer statement" },
+  {
+    value: "did_not_rely_notes",
+    label: "Did not rely on any documents, made notes in file",
+  },
+  { value: "did_not_rely", label: "Did not rely on any documents" },
+  { value: "other", label: "Other" },
+] as const;
+
+const DISABILITY_DOCS = [
+  { value: "doctor_statement", label: "Doctor statement" },
+  {
+    value: "other_healthcare_provider_statement",
+    label: "Other healthcare provider statement",
+  },
+  {
+    value: "social_services_program_statement",
+    label: "Social services agency or program statement",
+  },
+  {
+    value: "did_not_rely_notes",
+    label: "Did not rely on any documents, made notes in file",
+  },
+  { value: "did_not_rely", label: "Did not rely on any documents" },
+  { value: "other", label: "Other" },
+] as const;
+
+const EXCLUSIVE = new Set(["did_not_rely_notes", "did_not_rely"]);
+
+function toggleMulti(current: string[], value: string) {
+  const cur = Array.isArray(current) ? current : [];
+  const isOn = cur.includes(value);
+
+  if (isOn) return cur.filter((x) => x !== value);
+
+  if (EXCLUSIVE.has(value)) return [value];
+
+  return [...cur.filter((x) => !EXCLUSIVE.has(x)), value];
+}
+
+const schema = z
+  .object({
+    // Page 1
+    firstName: z.string().trim().min(1, "Required"),
+    middleName: z.string().trim().default(""),
+    lastName: z.string().trim().min(1, "Required"),
+    dob: z
+      .string()
+      .min(1, "Required")
+      .regex(/^\d{4}-\d{2}-\d{2}$/, { message: "Use YYYY-MM-DD" }),
+    relationship: z.string().min(1, "Required"),
+
+    ssn: z
+      .string()
+      .default("")
+      .transform((v) => digitsOnly(String(v ?? ""), 9))
+      .refine((v) => v === "" || v.length === 9, { message: "Enter 9 digits" }),
+
+    monthsInHome: z
+      .string()
+      .default("12")
+      .refine((v) => /^(?:[0-9]|1[0-2])$/.test(v), { message: "0–12 only" }),
+
+    appliedButNotReceived: z.boolean().default(false),
+    isStudent: z.boolean().default(false),
+    isDisabled: z.boolean().default(false),
+
+    // Page 2 (general)
+    over18Under24Student: z.boolean().default(false),
+    doesNotQualifyEIC: z.boolean().default(false),
+
+    livedWithTaxpayer: z.boolean().default(false),
+    notLiveDueToDivorce: z.boolean().default(false),
+    otherTypeDependent: z.boolean().default(false),
+
+    notDependent: z.boolean().default(false),
+    notDependentHOHQualifier: z.boolean().default(false),
+    notDependentQSSQualifier: z.boolean().default(false),
+
+    doNotUpdateNextYear: z.boolean().default(false),
+    itinSpecialCircumstance: z.boolean().default(false),
+
+    ipPin: z
+      .string()
+      .trim()
+      .default("")
+      .refine((v) => v === "" || /^\d{6}$/.test(v), {
+        message: "IP PIN must be 6 digits",
+      }),
+
+    // Page 3 (Childcare)
+    childcareExpensesPaid: z.string().trim().default(""),
+    childcareProvidedByEmployer: z.string().trim().default(""),
+    includeOn2441NoExpenses: z.boolean().default(false),
+
+    // Page 4 (EIC/CTC due diligence)
+    claimingEicOrCtcForThisDependent: z.enum(YESNO).default("no"),
+
+    ddq_unmarriedOrQualifyingMarried: z.enum(YESNO).default("no"),
+    ddq_livedWithTaxpayerMoreThanHalfYearUS: z.enum(YESNO).default("yes"),
+
+    ddq_parentNotClaimingAskedAndDocumented: z.enum(YESNO_NA).default("na"),
+
+    ddq_couldAnotherPersonClaim: z.enum(YESNO).default("no"),
+    ddq_relationshipToOther: z.string().trim().default(""),
+    ddq_tiebreakerQualifyingChild: z.enum(YESNO_NA).default("na"),
+
+    ddq_qualifyingPersonCitizenNationalResidentUS: z.enum(YESNO).default("no"),
+
+    ddq_explainedNoACTCIfNotLivedHalfYear: z.enum(YESNO_NA).default("na"),
+    ddq_explainedDivorce8332Rules: z.enum(YESNO_NA).default("na"),
+
+    // Page 6 (Documents)
+    ddq_residencyDocs: z.array(z.string()).default([]),
+    ddq_residencyOtherText: z.string().trim().default(""),
+    ddq_disabilityDocs: z.array(z.string()).default([]),
+    ddq_disabilityOtherText: z.string().trim().default(""),
+  })
+  .superRefine((data, ctx) => {
+    if (!data.appliedButNotReceived && data.ssn === "") {
+      ctx.addIssue({
+        code: "custom",
+        path: ["ssn"],
+        message: "Enter SSN (9 digits) or mark applied-but-not-received.",
+      });
+    }
+
+    if (data.claimingEicOrCtcForThisDependent !== "yes") return;
+
+    if (
+      data.ddq_couldAnotherPersonClaim === "yes" &&
+      !data.ddq_relationshipToOther.trim()
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["ddq_relationshipToOther"],
+        message: "Please describe the relationship to the other person.",
+      });
+    }
+
+    if (
+      data.ddq_residencyDocs.includes("other") &&
+      !data.ddq_residencyOtherText.trim()
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["ddq_residencyOtherText"],
+        message: "Please describe the other residency document.",
+      });
+    }
+
+    if (
+      data.ddq_disabilityDocs.includes("other") &&
+      !data.ddq_disabilityOtherText.trim()
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["ddq_disabilityOtherText"],
+        message: "Please describe the other disability document.",
+      });
+    }
+  });
+
+export type DependentQuestionnaireValues = z.infer<typeof schema>;
+
+const defaultValues: DependentQuestionnaireValues = {
+  firstName: "",
+  middleName: "",
+  lastName: "",
+  dob: "",
+  relationship: "",
+  ssn: "",
+  monthsInHome: "12",
+  appliedButNotReceived: false,
+  isStudent: false,
+  isDisabled: false,
+
+  over18Under24Student: false,
+  doesNotQualifyEIC: false,
+
+  livedWithTaxpayer: false,
+  notLiveDueToDivorce: false,
+  otherTypeDependent: false,
+
+  notDependent: false,
+  notDependentHOHQualifier: false,
+  notDependentQSSQualifier: false,
+
+  doNotUpdateNextYear: false,
+  itinSpecialCircumstance: false,
+
+  ipPin: "",
+
+  childcareExpensesPaid: "",
+  childcareProvidedByEmployer: "",
+  includeOn2441NoExpenses: false,
+
+  claimingEicOrCtcForThisDependent: "no",
+  ddq_unmarriedOrQualifyingMarried: "no",
+  ddq_livedWithTaxpayerMoreThanHalfYearUS: "yes",
+  ddq_parentNotClaimingAskedAndDocumented: "na",
+  ddq_couldAnotherPersonClaim: "no",
+  ddq_relationshipToOther: "",
+  ddq_tiebreakerQualifyingChild: "na",
+  ddq_qualifyingPersonCitizenNationalResidentUS: "no",
+  ddq_explainedNoACTCIfNotLivedHalfYear: "na",
+  ddq_explainedDivorce8332Rules: "na",
+
+  ddq_residencyDocs: [],
+  ddq_residencyOtherText: "",
+  ddq_disabilityDocs: [],
+  ddq_disabilityOtherText: "",
+};
+
+function YesNoRadio({
+  label,
+  value,
+  onChange,
+  disabled,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white p-4">
+      <Label className="text-slate-700">{label}</Label>
+      <RadioGroup
+        className="mt-2 flex gap-6"
+        value={value}
+        onValueChange={onChange}
+        aria-disabled={disabled}
+      >
+        <div className="flex items-center gap-2">
+          <RadioGroupItem value="yes" id={`${label}-yes`} disabled={disabled} />
+          <Label htmlFor={`${label}-yes`}>Yes</Label>
+        </div>
+        <div className="flex items-center gap-2">
+          <RadioGroupItem value="no" id={`${label}-no`} disabled={disabled} />
+          <Label htmlFor={`${label}-no`}>No</Label>
+        </div>
+      </RadioGroup>
+    </div>
+  );
+}
+
+function YesNoNaRadio({
+  label,
+  value,
+  onChange,
+  disabled,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white p-4">
+      <Label className="text-slate-700">{label}</Label>
+      <RadioGroup
+        className="mt-2 flex gap-6"
+        value={value}
+        onValueChange={onChange}
+      >
+        <div className="flex items-center gap-2">
+          <RadioGroupItem value="yes" id={`${label}-yes`} disabled={disabled} />
+          <Label htmlFor={`${label}-yes`}>Yes</Label>
+        </div>
+        <div className="flex items-center gap-2">
+          <RadioGroupItem value="no" id={`${label}-no`} disabled={disabled} />
+          <Label htmlFor={`${label}-no`}>No</Label>
+        </div>
+        <div className="flex items-center gap-2">
+          <RadioGroupItem value="na" id={`${label}-na`} disabled={disabled} />
+          <Label htmlFor={`${label}-na`}>N/A</Label>
+        </div>
+      </RadioGroup>
+    </div>
+  );
+}
+
+export default function DependentQuestionnaire({
+  onSave,
+}: {
+  onSave?: (values: DependentQuestionnaireValues) => Promise<void> | void;
+}) {
+  const resolver: Resolver<DependentQuestionnaireValues> = zodResolver(
+    schema
+  ) as unknown as Resolver<DependentQuestionnaireValues>;
+
+  const form = useForm<DependentQuestionnaireValues>({
+    resolver,
+    defaultValues,
+    mode: "onBlur",
+  });
+
+  const {
+    control,
+    register,
+    handleSubmit,
+    setValue,
+    watch,
+    reset,
+    formState: { errors, isSubmitting },
+  } = form;
+
+  const applied = watch("appliedButNotReceived");
+  const claimingCredits = watch("claimingEicOrCtcForThisDependent");
+  const rel = watch("relationship");
+  const couldAnother = watch("ddq_couldAnotherPersonClaim");
+  const livedHalf = watch("ddq_livedWithTaxpayerMoreThanHalfYearUS");
+  const notLiveDueToDivorce = watch("notLiveDueToDivorce");
+
+  React.useEffect(() => {
+    if (claimingCredits !== "yes") {
+      setValue("ddq_parentNotClaimingAskedAndDocumented", "na", {
+        shouldDirty: false,
+      });
+      setValue("ddq_tiebreakerQualifyingChild", "na", { shouldDirty: false });
+      setValue("ddq_explainedNoACTCIfNotLivedHalfYear", "na", {
+        shouldDirty: false,
+      });
+      setValue("ddq_explainedDivorce8332Rules", "na", { shouldDirty: false });
+      setValue("ddq_relationshipToOther", "", { shouldDirty: false });
+
+      setValue("ddq_residencyDocs", [], { shouldDirty: false });
+      setValue("ddq_residencyOtherText", "", { shouldDirty: false });
+      setValue("ddq_disabilityDocs", [], { shouldDirty: false });
+      setValue("ddq_disabilityOtherText", "", { shouldDirty: false });
+      return;
+    }
+
+    // If relationship is Child/Stepchild, parent-not-claiming is generally N/A
+    if (rel === "Child" || rel === "Stepchild") {
+      setValue("ddq_parentNotClaimingAskedAndDocumented", "na", {
+        shouldDirty: false,
+      });
+    }
+
+    // Tie-breaker only matters if someone else could claim
+    if (couldAnother === "no") {
+      setValue("ddq_tiebreakerQualifyingChild", "na", { shouldDirty: false });
+      setValue("ddq_relationshipToOther", "", { shouldDirty: false });
+    }
+
+    // ACTC explanation only matters if NOT lived > half year
+    if (livedHalf === "yes") {
+      setValue("ddq_explainedNoACTCIfNotLivedHalfYear", "na", {
+        shouldDirty: false,
+      });
+    }
+
+    // 8332 rules explanation only typically matters when divorce/separation applies
+    if (!notLiveDueToDivorce) {
+      setValue("ddq_explainedDivorce8332Rules", "na", { shouldDirty: false });
+    }
+  }, [
+    claimingCredits,
+    rel,
+    couldAnother,
+    livedHalf,
+    notLiveDueToDivorce,
+    setValue,
+  ]);
+
+  const onSubmit: SubmitHandler<DependentQuestionnaireValues> = async (
+    values
+  ) => {
+    await onSave?.(values);
+  };
+
+  return (
+    <form onSubmit={handleSubmit(onSubmit)} className="space-y-6" noValidate>
+      <Tabs defaultValue="page1">
+        <TabsList className="!grid !h-auto w-full grid-cols-1 gap-1 rounded-xl bg-white p-1 ring-1 ring-slate-200 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+          <TabsTrigger
+            value="page1"
+            className="w-full !whitespace-normal rounded-lg px-3 py-2 text-center text-xs leading-tight sm:text-sm data-[state=active]:text-white data-[state=active]:shadow-sm data-[state=active]:bg-gradient-to-r data-[state=active]:from-[#E72B69] data-[state=active]:to-[#BA4A26]"
+          >
+            Page 1 – Dependent Details
+          </TabsTrigger>
+
+          <TabsTrigger
+            value="page2"
+            className="w-full !whitespace-normal rounded-lg px-3 py-2 text-center text-xs leading-tight sm:text-sm data-[state=active]:text-white data-[state=active]:shadow-sm data-[state=active]:bg-gradient-to-r data-[state=active]:from-[#E72B69] data-[state=active]:to-[#BA4A26]"
+          >
+            Page 2 – Eligibility & Notes
+          </TabsTrigger>
+
+          <TabsTrigger
+            value="page3"
+            className="w-full !whitespace-normal rounded-lg px-3 py-2 text-center text-xs leading-tight sm:text-sm data-[state=active]:text-white data-[state=active]:shadow-sm data-[state=active]:bg-gradient-to-r data-[state=active]:from-[#E72B69] data-[state=active]:to-[#BA4A26]"
+          >
+            Page 3 – Childcare & Form 2441
+          </TabsTrigger>
+
+          <TabsTrigger
+            value="page4"
+            className="w-full !whitespace-normal rounded-lg px-3 py-2 text-center text-xs leading-tight sm:text-sm data-[state=active]:text-white data-[state=active]:shadow-sm data-[state=active]:bg-gradient-to-r data-[state=active]:from-[#E72B69] data-[state=active]:to-[#BA4A26]"
+          >
+            Page 4 – Credits
+          </TabsTrigger>
+
+          <TabsTrigger
+            value="page6"
+            className="w-full !whitespace-normal rounded-lg px-3 py-2 text-center text-xs leading-tight sm:text-sm data-[state=active]:text-white data-[state=active]:shadow-sm data-[state=active]:bg-gradient-to-r data-[state=active]:from-[#E72B69] data-[state=active]:to-[#BA4A26]"
+          >
+            Page 6 – Docs
+          </TabsTrigger>
+        </TabsList>
+
+        {/* Page 1 (includes middle name) */}
+        <TabsContent value="page1">
+          <Card className="border-slate-200">
+            <CardHeader>
+              <CardTitle className="text-slate-900">
+                Dependent Details
+              </CardTitle>
+              <div
+                className="mt-2 h-1 w-24 rounded-full"
+                style={brandGradient}
+              />
+            </CardHeader>
+
+            <CardContent className="space-y-4">
+              <FieldRow>
+                <div>
+                  <Label className="text-slate-700">First Name</Label>
+                  <Input className="mt-1" {...register("firstName")} />
+                  {errors.firstName && (
+                    <p className="mt-1 text-xs text-red-600">
+                      {errors.firstName.message}
+                    </p>
+                  )}
+                </div>
+
+                <div>
+                  <Label className="text-slate-700">
+                    Middle Name (optional)
+                  </Label>
+                  <Input className="mt-1" {...register("middleName")} />
+                </div>
+              </FieldRow>
+
+              <FieldRow>
+                <div>
+                  <Label className="text-slate-700">Last Name</Label>
+                  <Input className="mt-1" {...register("lastName")} />
+                  {errors.lastName && (
+                    <p className="mt-1 text-xs text-red-600">
+                      {errors.lastName.message}
+                    </p>
+                  )}
+                </div>
+
+                <div>
+                  <Label className="text-slate-700">Date of Birth</Label>
+                  <Input className="mt-1" type="date" {...register("dob")} />
+                  {errors.dob && (
+                    <p className="mt-1 text-xs text-red-600">
+                      {errors.dob.message}
+                    </p>
+                  )}
+                </div>
+              </FieldRow>
+
+              <FieldRow>
+                <div>
+                  <Label className="text-slate-700">Relationship</Label>
+                  <Controller
+                    control={control}
+                    name="relationship"
+                    render={({
+                      field,
+                    }: {
+                      field: ControllerRenderProps<
+                        DependentQuestionnaireValues,
+                        "relationship"
+                      >;
+                    }) => (
+                      <Select
+                        value={field.value ?? ""}
+                        onValueChange={field.onChange}
+                      >
+                        <SelectTrigger className="mt-1">
+                          <SelectValue placeholder="Select relationship" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {REL_OPTIONS.map((opt) => (
+                            <SelectItem key={opt} value={opt}>
+                              {opt}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    )}
+                  />
+                  {errors.relationship && (
+                    <p className="mt-1 text-xs text-red-600">
+                      {errors.relationship.message}
+                    </p>
+                  )}
+                </div>
+
+                <div>
+                  <Label className="text-slate-700">Months in Home</Label>
+                  <Controller
+                    control={control}
+                    name="monthsInHome"
+                    render={({
+                      field,
+                    }: {
+                      field: ControllerRenderProps<
+                        DependentQuestionnaireValues,
+                        "monthsInHome"
+                      >;
+                    }) => (
+                      <Select
+                        value={field.value ?? "12"}
+                        onValueChange={field.onChange}
+                      >
+                        <SelectTrigger className="mt-1">
+                          <SelectValue placeholder="Select months" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {Array.from({ length: 13 }).map((_, i) => (
+                            <SelectItem key={i} value={String(i)}>
+                              {i}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    )}
+                  />
+                  {errors.monthsInHome && (
+                    <p className="mt-1 text-xs text-red-600">
+                      {errors.monthsInHome.message}
+                    </p>
+                  )}
+                </div>
+              </FieldRow>
+
+              <FieldRow>
+                <div>
+                  <Label className="text-slate-700">SSN (9 digits)</Label>
+                  <Input
+                    className="mt-1"
+                    inputMode="numeric"
+                    maxLength={11}
+                    placeholder={applied ? "Applied (no SSN yet)" : "9 digits"}
+                    disabled={applied}
+                    {...register("ssn")}
+                    onChange={(e) => {
+                      const v = digitsOnly(e.target.value, 9);
+                      setValue("ssn", v, {
+                        shouldDirty: true,
+                        shouldValidate: true,
+                      });
+                    }}
+                  />
+                  {errors.ssn && (
+                    <p className="mt-1 text-xs text-red-600">
+                      {errors.ssn.message}
+                    </p>
+                  )}
+                </div>
+
+                <Controller
+                  control={control}
+                  name="appliedButNotReceived"
+                  render={({ field }) => (
+                    <SwitchRow
+                      label="SSN/ITIN applied for but not yet received"
+                      checked={field.value}
+                      onCheckedChange={(v) => {
+                        field.onChange(v);
+                        if (v)
+                          setValue("ssn", "", {
+                            shouldDirty: true,
+                            shouldValidate: true,
+                          });
+                      }}
+                    />
+                  )}
+                />
+              </FieldRow>
+
+              <FieldRow>
+                <div className="grid grid-cols-2 gap-3">
+                  <Controller
+                    control={control}
+                    name="isStudent"
+                    render={({ field }) => (
+                      <SwitchRow
+                        label="Student"
+                        checked={field.value}
+                        onCheckedChange={field.onChange}
+                      />
+                    )}
+                  />
+                  <Controller
+                    control={control}
+                    name="isDisabled"
+                    render={({ field }) => (
+                      <SwitchRow
+                        label="Disabled"
+                        checked={field.value}
+                        onCheckedChange={field.onChange}
+                      />
+                    )}
+                  />
+                </div>
+                <div />
+              </FieldRow>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* Page 2 (your existing eligibility switches; unchanged idea) */}
+        <TabsContent value="page2">
+          <Card className="border-slate-200">
+            <CardHeader>
+              <CardTitle className="text-slate-900">
+                Eligibility & Notes
+              </CardTitle>
+              <div
+                className="mt-2 h-1 w-24 rounded-full"
+                style={brandGradient}
+              />
+            </CardHeader>
+
+            <CardContent className="space-y-4">
+              <FieldRow>
+                <Controller
+                  control={control}
+                  name="over18Under24Student"
+                  render={({ field }) => (
+                    <SwitchRow
+                      label="Over 18 but under 24 and student?"
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                    />
+                  )}
+                />
+                <Controller
+                  control={control}
+                  name="doesNotQualifyEIC"
+                  render={({ field }) => (
+                    <SwitchRow
+                      label="Does not qualify for EIC"
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                    />
+                  )}
+                />
+              </FieldRow>
+
+              <FieldRow>
+                <Controller
+                  control={control}
+                  name="livedWithTaxpayer"
+                  render={({ field }) => (
+                    <SwitchRow
+                      label="Dependent lived with taxpayer"
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                    />
+                  )}
+                />
+                <Controller
+                  control={control}
+                  name="notLiveDueToDivorce"
+                  render={({ field }) => (
+                    <SwitchRow
+                      label="Did NOT live with me due to divorce/separation"
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                    />
+                  )}
+                />
+              </FieldRow>
+
+              <FieldRow>
+                <Controller
+                  control={control}
+                  name="otherTypeDependent"
+                  render={({ field }) => (
+                    <SwitchRow
+                      label="Other type of dependent"
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                    />
+                  )}
+                />
+                <Controller
+                  control={control}
+                  name="notDependent"
+                  render={({ field }) => (
+                    <SwitchRow
+                      label="Not a dependent"
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                    />
+                  )}
+                />
+              </FieldRow>
+
+              <FieldRow>
+                <Controller
+                  control={control}
+                  name="notDependentHOHQualifier"
+                  render={({ field }) => (
+                    <SwitchRow
+                      label="Not dependent – HOH qualifier"
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                    />
+                  )}
+                />
+                <Controller
+                  control={control}
+                  name="notDependentQSSQualifier"
+                  render={({ field }) => (
+                    <SwitchRow
+                      label="Not dependent – QSS qualifier"
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                    />
+                  )}
+                />
+              </FieldRow>
+
+              <FieldRow>
+                <Controller
+                  control={control}
+                  name="doNotUpdateNextYear"
+                  render={({ field }) => (
+                    <SwitchRow
+                      label="Do NOT update dependent to next year"
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                    />
+                  )}
+                />
+                <Controller
+                  control={control}
+                  name="itinSpecialCircumstance"
+                  render={({ field }) => (
+                    <SwitchRow
+                      label="ITIN special circumstance"
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                    />
+                  )}
+                />
+              </FieldRow>
+
+              <div>
+                <Label className="text-slate-700">IP PIN (6 digits)</Label>
+                <Input
+                  className="mt-1"
+                  inputMode="numeric"
+                  maxLength={6}
+                  placeholder="Optional"
+                  {...register("ipPin")}
+                  onChange={(e) => {
+                    const v = digitsOnly(e.target.value, 6);
+                    setValue("ipPin", v, {
+                      shouldDirty: true,
+                      shouldValidate: true,
+                    });
+                  }}
+                />
+                {errors.ipPin && (
+                  <p className="mt-1 text-xs text-red-600">
+                    {errors.ipPin.message}
+                  </p>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* Page 3 childcare */}
+        <TabsContent value="page3">
+          <Card className="border-slate-200">
+            <CardHeader>
+              <CardTitle className="text-slate-900">
+                Childcare & Form 2441
+              </CardTitle>
+              <div
+                className="mt-2 h-1 w-24 rounded-full"
+                style={brandGradient}
+              />
+            </CardHeader>
+
+            <CardContent className="space-y-4">
+              <ChildcareExpenseSection
+                control={control as any}
+                register={register}
+                setValue={setValue}
+                errors={errors as any}
+              />
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* Page 4 credits due diligence */}
+        <TabsContent value="page4">
+          <Card className="border-slate-200">
+            <CardHeader>
+              <CardTitle className="text-slate-900">
+                EIC / CTC Due Diligence
+              </CardTitle>
+              <div
+                className="mt-2 h-1 w-24 rounded-full"
+                style={brandGradient}
+              />
+              <p className="mt-3 text-sm text-slate-600">
+                If either EIC or Child Tax Credit is claimed for this dependent,
+                complete this section.
+              </p>
+            </CardHeader>
+
+            <CardContent className="space-y-4">
+              <Controller
+                control={control}
+                name="claimingEicOrCtcForThisDependent"
+                render={({ field }) => (
+                  <YesNoRadio
+                    label="Is EIC or (A)CTC being claimed for this dependent?"
+                    value={field.value}
+                    onChange={field.onChange}
+                  />
+                )}
+              />
+
+              <div
+                className={
+                  claimingCredits === "yes"
+                    ? "space-y-4"
+                    : "opacity-60 pointer-events-none space-y-4"
+                }
+              >
+                <Controller
+                  control={control}
+                  name="ddq_unmarriedOrQualifyingMarried"
+                  render={({ field }) => (
+                    <YesNoRadio
+                      label="Is either true: dependent is unmarried OR married, claimable as dependent, and not filing joint return (except refund)?"
+                      value={field.value}
+                      onChange={field.onChange}
+                    />
+                  )}
+                />
+
+                <Controller
+                  control={control}
+                  name="ddq_livedWithTaxpayerMoreThanHalfYearUS"
+                  render={({ field }) => (
+                    <YesNoRadio
+                      label="Did the dependent live with the taxpayer in the U.S. for more than half of the year?"
+                      value={field.value}
+                      onChange={field.onChange}
+                    />
+                  )}
+                />
+
+                <Controller
+                  control={control}
+                  name="ddq_parentNotClaimingAskedAndDocumented"
+                  render={({ field }) => (
+                    <YesNoNaRadio
+                      label="If this is NOT the taxpayer’s son/daughter: did you ask why the parent was not claiming the child and document the answer?"
+                      value={field.value}
+                      onChange={field.onChange}
+                    />
+                  )}
+                />
+
+                <Controller
+                  control={control}
+                  name="ddq_couldAnotherPersonClaim"
+                  render={({ field }) => (
+                    <YesNoRadio
+                      label="Could another person qualify to claim this dependent?"
+                      value={field.value}
+                      onChange={(v) => {
+                        field.onChange(v);
+                        if (v === "no") {
+                          setValue("ddq_relationshipToOther", "", {
+                            shouldDirty: true,
+                          });
+                          setValue("ddq_tiebreakerQualifyingChild", "na", {
+                            shouldDirty: true,
+                          });
+                        }
+                      }}
+                    />
+                  )}
+                />
+
+                {couldAnother === "yes" && (
+                  <div className="rounded-xl border border-slate-200 bg-white p-4">
+                    <Label className="text-slate-700">
+                      If Yes: Dependent’s relationship to the other person
+                    </Label>
+                    <Input
+                      className="mt-1"
+                      {...register("ddq_relationshipToOther")}
+                    />
+                    {errors.ddq_relationshipToOther && (
+                      <p className="mt-1 text-xs text-red-600">
+                        {errors.ddq_relationshipToOther.message}
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                <Controller
+                  control={control}
+                  name="ddq_tiebreakerQualifyingChild"
+                  render={({ field }) => (
+                    <YesNoNaRadio
+                      label="If the tiebreaker rules apply, would the dependent be treated as your qualifying child?"
+                      value={field.value}
+                      onChange={field.onChange}
+                      disabled={couldAnother !== "yes"}
+                    />
+                  )}
+                />
+
+                <Controller
+                  control={control}
+                  name="ddq_qualifyingPersonCitizenNationalResidentUS"
+                  render={({ field }) => (
+                    <YesNoRadio
+                      label="Is the qualifying person the taxpayer’s dependent who is a citizen, national, or resident of the United States?"
+                      value={field.value}
+                      onChange={field.onChange}
+                    />
+                  )}
+                />
+
+                <Controller
+                  control={control}
+                  name="ddq_explainedNoACTCIfNotLivedHalfYear"
+                  render={({ field }) => (
+                    <YesNoNaRadio
+                      label="Did you explain they may not claim the (A)CTC if they did not live with the child for more than half the year?"
+                      value={field.value}
+                      onChange={field.onChange}
+                      disabled={livedHalf === "yes"}
+                    />
+                  )}
+                />
+
+                <Controller
+                  control={control}
+                  name="ddq_explainedDivorce8332Rules"
+                  render={({ field }) => (
+                    <YesNoNaRadio
+                      label="Did you explain the rules for divorced/separated parents, including Form 8332 (or similar) requirements?"
+                      value={field.value}
+                      onChange={field.onChange}
+                      disabled={!notLiveDueToDivorce}
+                    />
+                  )}
+                />
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* Page 6 docs */}
+        <TabsContent value="page6">
+          <Card className="border-slate-200">
+            <CardHeader>
+              <CardTitle className="text-slate-900">
+                Documents (EIC / CTC)
+              </CardTitle>
+              <div
+                className="mt-2 h-1 w-24 rounded-full"
+                style={brandGradient}
+              />
+              <p className="mt-3 text-sm text-slate-600">
+                Which documents (if any) do you have to determine eligibility?
+                Check all that apply.
+              </p>
+            </CardHeader>
+
+            <CardContent className="space-y-6">
+              <div
+                className={
+                  claimingCredits === "yes"
+                    ? "space-y-6"
+                    : "opacity-60 pointer-events-none space-y-6"
+                }
+              >
+                {/* Residency docs */}
+                <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                  <p className="text-sm font-semibold text-slate-900">
+                    Residency of Qualifying Child
+                  </p>
+
+                  <Controller
+                    control={control}
+                    name="ddq_residencyDocs"
+                    render={({ field }) => {
+                      const current = Array.isArray(field.value)
+                        ? field.value
+                        : [];
+                      const hasOther = current.includes("other");
+
+                      return (
+                        <div className="mt-3 space-y-3">
+                          <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+                            {RESIDENCY_DOCS.map((opt) => {
+                              const checked = current.includes(opt.value);
+                              return (
+                                <label
+                                  key={opt.value}
+                                  className={`flex items-start gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-800 hover:bg-slate-100 ${
+                                    checked
+                                      ? "ring-1 ring-[#E72B69]/25 bg-white"
+                                      : ""
+                                  }`}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    className="mt-1 h-4 w-4 accent-[#E72B69]"
+                                    checked={checked}
+                                    onChange={() => {
+                                      const next = toggleMulti(
+                                        current,
+                                        opt.value
+                                      );
+                                      field.onChange(next);
+                                      if (opt.value === "other" && checked) {
+                                        setValue("ddq_residencyOtherText", "", {
+                                          shouldDirty: true,
+                                        });
+                                      }
+                                      if (
+                                        EXCLUSIVE.has(opt.value) &&
+                                        !checked
+                                      ) {
+                                        setValue("ddq_residencyOtherText", "", {
+                                          shouldDirty: true,
+                                        });
+                                      }
+                                    }}
+                                  />
+                                  <span>{opt.label}</span>
+                                </label>
+                              );
+                            })}
+                          </div>
+
+                          {hasOther && (
+                            <div>
+                              <Label className="text-slate-700">
+                                Other (describe)
+                              </Label>
+                              <Input
+                                className="mt-1"
+                                {...register("ddq_residencyOtherText")}
+                              />
+                              {errors.ddq_residencyOtherText && (
+                                <p className="mt-1 text-xs text-red-600">
+                                  {errors.ddq_residencyOtherText.message}
+                                </p>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    }}
+                  />
+                </div>
+
+                {/* Disability docs */}
+                <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                  <p className="text-sm font-semibold text-slate-900">
+                    Disability of Qualifying Child
+                  </p>
+
+                  <Controller
+                    control={control}
+                    name="ddq_disabilityDocs"
+                    render={({ field }) => {
+                      const current = Array.isArray(field.value)
+                        ? field.value
+                        : [];
+                      const hasOther = current.includes("other");
+
+                      return (
+                        <div className="mt-3 space-y-3">
+                          <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+                            {DISABILITY_DOCS.map((opt) => {
+                              const checked = current.includes(opt.value);
+                              return (
+                                <label
+                                  key={opt.value}
+                                  className={`flex items-start gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-800 hover:bg-slate-100 ${
+                                    checked
+                                      ? "ring-1 ring-[#E72B69]/25 bg-white"
+                                      : ""
+                                  }`}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    className="mt-1 h-4 w-4 accent-[#E72B69]"
+                                    checked={checked}
+                                    onChange={() => {
+                                      const next = toggleMulti(
+                                        current,
+                                        opt.value
+                                      );
+                                      field.onChange(next);
+                                      if (opt.value === "other" && checked) {
+                                        setValue(
+                                          "ddq_disabilityOtherText",
+                                          "",
+                                          { shouldDirty: true }
+                                        );
+                                      }
+                                      if (
+                                        EXCLUSIVE.has(opt.value) &&
+                                        !checked
+                                      ) {
+                                        setValue(
+                                          "ddq_disabilityOtherText",
+                                          "",
+                                          { shouldDirty: true }
+                                        );
+                                      }
+                                    }}
+                                  />
+                                  <span>{opt.label}</span>
+                                </label>
+                              );
+                            })}
+                          </div>
+
+                          {hasOther && (
+                            <div>
+                              <Label className="text-slate-700">
+                                Other (describe)
+                              </Label>
+                              <Input
+                                className="mt-1"
+                                {...register("ddq_disabilityOtherText")}
+                              />
+                              {errors.ddq_disabilityOtherText && (
+                                <p className="mt-1 text-xs text-red-600">
+                                  {errors.ddq_disabilityOtherText.message}
+                                </p>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    }}
+                  />
+                </div>
+
+                <p className="text-xs text-slate-500">
+                  Selecting “Did not rely…” clears other selections in that
+                  section.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
+
+      <div className="flex justify-end gap-2">
+        <Button
+          type="reset"
+          variant="outline"
+          onClick={() => reset(defaultValues)}
+          disabled={isSubmitting}
+        >
+          Reset
+        </Button>
+
+        <Button
+          type="submit"
+          className="text-white hover:opacity-90"
+          style={brandGradient}
+          disabled={isSubmitting}
+        >
+          {isSubmitting ? "Saving…" : "Save"}
+        </Button>
+      </div>
+    </form>
+  );
+}

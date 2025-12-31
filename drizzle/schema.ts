@@ -1,5 +1,5 @@
 // drizzle/schema.ts
-import { sql } from "drizzle-orm";
+import { sql, relations } from "drizzle-orm";
 import {
   pgTable,
   text,
@@ -31,6 +31,7 @@ export const invoiceStatus = pgEnum("invoice_status", [
   "UNPAID",
   "PAID",
   "VOID",
+  "PAYMENT_SUBMITTED",
   "REFUNDED",
   "PARTIAL",
 ]);
@@ -371,6 +372,7 @@ export const userRoleEnum = pgEnum("user_role", [
   "LMS_PREPARER",
   "LMS_ADMIN",
   "TAX_PREPARER",
+  "SUPPORT_AGENT",
 ]);
 
 export const users = pgTable(
@@ -381,13 +383,15 @@ export const users = pgTable(
     email: text("email").notNull(),
 
     firstName: text("first_name"),
-    middleName: text("middle_name"), 
+    middleName: text("middle_name"),
     lastName: text("last_name"),
 
     name: text("name"),
     phone: text("phone"),
-    dob: date("dob"), 
+    dob: date("dob"),
     ssnEncrypted: text("ssn_encrypted"),
+    ssnLast4: varchar("ssn_last4", { length: 4 }),
+    ssnSetAt: timestamp("ssn_set_at", { withTimezone: true }),
     address1: text("address1"),
     address2: text("address2"),
     city: text("city"),
@@ -397,9 +401,13 @@ export const users = pgTable(
     avatarUrl: text("avatar_url"),
     bio: text("bio"),
 
-    onboardingStep: onboardingStepEnum("onboarding_step").default("PROFILE").notNull(),
+    onboardingStep: onboardingStepEnum("onboarding_step")
+      .default("PROFILE")
+      .notNull(),
 
-    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .defaultNow()
       .$onUpdate(() => new Date())
@@ -409,8 +417,6 @@ export const users = pgTable(
     emailIdx: index("users_email_idx").on(t.email),
   })
 );
-
-
 
 // =========================
 // TAXPAYER INTAKE TABLE
@@ -426,7 +432,9 @@ export const taxpayerIntake = pgTable(
     // everything from onboarding/questions goes here
     answers: jsonb("answers").notNull().default({}),
 
-    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .defaultNow()
       .$onUpdate(() => new Date())
@@ -434,6 +442,201 @@ export const taxpayerIntake = pgTable(
   },
   (t) => ({
     userUnique: uniqueIndex("taxpayer_intake_user_unique").on(t.userId),
+  })
+);
+
+// =========================
+// QUESTIONNAIRE
+// =========================
+export const headOfHouseholdDocs = pgTable(
+  "head_of_household_docs",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+
+    payload: jsonb("payload").notNull(),
+
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => ({
+    userUniq: uniqueIndex("hoh_docs_user_uniq").on(t.userId),
+  })
+);
+
+export const educationCredits = pgTable(
+  "education_credits",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+
+    payload: jsonb("payload").notNull(),
+
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => ({
+    userUniq: uniqueIndex("education_credits_user_uniq").on(t.userId),
+  })
+);
+
+export const identificationType = pgEnum("identification_type", [
+  "DRIVERS_LICENSE",
+  "STATE_ID",
+  "PASSPORT",
+  "OTHER",
+]);
+
+export const identificationPersonEnum = pgEnum("identification_person", [
+  "TAXPAYER",
+  "SPOUSE",
+]);
+
+export const identification = pgTable(
+  "identifications",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+
+    type: identificationType("type").notNull(),
+    issuingState: text("issuing_state"), // e.g. "NV"
+    expiresOn: date("expires_on"),
+    idLast4: text("id_last4"),
+    frontKey: text("front_key"),
+    backKey: text("back_key"),
+    person: identificationPersonEnum("person").notNull(),
+    notes: text("notes"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => ({
+    userPersonUnique: uniqueIndex("identifications_user_person_unique").on(
+      t.userId,
+      t.person
+    ),
+    userIdx: index("identifications_user_idx").on(t.userId),
+  })
+);
+
+export const estimatedStateTaxPayments = pgTable(
+  "estimated_state_tax_payments",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+
+    // stores your Zod form values
+    data: jsonb("data").notNull(),
+
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    userUnique: uniqueIndex("est_state_tax_payments_user_unique").on(t.userId),
+  })
+);
+
+export const estimatedTaxPayments = pgTable(
+  "estimated_tax_payments",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+
+    data: jsonb("data").notNull(),
+
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    userUnique: uniqueIndex("estimated_tax_payments_user_unique").on(t.userId),
+  })
+);
+
+export const incomeDocumentation = pgTable(
+  "income_documentations",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+
+    // stores your component payload as JSON
+    data: jsonb("data").$type<Record<string, any>>().notNull(),
+
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => ({
+    userUnique: uniqueIndex("income_documentations_user_unique").on(t.userId),
+    userIdx: index("income_documentations_user_idx").on(t.userId),
+  })
+);
+
+export const qualifyingChildren = pgTable(
+  "qualifying_children",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    data: jsonb("data").$type<Record<string, any>>().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    userUnique: uniqueIndex("qualifying_children_user_unique").on(t.userId),
+    userIdx: index("qualifying_children_user_idx").on(t.userId),
+  })
+);
+
+export const foreignAccountsDigitalAssets = pgTable(
+  "foreign_accounts_digital_assets",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+
+    // stores your component payload as JSON
+    data: jsonb("data").$type<Record<string, any>>().notNull(),
+
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => ({
+    userUnique: uniqueIndex("foreign_accounts_digital_assets_user_unique").on(t.userId),
+    userIdx: index("foreign_accounts_digital_assets_user_idx").on(t.userId),
   })
 );
 
@@ -499,6 +702,34 @@ export const appointmentRequests = pgTable("appointment_requests", {
   referrer: text("referrer"),
 });
 
+export const appointmentSlotStatus = pgEnum("appointment_slot_status", [
+  "open",
+  "blocked",
+]);
+
+export const appointmentSlots = pgTable(
+  "appointment_slots",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+
+    startsAt: timestamp("starts_at", { withTimezone: true }).notNull(),
+    durationMinutes: integer("duration_minutes").notNull().default(30),
+
+    status: appointmentSlotStatus("status").notNull().default("open"),
+
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (t) => ({
+    startsIdx: index("appointment_slots_starts_idx").on(t.startsAt),
+  })
+);
+
 // --- Dependents ---
 export const dependents = pgTable(
   "dependents",
@@ -508,10 +739,13 @@ export const dependents = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     firstName: varchar("first_name", { length: 80 }).notNull(),
+    middleName: varchar("middle_name", { length: 80 }).notNull().default(""),
     lastName: varchar("last_name", { length: 80 }).notNull(),
     dob: date("dob").notNull(),
-    ssnLast4: varchar("ssn_last4", { length: 4 }),
     ssnEncrypted: text("ssn_encrypted"),
+    appliedButNotReceived: boolean("applied_but_not_received")
+      .default(false)
+      .notNull(),
     relationship: text("relationship").notNull(),
     monthsInHome: integer("months_in_home").notNull().default(12),
     isStudent: boolean("is_student").default(false).notNull(),
@@ -530,6 +764,36 @@ export const dependents = pgTable(
     livedCheck: index("dependents_months_check").on(t.monthsInHome),
   }) // placeholder to allow inline check below if you use SQL
 );
+
+export const clientAgreements = pgTable("client_agreements", {
+  id: uuid("id").defaultRandom().primaryKey(),
+
+  userId: text("user_id").notNull(),
+  taxYear: text("tax_year").notNull(),
+  kind: text("kind").notNull(),
+
+  version: text("version").notNull(),
+  contentHash: text("content_hash").notNull(),
+
+  // ✅ add this
+  decision: text("decision").notNull().default("SIGNED"), // SIGNED | GRANTED | DECLINED | SKIPPED
+
+  taxpayerName: text("taxpayer_name").notNull(),
+  taxpayerSignedAt: timestamp("taxpayer_signed_at", {
+    withTimezone: true,
+  }).notNull(),
+
+  spouseRequired: boolean("spouse_required").notNull().default(false),
+  spouseName: text("spouse_name"),
+  spouseSignedAt: timestamp("spouse_signed_at", { withTimezone: true }),
+
+  ip: text("ip"),
+  userAgent: text("user_agent"),
+
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
 
 // =========================
 // TAX RETURN TABLES
@@ -591,10 +855,17 @@ export const documents = pgTable(
   })
 );
 
+export const paymentStatusEnum = pgEnum("invoice_payment_status", [
+  "submitted",
+  "approved",
+  "rejected",
+]);
+
 export const invoices = pgTable(
   "invoices",
   {
     id: uuid("id").defaultRandom().primaryKey(),
+
     userId: uuid("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
@@ -614,6 +885,57 @@ export const invoices = pgTable(
   })
 );
 
+export const invoicePayments = pgTable(
+  "invoice_payments",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+
+    invoiceId: uuid("invoice_id")
+      .notNull()
+      .references(() => invoices.id, { onDelete: "cascade" }),
+
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+
+    method: text("method").notNull(),
+
+    amount: numeric("amount", { precision: 12, scale: 2 }).notNull(),
+
+    paidOn: date("paid_on").notNull(),
+
+    reference: text("reference"),
+    receiptKey: text("receipt_key"),
+    notes: text("notes"),
+
+    // ✅ lowercase enum + lowercase default
+    status: paymentStatusEnum("status").notNull().default("submitted"),
+
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => ({
+    invoiceIdx: index("invoice_payments_invoice_idx").on(t.invoiceId),
+    userIdx: index("invoice_payments_user_idx").on(t.userId),
+    statusIdx: index("invoice_payments_status_idx").on(t.status),
+  })
+);
+
+export const invoicesRelations = relations(invoices, ({ many }) => ({
+  payments: many(invoicePayments),
+}));
+
+export const invoicePaymentsRelations = relations(
+  invoicePayments,
+  ({ one }) => ({
+    invoice: one(invoices, {
+      fields: [invoicePayments.invoiceId],
+      references: [invoices.id],
+    }),
+  })
+);
+
 export const tasks = pgTable(
   "tasks",
   {
@@ -624,6 +946,9 @@ export const tasks = pgTable(
     taxReturnId: uuid("tax_return_id").references(() => taxReturns.id, {
       onDelete: "cascade",
     }),
+    taxYear: integer("tax_year")
+      .notNull()
+      .default(sql`(EXTRACT(YEAR FROM now()))::int`),
     title: text("title").notNull(),
     detail: text("detail"),
     status: taskStatus("status").default("OPEN").notNull(),
@@ -638,6 +963,7 @@ export const tasks = pgTable(
   (t) => ({
     userIdx: index("tasks_user_idx").on(t.userId),
     returnIdx: index("tasks_return_idx").on(t.taxReturnId),
+    userYearIdx: index("tasks_user_year_idx").on(t.userId, t.taxYear),
   })
 );
 
@@ -645,18 +971,78 @@ export const messages = pgTable(
   "messages",
   {
     id: uuid("id").defaultRandom().primaryKey(),
-    userId: uuid("user_id")
+    conversationId: uuid("conversation_id")
       .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
-    sender: text("sender").notNull(), // "client" | "staff"
-    body: text("body").notNull(),
+      .references(() => conversations.id, { onDelete: "cascade" }),
+
+    senderUserId: uuid("sender_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+
+    senderRole: userRoleEnum("sender_role").notNull(),
+    body: text("body"),
+    encryptedBody: text("encrypted_body").notNull(),
+    attachmentUrl: text("attachment_url"),
+    encryptedAttachmentMeta: text("encrypted_attachment_meta"),
+    keyVersion: text("key_version").default("v2").notNull(),
+    isSystem: boolean("is_system").default(false).notNull(),
+    readAt: timestamp("read_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
   },
   (t) => ({
-    userIdx: index("messages_user_idx").on(t.userId),
+    conversationIdx: index("messages_conversation_idx").on(t.conversationId),
+    senderIdx: index("messages_sender_idx").on(t.senderUserId),
     createdIdx: index("messages_created_idx").on(t.createdAt),
+  })
+);
+
+export const messageAudit = pgTable("message_audit", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  messageId: uuid("message_id").notNull(),
+  action: text("action").notNull(), // sent | read | deleted
+  actorUserId: uuid("actor_user_id"),
+  actorRole: userRoleEnum("actor_role"),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+});
+
+/* =====================
+   CONVERSATIONS TABLE
+   =====================*/
+export const conversations = pgTable(
+  "conversations",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+
+    clientId: uuid("client_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+
+    subject: text("subject"),
+    lastMessageAt: timestamp("last_message_at", {
+      withTimezone: true,
+    }).defaultNow(),
+    lastSenderRole: userRoleEnum("last_sender_role"),
+    lastSenderUserId: uuid("last_sender_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    clientUnread: integer("client_unread").default(0).notNull(),
+    adminUnread: integer("admin_unread").default(0).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (t) => ({
+    clientIdx: index("conversations_client_idx").on(t.clientId),
+    lastMessageIdx: index("conversations_last_message_idx").on(t.lastMessageAt),
   })
 );
 
@@ -695,7 +1081,7 @@ export const userSettings = pgTable(
    LMS SECTION
    Firms, Courses, Modules, Lessons, Enrollments, Progress, SOP Files
    ====================================================================== */
-   export const firmRoleEnum = pgEnum("firm_role", [
+export const firmRoleEnum = pgEnum("firm_role", [
   "OWNER",
   "ADMIN",
   "INSTRUCTOR",
@@ -1024,3 +1410,35 @@ export const emailSubscribers = pgTable("email_subscribers", {
     .notNull()
     .default(sql`now()`),
 });
+
+export const directDeposit = pgTable(
+  "direct_deposit",
+  {
+    userId: text("user_id").notNull(),
+
+    useDirectDeposit: boolean("use_direct_deposit").notNull().default(false),
+
+    accountHolderName: text("account_holder_name").notNull().default(""),
+    bankName: text("bank_name").notNull().default(""),
+
+    // "checking" | "savings"
+    accountType: text("account_type").notNull().default("checking"),
+
+    routingLast4: text("routing_last4").notNull().default(""),
+    accountLast4: text("account_last4").notNull().default(""),
+
+    // encrypted strings (base64)
+    routingEncrypted: text("routing_encrypted").notNull().default(""),
+    accountEncrypted: text("account_encrypted").notNull().default(""),
+
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    userUnique: uniqueIndex("direct_deposit_user_id_uq").on(t.userId),
+  })
+);

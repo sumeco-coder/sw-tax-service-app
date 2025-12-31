@@ -1,7 +1,12 @@
+// app/(client)/taxpayer/onboarding-sign-up/page.tsx
 import { db } from "@/drizzle/db";
 import { invites } from "@/drizzle/schema";
 import { eq } from "drizzle-orm";
 import OnboardingSignUpForm from "../_components/OnboardingSignUpForm";
+import { headers } from "next/headers";
+
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 type InviteRow = typeof invites.$inferSelect;
 
@@ -9,11 +14,109 @@ function oneParam(v: string | string[] | undefined) {
   return Array.isArray(v) ? v[0] : v;
 }
 
+function normalizeBaseUrl(raw: unknown) {
+  let s = String(raw ?? "").trim();
+  if (!s) return "";
+  if (!/^https?:\/\//i.test(s)) s = `https://${s}`;
+  s = s.replace(/\/+$/, "");
+  return s;
+}
+
+/**
+ * ✅ Uses current host (works on localhost + any domain),
+ * fallback to envs if host headers aren’t available.
+ */
+async function getOriginFromRequest() {
+  try {
+    const h = await headers(); // ✅ Next 15
+    const host = (h.get("x-forwarded-host") || h.get("host") || "").trim();
+    if (host) {
+      const protoRaw = (h.get("x-forwarded-proto") || "").trim();
+      const proto = protoRaw || (host.includes("localhost") ? "http" : "https");
+      return `${proto}://${host}`;
+    }
+  } catch {
+    // ignore
+  }
+
+  const normalizeBaseUrl = (raw: unknown) => {
+    let s = String(raw ?? "").trim();
+    if (!s) return "";
+    if (!/^https?:\/\//i.test(s)) s = `https://${s}`;
+    s = s.replace(/\/+$/, "");
+    return s;
+  };
+
+  return (
+    normalizeBaseUrl(process.env.APP_ORIGIN) ||
+    normalizeBaseUrl(process.env.SITE_URL) ||
+    "http://localhost:3000"
+  );
+}
+
 interface PageProps {
-  // supports Next 15 (Promise) and older usage
   searchParams:
     | Promise<{ [key: string]: string | string[] | undefined }>
     | { [key: string]: string | string[] | undefined };
+}
+
+const BRAND = {
+  pink: "#E72B69",
+  copper: "#BA4A26",
+  charcoal: "#2C2B33",
+};
+
+function Shell({
+  title,
+  subtitle,
+  badge,
+  children,
+}: {
+  title: string;
+  subtitle: string;
+  badge?: string | null;
+  children: React.ReactNode;
+}) {
+  return (
+    <main className="min-h-screen px-4 py-10 bg-gradient-to-br from-[#E72B69]/10 via-white to-[#BA4A26]/10">
+      <div className="mx-auto max-w-lg">
+        <div className="mb-6 text-center">
+          <div className="mx-auto mb-3 inline-flex items-center gap-2 rounded-full border bg-white/70 px-3 py-1 text-xs font-semibold text-slate-700 shadow-sm backdrop-blur">
+            <span
+              className="inline-block h-2.5 w-2.5 rounded-full"
+              style={{ background: `linear-gradient(135deg, ${BRAND.pink}, ${BRAND.copper})` }}
+            />
+            SW Tax Service
+          </div>
+
+          <h1 className="text-2xl font-extrabold tracking-tight" style={{ color: BRAND.charcoal }}>
+            {title}
+          </h1>
+          <p className="mt-2 text-sm text-slate-600">{subtitle}</p>
+
+          {badge ? (
+            <div
+              className="mt-4 inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold text-white shadow-sm"
+              style={{ background: `linear-gradient(135deg, ${BRAND.pink}, ${BRAND.copper})` }}
+            >
+              {badge}
+            </div>
+          ) : null}
+        </div>
+
+        <div className="rounded-3xl border border-white/60 bg-white/80 p-6 shadow-xl backdrop-blur">
+          {children}
+        </div>
+
+        <p className="mt-5 text-center text-xs text-slate-500">
+          Need help?{" "}
+          <a className="font-semibold underline" href="mailto:support@swtaxservice.com">
+            support@swtaxservice.com
+          </a>
+        </p>
+      </div>
+    </main>
+  );
 }
 
 export default async function TaxpayerOnboardingSignUpPage({ searchParams }: PageProps) {
@@ -22,19 +125,28 @@ export default async function TaxpayerOnboardingSignUpPage({ searchParams }: Pag
   };
 
   // ✅ accept either token or invite
-  const token = oneParam(sp.token) || oneParam(sp.invite);
+  const token = (oneParam(sp.token) || oneParam(sp.invite) || "").trim();
+
+  // ✅ FIX: await the async origin helper
+  const origin = await getOriginFromRequest();
+
+  // Helpful sign-in URL (keeps invite context + routes back into onboarding)
+  const signInUrl = `${origin}/sign-in?invite=${encodeURIComponent(
+    token
+  )}&next=${encodeURIComponent("/onboarding/profile")}`;
 
   if (!token) {
     return (
-      <main className="min-h-screen bg-gray-50 px-4 py-10">
-        <div className="mx-auto max-w-md rounded-xl bg-white p-6 shadow">
-          <h1 className="text-lg font-semibold text-gray-900">Invalid invite link</h1>
-          <p className="mt-2 text-sm text-gray-600">
-            This onboarding link is missing a token. Please use the link sent to your email,
-            or contact support.
+      <Shell
+        title="Invalid invite link"
+        subtitle="This onboarding link is missing a token. Please use the link sent to your email, or contact support."
+      >
+        <div className="rounded-2xl border bg-white p-4">
+          <p className="text-sm text-slate-700">
+            If you believe this is an error, request a new invite.
           </p>
         </div>
-      </main>
+      </Shell>
     );
   }
 
@@ -52,63 +164,62 @@ export default async function TaxpayerOnboardingSignUpPage({ searchParams }: Pag
 
   if (!invite || invite.type !== "taxpayer" || expired) {
     return (
-      <main className="min-h-screen bg-gray-50 px-4 py-10">
-        <div className="mx-auto max-w-md rounded-xl bg-white p-6 shadow">
-          <h1 className="text-lg font-semibold text-gray-900">This link is no longer valid</h1>
-          <p className="mt-2 text-sm text-gray-600">
-            Your onboarding invite may be expired or invalid. Please reach out to SW Tax Service
-            if you need a new link.
+      <Shell
+        title="This link is no longer valid"
+        subtitle="Your onboarding invite may be expired or invalid. Please reach out to SW Tax Service if you need a new link."
+      >
+        <div className="rounded-2xl border bg-white p-4">
+          <p className="text-sm text-slate-700">
+            Ask support for a new onboarding invite.
           </p>
         </div>
-      </main>
+      </Shell>
     );
   }
 
   if (invite.status !== "pending") {
     return (
-      <main className="min-h-screen bg-gray-50 px-4 py-10">
-        <div className="mx-auto max-w-md rounded-xl bg-white p-6 shadow">
-          <h1 className="text-lg font-semibold text-gray-900">This link was already used</h1>
-          <p className="mt-2 text-sm text-gray-600">
-            If you already created your account, sign in to continue onboarding.
-          </p>
+      <Shell
+        title="This link was already used"
+        subtitle="If you already created your account, sign in to continue."
+      >
+        <a
+          href={signInUrl}
+          className="inline-flex w-full items-center justify-center rounded-2xl px-4 py-3 text-sm font-semibold text-white shadow-sm"
+          style={{ background: `linear-gradient(135deg, ${BRAND.pink}, ${BRAND.copper})` }}
+        >
+          Sign in
+        </a>
 
-          <a
-            href="/sign-in"
-            className="mt-4 inline-flex rounded-xl bg-black px-3 py-2 text-sm font-semibold text-white"
-          >
-            Sign in
-          </a>
-        </div>
-      </main>
+        <p className="mt-3 text-center text-xs text-slate-500">
+            Sign in to continue your onboarding.
+        </p>
+      </Shell>
     );
   }
 
-  const plan =
-    (invite.meta as any)?.plan && typeof (invite.meta as any).plan === "string"
-      ? (invite.meta as any).plan
-      : undefined;
+  const meta = invite.meta as any;
+  const plan = typeof meta?.plan === "string" ? meta.plan : undefined;
+  const source = typeof meta?.source === "string" ? meta.source : undefined;
+
+  const subtitle =
+    source === "direct"
+      ? "You’ve been invited to create your account. Finish signup to begin onboarding."
+      : "You’ve been approved. Finish creating your account to start your tax onboarding.";
 
   return (
-    <main className="min-h-screen bg-gradient-to-b from-slate-50 to-slate-100 px-4 py-10">
-      <div className="mx-auto max-w-lg">
-        <div className="mb-6 text-center">
-          <h1 className="text-2xl font-bold text-slate-900">
-            Create your SW Tax Service account
-          </h1>
-          <p className="mt-2 text-sm text-slate-600">
-            You’ve been approved from the waitlist. Finish creating your account to start your tax onboarding.
-          </p>
+    <Shell
+      title="Create your SW Tax Service account"
+      subtitle={subtitle}
+      badge={plan ? `Plan: ${plan}` : null}
+    >
+      <OnboardingSignUpForm email={invite.email} token={invite.token} plan={plan} />
 
-          {plan && (
-            <div className="mt-3 inline-flex items-center rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-200">
-              Plan: {plan}
-            </div>
-          )}
-        </div>
-
-        <OnboardingSignUpForm email={invite.email} token={invite.token} plan={plan} />
+      <div className="mt-4 rounded-2xl border bg-slate-50 p-4">
+        <p className="text-xs text-slate-600">
+          By continuing, you’ll create your portal account and start your onboarding steps.
+        </p>
       </div>
-    </main>
+    </Shell>
   );
 }

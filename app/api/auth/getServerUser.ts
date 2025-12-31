@@ -1,3 +1,4 @@
+// api/auth
 import { getServerRole } from "@/lib/auth/roleServer";
 
 export async function getServerUser() {

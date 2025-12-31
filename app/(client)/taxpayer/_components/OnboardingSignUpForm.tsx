@@ -18,6 +18,19 @@ interface Props {
 
 type Phase = "signup" | "confirm";
 
+const BRAND = {
+  pink: "#E72B69",
+  copper: "#BA4A26",
+  charcoal: "#2C2B33",
+};
+
+const inputBase =
+  "w-full rounded-xl border px-3 py-2 text-sm outline-none bg-white shadow-sm text-slate-900 caret-slate-900 placeholder:text-slate-400";
+
+const inputFocus =
+  "focus:ring-2 focus:ring-[#E72B69]/25 focus:border-[#E72B69]";
+const inputBorder = "border-slate-200";
+
 export default function OnboardingSignUpForm({ email, token, plan }: Props) {
   const router = useRouter();
   const [firstName, setFirstName] = useState("");
@@ -47,7 +60,6 @@ export default function OnboardingSignUpForm({ email, token, plan }: Props) {
             given_name: fn,
             family_name: ln,
             name: fullName || fn,
-            // later: "custom:source": "waitlist", "custom:plan": plan, ...
           },
         },
       });
@@ -81,17 +93,16 @@ export default function OnboardingSignUpForm({ email, token, plan }: Props) {
         confirmationCode: code.trim(),
       });
 
+      // optional auto sign-in after confirm
       if (password) {
         try {
-          await signIn({
-            username: email,
-            password,
-          });
+          await signIn({ username: email, password });
         } catch (err) {
           console.error("signIn after confirm failed (but continuing):", err);
         }
       }
 
+      // mark invite as used
       try {
         await completeInvite(token);
       } catch (err) {
@@ -109,28 +120,36 @@ export default function OnboardingSignUpForm({ email, token, plan }: Props) {
   }
 
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-      <div className="mb-4 space-y-1">
-        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-          Taxpayer onboarding
-        </p>
+    <div className="rounded-3xl border border-white/60 bg-white/80 p-6 shadow-xl backdrop-blur text-slate-900">
+      <div className="mb-5 space-y-2">
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+            Taxpayer onboarding
+          </p>
+
+          {plan ? (
+            <span
+              className="inline-flex items-center rounded-full px-3 py-1 text-[11px] font-semibold text-white shadow-sm"
+              style={{
+                background: `linear-gradient(135deg, ${BRAND.pink}, ${BRAND.copper})`,
+              }}
+            >
+              Plan: {plan}
+            </span>
+          ) : null}
+        </div>
+
         <p className="text-sm text-slate-600">
           You&apos;re creating an account for{" "}
-          <span className="font-medium text-slate-900">{email}</span>
-          {plan ? (
-            <>
-              {" "}
-              on plan <span className="font-semibold">{plan}</span>.
-            </>
-          ) : (
-            "."
-          )}
+          <span className="font-semibold" style={{ color: BRAND.charcoal }}>
+            {email}
+          </span>
+          .
         </p>
       </div>
 
       {phase === "signup" ? (
         <form onSubmit={handleSignUp} className="space-y-4">
-          {/* Name */}
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div>
               <label className="mb-1 block text-sm font-medium text-slate-700">
@@ -142,7 +161,7 @@ export default function OnboardingSignUpForm({ email, token, plan }: Props) {
                 value={firstName}
                 onChange={(e) => setFirstName(e.target.value)}
                 autoComplete="given-name"
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                className={`${inputBase} ${inputBorder} ${inputFocus}`}
               />
             </div>
 
@@ -155,12 +174,11 @@ export default function OnboardingSignUpForm({ email, token, plan }: Props) {
                 value={lastName}
                 onChange={(e) => setLastName(e.target.value)}
                 autoComplete="family-name"
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                className={`${inputBase} ${inputBorder} ${inputFocus}`}
               />
             </div>
           </div>
-          
-          {/* Email (locked) */}
+
           <div>
             <label className="mb-1 block text-sm font-medium text-slate-700">
               Email
@@ -169,14 +187,13 @@ export default function OnboardingSignUpForm({ email, token, plan }: Props) {
               type="email"
               value={email}
               disabled
-              className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700"
+              className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700"
             />
             <p className="mt-1 text-xs text-slate-500">
               Email is locked to the address that received this invite.
             </p>
           </div>
 
-          {/* Password */}
           <div>
             <label className="mb-1 block text-sm font-medium text-slate-700">
               Create a password
@@ -187,26 +204,30 @@ export default function OnboardingSignUpForm({ email, token, plan }: Props) {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="Choose a secure password"
-              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+              className={`${inputBase} ${inputBorder} ${inputFocus}`}
             />
           </div>
 
-          {/* Hidden token (not used by browser, but ok for future form actions) */}
           <input type="hidden" name="token" value={token} />
 
           <button
             type="submit"
             disabled={loading}
-            className="mt-2 inline-flex w-full items-center justify-center rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+            className="mt-2 inline-flex w-full items-center justify-center rounded-2xl px-4 py-3 text-sm font-semibold text-white shadow-sm disabled:cursor-not-allowed disabled:opacity-60"
+            style={{
+              background: `linear-gradient(135deg, ${BRAND.pink}, ${BRAND.copper})`,
+            }}
           >
             {loading ? "Creating account…" : "Create account"}
           </button>
 
           <p className="text-center text-xs text-slate-500">
             Already have an account?{" "}
+            {/* ✅ relative path works on localhost + www + app */}
             <Link
               href="/sign-in"
-              className="font-semibold text-blue-700 hover:underline"
+              className="font-semibold hover:underline"
+              style={{ color: BRAND.pink }}
             >
               Sign in
             </Link>
@@ -226,14 +247,17 @@ export default function OnboardingSignUpForm({ email, token, plan }: Props) {
               inputMode="numeric"
               pattern="[0-9]*"
               placeholder="Enter the 6-digit code"
-              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+              className={`${inputBase} ${inputBorder} ${inputFocus}`}
             />
           </div>
 
           <button
             type="submit"
             disabled={loading}
-            className="mt-2 inline-flex w-full items-center justify-center rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+            className="mt-2 inline-flex w-full items-center justify-center rounded-2xl px-4 py-3 text-sm font-semibold text-white shadow-sm disabled:cursor-not-allowed disabled:opacity-60"
+            style={{
+              background: `linear-gradient(135deg, ${BRAND.pink}, ${BRAND.copper})`,
+            }}
           >
             {loading ? "Confirming…" : "Confirm account"}
           </button>
@@ -242,7 +266,8 @@ export default function OnboardingSignUpForm({ email, token, plan }: Props) {
             Already confirmed?{" "}
             <Link
               href="/sign-in"
-              className="font-semibold text-blue-700 hover:underline"
+              className="font-semibold hover:underline"
+              style={{ color: BRAND.pink }}
             >
               Sign in
             </Link>
@@ -251,7 +276,7 @@ export default function OnboardingSignUpForm({ email, token, plan }: Props) {
       )}
 
       {msg && (
-        <p className="mt-3 text-xs text-slate-600" aria-live="polite">
+        <p className="mt-4 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600">
           {msg}
         </p>
       )}

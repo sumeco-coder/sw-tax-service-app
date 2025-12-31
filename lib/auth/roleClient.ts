@@ -7,11 +7,15 @@ import { configureAmplify } from "@/lib/amplifyClient";
 configureAmplify();
 
 export type AppRole =
-  | "taxpayer"
-  | "lms-preparer"
-  | "lms-admin"
-  | "admin"
-  | "unknown";
+  | "TAXPAYER"
+  | "AGENCY"
+  | "ADMIN"
+  | "SUPERADMIN"
+  | "LMS_PREPARER"
+  | "LMS_ADMIN"
+  | "TAX_PREPARER"
+  | "SUPPORT_AGENT";
+
 
 export type RoleInfo = {
   role: AppRole;

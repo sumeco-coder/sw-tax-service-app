@@ -2,45 +2,109 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/drizzle/db";
 import { appointments, users } from "@/drizzle/schema";
-import { eq, desc, and } from "drizzle-orm";
+import { and, asc, eq, gte } from "drizzle-orm";
+import { getServerRole } from "@/lib/auth/roleServer";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+function normalizeEmail(v: unknown) {
+  return String(v ?? "").trim().toLowerCase();
+}
+
+async function getOrCreateUserBySub(cognitoSub: string, email?: string) {
+  const [existing] = await db
+    .select({ id: users.id, email: users.email })
+    .from(users)
+    .where(eq(users.cognitoSub, cognitoSub))
+    .limit(1);
+
+  if (existing) {
+    if (email && email !== existing.email) {
+      const [updated] = await db
+        .update(users)
+        .set({ email, updatedAt: new Date() })
+        .where(eq(users.id, existing.id))
+        .returning({ id: users.id, email: users.email });
+      return updated ?? existing;
+    }
+    return existing;
+  }
+
+  if (!email) throw new Error("Missing email. Please sign in again.");
+
+  const [created] = await db
+    .insert(users)
+    .values({ cognitoSub, email, updatedAt: new Date() } as any)
+    .returning({ id: users.id, email: users.email });
+
+  return created;
+}
 
 export async function GET(req: NextRequest) {
-  const url = new URL(req.url);
-  const sub = url.searchParams.get("sub");
+  try {
+    const me = await getServerRole();
+    const subFromCookie = me?.sub ? String(me.sub) : "";
+    const emailFromCookie = me?.email ? normalizeEmail(me.email) : "";
 
-  if (!sub) {
-    return NextResponse.json({ appointment: null }, { status: 200 });
-  }
+    if (!subFromCookie) {
+      return NextResponse.json({ appointment: null }, { status: 200 });
+    }
 
-  // find user by Cognito sub
-  const [user] = await db
-    .select({ id: users.id })
-    .from(users)
-    .where(eq(users.cognitoSub, sub))
-    .limit(1);
+    // ✅ Normal users: only their own data
+    let targetSub = subFromCookie;
 
-  if (!user) {
-    return NextResponse.json({ appointment: null }, { status: 200 });
-  }
+    // ✅ Optional admin override: allow querying by ?sub=
+    const url = new URL(req.url);
+    const subParam = String(url.searchParams.get("sub") ?? "").trim();
+    if (me?.role === "admin" && subParam) {
+      targetSub = subParam;
+    }
 
-  // Get latest *scheduled* appointment for this user
-  const [appt] = await db
-    .select({
-      id: appointments.id,
-      // map DB column scheduledAt -> API field startsAt (to match your client type)
-      startsAt: appointments.scheduledAt,
-      status: appointments.status,
-      durationMinutes: appointments.durationMinutes,
-    })
-    .from(appointments)
-    .where(
-      and(
-        eq(appointments.userId, user.id),
-        eq(appointments.status, "scheduled") // optional but recommended
+    const u = await getOrCreateUserBySub(targetSub, emailFromCookie);
+
+    // ✅ Next upcoming scheduled appointment
+    const now = new Date();
+
+    const [appt] = await db
+      .select({
+        id: appointments.id,
+        startsAt: appointments.scheduledAt,
+        status: appointments.status,
+        durationMinutes: appointments.durationMinutes,
+        notes: appointments.notes,
+      })
+      .from(appointments)
+      .where(
+        and(
+          eq(appointments.userId, u.id),
+          eq(appointments.status, "scheduled"),
+          gte(appointments.scheduledAt, now)
+        )
       )
-    )
-    .orderBy(desc(appointments.scheduledAt))
-    .limit(1);
+      .orderBy(asc(appointments.scheduledAt))
+      .limit(1);
 
-  return NextResponse.json({ appointment: appt ?? null }, { status: 200 });
+    if (!appt) {
+      return NextResponse.json({ appointment: null }, { status: 200 });
+    }
+
+    const dt = appt.startsAt instanceof Date ? appt.startsAt : new Date(appt.startsAt as any);
+
+    return NextResponse.json(
+      {
+        appointment: {
+          ...appt,
+          startsAt: Number.isNaN(dt.getTime()) ? null : dt.toISOString(),
+        },
+      },
+      { status: 200 }
+    );
+  } catch (e: any) {
+    console.error("GET /api/onboarding/appointment error:", e);
+    return NextResponse.json(
+      { appointment: null, error: String(e?.message ?? e) },
+      { status: 500 }
+    );
+  }
 }

@@ -1,6 +1,10 @@
-import AppointmentForm from "../../(site)/appointment/_components/AppointmentForm";
+import type { Metadata } from "next";
+import AppointmentForm from "./_components/AppointmentForm";
 
-export const dynamic = "force-dynamic";
+export const metadata: Metadata = {
+  title: "Book an Appointment | SW Tax Service",
+  description: "Request a time to talk. We’ll confirm by email (and SMS if you add a phone number).",
+};
 
 export default function AppointmentPage() {
   return (
