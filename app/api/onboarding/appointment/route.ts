@@ -57,7 +57,7 @@ export async function GET(req: NextRequest) {
     // ✅ Optional admin override: allow querying by ?sub=
     const url = new URL(req.url);
     const subParam = String(url.searchParams.get("sub") ?? "").trim();
-    if (me?.role === "admin" && subParam) {
+    if (me?.role === "ADMIN" && subParam) {
       targetSub = subParam;
     }
 
