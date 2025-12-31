@@ -8,7 +8,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 function requireAdmin(role: string | null | undefined) {
-  return role === "admin" || role === "lms-admin";
+  return role === "ADMIN" || role === "LMS_ADMIN";
 }
 
 export async function GET() {

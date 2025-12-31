@@ -25,7 +25,7 @@ export async function PATCH(
   try {
     // ✅ admin auth
     const me = await getServerRole();
-    if (!me?.sub || me.role !== "admin") {
+    if (!me?.sub || me.role !== "ADMIN") {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
