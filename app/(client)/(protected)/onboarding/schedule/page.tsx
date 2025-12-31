@@ -10,6 +10,11 @@ import { sendSms } from "@/lib/sms/sns";
 import { getServerRole } from "@/lib/auth/roleServer";
 
 // ---------- helpers ----------
+function isAdminRole(role: unknown) {
+  const r = String(role ?? "").toLowerCase();
+  return r === "admin" || r === "superadmin";
+}
+
 function clean(v: unknown, max = 500) {
   const s = String(v ?? "").trim();
   return s ? s.slice(0, max) : "";
@@ -248,9 +253,10 @@ export async function cancelAppointment(formData: FormData): Promise<void> {
     return;
   }
 
-  if (role !== "admin" && (userRow as any).cognitoSub !== sub) {
-    throw new Error("Forbidden.");
-  }
+  if (!isAdminRole(role) && (userRow as any).cognitoSub !== sub) {
+  throw new Error("Forbidden.");
+}
+
 
   const now = new Date();
   await db
@@ -340,9 +346,10 @@ export async function rescheduleAppointment(formData: FormData): Promise<void> {
     return;
   }
 
-  if (role !== "admin" && (userRow as any).cognitoSub !== sub) {
-    throw new Error("Forbidden.");
-  }
+  if (!isAdminRole(role) && (userRow as any).cognitoSub !== sub) {
+  throw new Error("Forbidden.");
+}
+
 
   const now = new Date();
   await db
