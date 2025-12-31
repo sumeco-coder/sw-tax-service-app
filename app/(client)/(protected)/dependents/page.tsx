@@ -132,7 +132,7 @@ export default function DependentsPage() {
   function applyLocalPatch(prev: Dep, patch: DepDraft): Dep {
     const { ssn, ssnEncrypted, ...rest } = patch;
 
-    let next: Dep = {
+    const next: Dep = {
       ...prev,
       ...rest,
       ssnEncrypted: "",
