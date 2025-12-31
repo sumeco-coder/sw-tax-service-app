@@ -1,4 +1,4 @@
-// app/(admin)/(protected)/messages/actions.ts
+// app/(admin)admin//(protected)/messages/actions.ts
 "use server";
 
 import { db } from "@/drizzle/db";
@@ -21,3 +21,4 @@ export async function getAllClientConversations() {
     .leftJoin(users, eq(users.id, conversations.clientId))
     .orderBy(desc(conversations.lastMessageAt));
 }
+export { sendMessage as staffSendMessage } from "@/app/(client)/(protected)/messages/actions";

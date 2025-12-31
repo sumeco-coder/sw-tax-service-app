@@ -1,32 +1,45 @@
-"use server";
+"use client";
 
-import { db } from "@/drizzle/db";
-import { conversations, users } from "@/drizzle/schema";
-import { desc, eq } from "drizzle-orm";
+import { useState, useTransition } from "react";
+import { staffSendMessage } from "../actions";
 
-// 👇 IMPORT the existing sender
-import { sendMessage } from "@/app/(client)/(protected)/messages/actions";
+export function AdminMessageInput({ conversationId }: { conversationId: string }) {
+  const [text, setText] = useState("");
+  const [pending, startTransition] = useTransition();
 
-/* ─────────────────────────────────────────────
-   Admin: fetch all conversations
-───────────────────────────────────────────── */
-export async function getAllClientConversations() {
-  return db
-    .select({
-      id: conversations.id,
-      subject: conversations.subject,
-      clientUnread: conversations.clientUnread,
-      adminUnread: conversations.adminUnread,
-      lastMessageAt: conversations.lastMessageAt,
-      clientName: users.name,
-      clientEmail: users.email,
-    })
-    .from(conversations)
-    .leftJoin(users, eq(users.id, conversations.clientId))
-    .orderBy(desc(conversations.lastMessageAt));
+  return (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        const trimmed = text.trim();
+        if (!trimmed) return;
+
+        startTransition(async () => {
+          // Adjust the payload to match your existing sendMessage() signature
+          await staffSendMessage({
+            conversationId,
+            text: trimmed,
+          } as any);
+
+          setText("");
+        });
+      }}
+      className="flex gap-2"
+    >
+      <input
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        placeholder="Type a message…"
+        className="flex-1 rounded-md border px-3 py-2"
+        disabled={pending}
+      />
+      <button
+        type="submit"
+        disabled={pending || !text.trim()}
+        className="rounded-md border px-3 py-2"
+      >
+        Send
+      </button>
+    </form>
+  );
 }
-
-/* ─────────────────────────────────────────────
-   Admin: send message (ALIAS)
-───────────────────────────────────────────── */
-export const staffSendMessage = sendMessage;

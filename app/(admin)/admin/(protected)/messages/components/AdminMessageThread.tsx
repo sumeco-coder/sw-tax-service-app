@@ -2,7 +2,7 @@
 "use client";
 
 import { MessageBubble } from "@/app/(client)/(protected)/messages/_components/MessageBubble";
-import { AdminMessageInput } from "./AdminMessageInput";
+import { AdminMessageInput } from "../components/AdminMessageInput";
 import { getMessages } from "@/app/(client)/(protected)/messages/actions";
 import { useEffect, useState } from "react";
 
