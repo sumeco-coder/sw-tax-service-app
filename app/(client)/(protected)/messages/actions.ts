@@ -13,27 +13,32 @@ import { findOrCreateConversation } from "@/lib/messages/findOrCreateConversatio
 /* ─────────────────────────────────────────────
    Role helpers
 ───────────────────────────────────────────── */
-const STAFF_ROLES = [
-  "ADMIN",
-  "SUPERADMIN",
-  "LMS_ADMIN",
-  "SUPPORT_AGENT",
-] as const;
+const STAFF_ROLES = ["ADMIN", "SUPERADMIN", "LMS_ADMIN", "SUPPORT_AGENT"] as const;
 
 function isStaff(role: string) {
   return STAFF_ROLES.includes(role as any);
 }
 
 /* ─────────────────────────────────────────────
-   Pusher (server-only)
+   Pusher (server-only) — LAZY INIT (prevents build crash)
 ───────────────────────────────────────────── */
-const pusher = new Pusher({
-  appId: process.env.PUSHER_APP_ID!,
-  key: process.env.NEXT_PUBLIC_PUSHER_KEY!,
-  secret: process.env.PUSHER_SECRET!,
-  cluster: "us2",
-  useTLS: true,
-});
+function getPusher() {
+  const appId = process.env.PUSHER_APP_ID;
+  const key = process.env.NEXT_PUBLIC_PUSHER_KEY;
+  const secret = process.env.PUSHER_SECRET;
+  const cluster = process.env.PUSHER_CLUSTER ?? "us2";
+
+  // ✅ don’t crash during build/import if env vars aren’t present
+  if (!appId || !key || !secret) return null;
+
+  return new Pusher({
+    appId,
+    key,
+    secret,
+    cluster,
+    useTLS: true,
+  });
+}
 
 /* ─────────────────────────────────────────────
    Conversations (client inbox)
@@ -61,12 +66,9 @@ export async function getMessages(conversationId: string) {
 
   return rows.map((m) => ({
     ...m,
-    body: m.encryptedBody
-      ? decryptMessage(m.encryptedBody, m.keyVersion ?? "v1")
-      : "",
+    body: m.encryptedBody ? decryptMessage(m.encryptedBody, m.keyVersion ?? "v1") : "",
   }));
 }
-
 
 /* ─────────────────────────────────────────────
    Send message (encrypted)
@@ -81,52 +83,50 @@ export async function sendMessage(opts: {
 
   const staff = isStaff(user.role);
 
-   const conversation = opts.conversationId
+  const conversation = opts.conversationId
     ? { id: opts.conversationId }
     : await findOrCreateConversation(user.userId);
 
+  const conversationId = conversation.id;
 
   /* 1️⃣ Insert encrypted message */
   await db.insert(messages).values({
-    conversationId: conversation.id,
+    conversationId,
     senderUserId: user.userId,
     senderRole: user.role,
     encryptedBody: encryptMessage(opts.body, "v2"),
     keyVersion: "v2",
-    body: null, 
+    body: null,
     attachmentUrl: opts.attachmentUrl,
     isSystem: false,
   });
 
   /* 2️⃣ Update conversation + unread counts */
-await db.update(conversations).set({
-    lastMessageAt: new Date(),
-    lastSenderRole: user.role,
-    lastSenderUserId: user.userId,
-    clientUnread: staff
-      ? sql`${conversations.clientUnread} + 1`
-      : conversations.clientUnread,
-    adminUnread: !staff
-      ? sql`${conversations.adminUnread} + 1`
-      : conversations.adminUnread,
-  }).where(eq(conversations.id, conversation.id));
+  await db
+    .update(conversations)
+    .set({
+      lastMessageAt: new Date(),
+      lastSenderRole: user.role,
+      lastSenderUserId: user.userId,
+      clientUnread: staff ? sql`${conversations.clientUnread} + 1` : conversations.clientUnread,
+      adminUnread: !staff ? sql`${conversations.adminUnread} + 1` : conversations.adminUnread,
+    })
+    .where(eq(conversations.id, conversationId));
 
+  /* 3️⃣ Realtime */
+  const pusher = getPusher();
+  if (pusher) {
+    await pusher.trigger(`conversation-${conversationId}`, "new-message", {
+      conversationId,
+    });
 
-  /* 3️⃣ Realtime (conversation) */
-  await pusher.trigger(
-    `conversation-${opts.conversationId}`,
-    "new-message",
-    { conversationId: opts.conversationId }
-  );
-
-  /* 🔔 Global unread sync */
-  await pusher.trigger("global-messages", "unread-updated", {
-    conversationId: opts.conversationId,
-  });
+    await pusher.trigger("global-messages", "unread-updated", {
+      conversationId,
+    });
+  }
 
   revalidatePath("/messages");
 }
-
 
 /* ─────────────────────────────────────────────
    Mark conversation as read
@@ -137,9 +137,7 @@ export async function markConversationAsRead(conversationId: string) {
 
   const staff = isStaff(user.role);
 
-  /* 1️⃣ Mark unread messages as read
-     IMPORTANT: only messages NOT sent by viewer
-  */
+  /* 1️⃣ Mark unread messages as read (not sent by viewer) */
   await db
     .update(messages)
     .set({ readAt: new Date() })
@@ -154,41 +152,41 @@ export async function markConversationAsRead(conversationId: string) {
   /* 2️⃣ Reset unread counter */
   await db
     .update(conversations)
-    .set(
-      staff
-        ? { adminUnread: 0 }
-        : { clientUnread: 0 }
-    )
+    .set(staff ? { adminUnread: 0 } : { clientUnread: 0 })
     .where(eq(conversations.id, conversationId));
 
   /* 3️⃣ Broadcast global unread update */
-  await pusher.trigger("global-messages", "conversation-read", {
-    conversationId,
-    viewerRole: user.role,
-  });
+  const pusher = getPusher();
+  if (pusher) {
+    await pusher.trigger("global-messages", "conversation-read", {
+      conversationId,
+      viewerRole: user.role,
+    });
+  }
 
   revalidatePath("/messages");
 }
 
 /* ─────────────────────────────────────────────
-   Mark conversation as read
+   Staff: send message to a client (encrypted)
 ───────────────────────────────────────────── */
 export async function staffSendMessage(opts: {
   clientId: string;
   body: string;
   attachmentUrl?: string;
 }) {
-  const staff = await getServerUser();
-  if (!staff) throw new Error("Unauthorized");
+  const staffUser = await getServerUser();
+  if (!staffUser) throw new Error("Unauthorized");
+  if (!isStaff(staffUser.role)) throw new Error("Forbidden");
 
-  // 🔑 ensure conversation exists
+  // ensure conversation exists for this client
   const conversation = await findOrCreateConversation(opts.clientId);
+  const conversationId = conversation.id;
 
-  /* Insert encrypted message */
   await db.insert(messages).values({
-    conversationId: conversation.id,
-    senderUserId: staff.userId,
-    senderRole: staff.role,
+    conversationId,
+    senderUserId: staffUser.userId,
+    senderRole: staffUser.role,
     encryptedBody: encryptMessage(opts.body, "v2"),
     keyVersion: "v2",
     body: null,
@@ -196,22 +194,26 @@ export async function staffSendMessage(opts: {
     isSystem: false,
   });
 
-  /* Update unread counts (client side) */
-  await db.update(conversations).set({
-    lastMessageAt: new Date(),
-    lastSenderRole: staff.role,
-    lastSenderUserId: staff.userId,
-    clientUnread: sql`${conversations.clientUnread} + 1`,
-  }).where(eq(conversations.id, conversation.id));
+  await db
+    .update(conversations)
+    .set({
+      lastMessageAt: new Date(),
+      lastSenderRole: staffUser.role,
+      lastSenderUserId: staffUser.userId,
+      clientUnread: sql`${conversations.clientUnread} + 1`,
+    })
+    .where(eq(conversations.id, conversationId));
 
-  /* Realtime */
-  await pusher.trigger(
-    `conversation-${conversation.id}`,
-    "new-message",
-    { conversationId: conversation.id }
-  );
+  const pusher = getPusher();
+  if (pusher) {
+    await pusher.trigger(`conversation-${conversationId}`, "new-message", {
+      conversationId,
+    });
 
-  await pusher.trigger("global-messages", "unread-updated", {
-    conversationId: conversation.id,
-  });
+    await pusher.trigger("global-messages", "unread-updated", {
+      conversationId,
+    });
+  }
+
+  revalidatePath("/messages");
 }

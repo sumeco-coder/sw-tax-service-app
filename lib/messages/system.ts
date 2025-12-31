@@ -6,13 +6,17 @@ import { messages, conversations } from "@/drizzle/schema";
 import { eq, sql } from "drizzle-orm";
 import Pusher from "pusher";
 
-const pusher = new Pusher({
-  appId: process.env.PUSHER_APP_ID!,
-  key: process.env.NEXT_PUBLIC_PUSHER_KEY!,
-  secret: process.env.PUSHER_SECRET!,
-  cluster: "us2",
-  useTLS: true,
-});
+function getPusher() {
+  const appId = process.env.PUSHER_APP_ID;
+  const key = process.env.NEXT_PUBLIC_PUSHER_KEY;
+  const secret = process.env.PUSHER_SECRET;
+  const cluster = process.env.PUSHER_CLUSTER ?? "us2";
+
+  // ✅ Important: don’t crash during build/module import
+  if (!appId || !key || !secret) return null;
+
+  return new Pusher({ appId, key, secret, cluster, useTLS: true });
+}
 
 function clean(v: unknown, max = 4000) {
   const s = String(v ?? "").trim();
@@ -26,16 +30,16 @@ export async function sendSystemMessage(conversationId: string, body: string) {
   if (!cid) throw new Error("sendSystemMessage: missing conversationId");
   if (!text) return;
 
-  // ✅ If you have a real encryption helper used elsewhere, replace this with that.
+  // ✅ If you have real encryption, replace this with that helper.
   const encryptedBody = text;
 
   await db.insert(messages).values({
     conversationId: cid,
-    body: text,                // keep if you store plaintext
-    encryptedBody,             // ✅ required by your schema
+    body: text,
+    encryptedBody,          // ✅ required by your schema
     isSystem: true,
     senderUserId: null,
-    senderRole: "SYSTEM",      // ✅ now allowed by your enum
+    senderRole: "SYSTEM",   // ✅ now in enum
   });
 
   await db
@@ -47,9 +51,13 @@ export async function sendSystemMessage(conversationId: string, body: string) {
     })
     .where(eq(conversations.id, cid));
 
-  await pusher.trigger(`conversation-${cid}`, "new-message", {
-    conversationId: cid,
-    senderRole: "SYSTEM",
-    isSystem: true,
-  });
+  // ✅ Realtime push (skip if env vars aren’t set)
+  const pusher = getPusher();
+  if (pusher) {
+    await pusher.trigger(`conversation-${cid}`, "new-message", {
+      conversationId: cid,
+      senderRole: "SYSTEM",
+      isSystem: true,
+    });
+  }
 }
