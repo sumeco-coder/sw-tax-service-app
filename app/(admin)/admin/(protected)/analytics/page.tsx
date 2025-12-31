@@ -3,7 +3,7 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 export default function AdminAnalyticsPage() {
-  const src = process.env.NEXT_PUBLIC_LOOKER_STUDIO_EMBED_URL;
+  const src = process.env.LOOKER_STUDIO_EMBED_URL;
 
   if (!src) {
     return (
@@ -12,7 +12,7 @@ export default function AdminAnalyticsPage() {
         <p className="mt-2 text-sm text-[#202030]/70">
           Missing{" "}
           <code className="rounded bg-black/5 px-1">
-            NEXT_PUBLIC_LOOKER_STUDIO_EMBED_URL
+            LOOKER_STUDIO_EMBED_URL
           </code>
           . Add it in Amplify env vars.
         </p>

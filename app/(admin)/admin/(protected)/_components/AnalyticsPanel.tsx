@@ -3,7 +3,7 @@ import Link from "next/link";
 import { clarityOverviewLast7Days } from "@/lib/analytics/clarity";
 
 export default async function AnalyticsPanel() {
-  const src = process.env.NEXT_PUBLIC_LOOKER_STUDIO_EMBED_URL;
+  const src = process.env.LOOKER_STUDIO_EMBED_URL;
 
   // Clarity is optional — we’ll keep it safe if token not set yet
   let clarity = { sessions: 0, rageClicks: 0, deadClicks: 0 };
@@ -70,7 +70,7 @@ export default async function AnalyticsPanel() {
             <p className="mt-1 text-sm text-[#202030]/70">
               Add{" "}
               <code className="rounded bg-black/5 px-1">
-                NEXT_PUBLIC_LOOKER_STUDIO_EMBED_URL
+                LOOKER_STUDIO_EMBED_URL
               </code>{" "}
               in Amplify env vars to show the report here.
             </p>

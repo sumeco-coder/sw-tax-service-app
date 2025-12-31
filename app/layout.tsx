@@ -3,7 +3,6 @@ import { Geist, Geist_Mono } from "next/font/google";
 import Script from "next/script";
 import "./globals.css";
 
-
 const geistSans = Geist({
   variable: "--font-geist-sans",
   subsets: ["latin"],
@@ -56,21 +55,12 @@ export default function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const clarityId = process.env.NEXT_PUBLIC_CLARITY_ID;
-  const gaId = process.env.NEXT_PUBLIC_GA_ID;
+  const clarityId = process.env.CLARITY_ID;
+  const gaId = process.env.GA_ID;
 
   return (
     <html lang="en">
-      <body
-        className={[
-          geistSans.variable,
-          geistMono.variable,
-          "antialiased",
-          "min-h-dvh",
-          "bg-slate-50",
-          "text-slate-900",
-        ].join(" ")}
-      >
+      <head>
         {/* =========================
             Microsoft Clarity
         ========================= */}
@@ -91,18 +81,31 @@ export default function RootLayout({
         ========================= */}
         {gaId ? (
           <>
-            <script async src="https://www.googletagmanager.com/gtag/js?id=G-G0QHL2JC6N"></script>
+           <Script
+              src={`https://www.googletagmanager.com/gtag/js?id=${gaId}`}
+              strategy="afterInteractive"
+            />
             <Script id="ga4" strategy="afterInteractive">
               {`
                 window.dataLayer = window.dataLayer || [];
                 function gtag(){dataLayer.push(arguments);}
                 gtag('js', new Date());
-                gtag('config', '${gaId}', { send_page_view: true });
+                gtag('config', '${gaId}');
               `}
             </Script>
           </>
         ) : null}
-
+      </head>
+      <body
+        className={[
+          geistSans.variable,
+          geistMono.variable,
+          "antialiased",
+          "min-h-dvh",
+          "bg-slate-50",
+          "text-slate-900",
+        ].join(" ")}
+      >
         {children}
       </body>
     </html>
