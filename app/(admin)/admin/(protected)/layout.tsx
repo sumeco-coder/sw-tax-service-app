@@ -11,7 +11,7 @@ export default async function AdminProtectedLayout({
   const me = await getServerRole();
 
   if (!me) redirect("/admin/sign-in");
-  if (me.role !== "admin") redirect("/not-authorized");
+  if (me.role !== "ADMIN") redirect("/not-authorized");
 
   return <AdminShell>{children}</AdminShell>;
 }

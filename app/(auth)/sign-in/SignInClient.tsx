@@ -4,7 +4,13 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { signIn, confirmSignIn, confirmSignUp, resendSignUpCode } from "aws-amplify/auth";
+import {
+  signIn,
+  confirmSignIn,
+  confirmSignUp,
+  resendSignUpCode,
+  fetchUserAttributes,
+} from "aws-amplify/auth";
 import { configureAmplify } from "@/lib/amplifyClient";
 import ForgotPasswordForm from "@/components/auth/ForgotPasswordForm";
 
@@ -39,6 +45,7 @@ export default function SigninClient() {
     configureAmplify();
   }, []);
 
+  // Invite context (token from your DB invite links can be passed as ?invite=TOKEN)
   const invite = useMemo(() => (searchParams.get("invite") ?? "").trim(), [searchParams]);
 
   // support both next & redirect
@@ -47,10 +54,11 @@ export default function SigninClient() {
     [searchParams]
   );
 
+  // ✅ Invited users default into onboarding; otherwise dashboard
   const redirectTo = useMemo(() => {
-    const fallback = "/dashboard";
+    const fallback = invite ? "/onboarding/profile" : "/dashboard";
     return safeInternalPath(nextParam, fallback);
-  }, [nextParam]);
+  }, [nextParam, invite]);
 
   const signUpHref = useMemo(() => {
     const params = new URLSearchParams();
@@ -75,16 +83,48 @@ export default function SigninClient() {
     setCode("");
   }
 
+  /** ✅ Force onboarding for taxpayers (or invite flow) until onboardingComplete=true */
+  async function routeAfterAuth() {
+    const intended = redirectTo || "/dashboard";
+
+    try {
+      const attrs = await fetchUserAttributes();
+      const role = (attrs["custom:role"] ?? "").toLowerCase();
+      const onboardingComplete =
+        (attrs["custom:onboardingComplete"] ?? "").toLowerCase() === "true";
+
+      // If they are invited OR taxpayer, and onboarding isn't complete, force onboarding.
+      // (Invite param is your strongest indicator they are in the onboarding funnel.)
+      if ((invite || role === "taxpayer") && !onboardingComplete) {
+        const qs = new URLSearchParams();
+        // preserve intended destination so onboarding can send them there later
+        if (intended) qs.set("next", intended);
+        router.push(`/onboarding/profile?${qs.toString()}`);
+        return;
+      }
+    } catch {
+      // If we can't read attrs, just continue to intended
+    }
+
+    router.push(intended);
+  }
+
   async function handleSignIn(e: React.FormEvent) {
     e.preventDefault();
     setMsg("");
+
+    if (!username) {
+      setMsg("Please enter your email.");
+      return;
+    }
+
     setLoading(true);
 
     try {
       const res = await signIn({ username, password });
 
       if (res.isSignedIn) {
-        router.push(redirectTo);
+        await routeAfterAuth();
         return;
       }
 
@@ -106,6 +146,7 @@ export default function SigninClient() {
         return;
       }
 
+      // Other steps exist (e.g., RESET_PASSWORD / SELECT_MFA_TYPE) — keep a readable message
       setView("confirmSignIn");
       setMsg(step ? `Additional sign-in step required: ${step}` : "Continue sign-in.");
     } catch (e: unknown) {
@@ -123,7 +164,7 @@ export default function SigninClient() {
     try {
       const res = await confirmSignIn({ challengeResponse: code.trim() });
       if (res.isSignedIn) {
-        router.push(redirectTo);
+        await routeAfterAuth();
         return;
       }
       setMsg("Not signed in yet. Please try again.");
@@ -137,6 +178,12 @@ export default function SigninClient() {
   async function handleConfirmSignUp(e: React.FormEvent) {
     e.preventDefault();
     setMsg("");
+
+    if (!username) {
+      setMsg("Enter your email above first, then your confirmation code.");
+      return;
+    }
+
     setLoading(true);
 
     try {
@@ -153,6 +200,12 @@ export default function SigninClient() {
 
   async function handleResendSignUpCode() {
     setMsg("");
+
+    if (!username) {
+      setMsg("Enter your email above first, then click resend.");
+      return;
+    }
+
     setLoading(true);
 
     try {
@@ -169,7 +222,7 @@ export default function SigninClient() {
     <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
       <div className="w-full max-w-md rounded-2xl bg-white p-8 shadow-lg">
         <h1 className="text-2xl font-extrabold text-blue-900 text-center">
-          {view === "signin" ? "Sign in" : "Account access"}
+          {view === "signin" ? (invite ? "Sign in to continue onboarding" : "Sign in") : "Account access"}
         </h1>
 
         {view === "signin" && (
