@@ -64,11 +64,23 @@ export async function getMessages(conversationId: string) {
     .where(eq(messages.conversationId, conversationId))
     .orderBy(messages.createdAt);
 
-  return rows.map((m) => ({
-    ...m,
-    body: m.encryptedBody ? decryptMessage(m.encryptedBody, m.keyVersion ?? "v1") : "",
-  }));
+  return rows.map((m) => {
+    const version = m.keyVersion === "v1" || m.keyVersion === "v2" ? m.keyVersion : "v1";
+
+    return {
+      id: m.id,
+      conversationId: m.conversationId,
+      senderUserId: m.senderUserId,
+      senderRole: m.senderRole,
+      attachmentUrl: m.attachmentUrl,
+      createdAt: m.createdAt,
+      readAt: m.readAt,
+      isSystem: m.isSystem,
+      body: m.encryptedBody ? decryptMessage(m.encryptedBody, version) : "",
+    };
+  });
 }
+
 
 /* ─────────────────────────────────────────────
    Send message (encrypted)
