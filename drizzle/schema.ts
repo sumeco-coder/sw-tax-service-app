@@ -49,6 +49,8 @@ export const profileVisibility = pgEnum("profile_visibility", [
   "private",
 ]);
 
+export const userStatusEnum = pgEnum("user_status", ["active", "disabled"]);
+
 export const themeEnum = pgEnum("theme_pref", ["light", "dark", "system"]);
 
 // =========================
@@ -401,7 +403,11 @@ export const users = pgTable(
     filingStatus: text("filing_status"),
     avatarUrl: text("avatar_url"),
     bio: text("bio"),
-
+    status: userStatusEnum("status").notNull().default("active"),
+    disabledAt: timestamp("disabled_at", { withTimezone: true }),
+    disabledReason: text("disabled_reason"),
+    adminNotes: text("admin_notes"),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
     onboardingStep: onboardingStepEnum("onboarding_step")
       .default("PROFILE")
       .notNull(),
@@ -409,6 +415,7 @@ export const users = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
+      
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .defaultNow()
       .$onUpdate(() => new Date())

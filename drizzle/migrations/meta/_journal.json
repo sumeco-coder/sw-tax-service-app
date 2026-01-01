@@ -148,6 +148,20 @@
       "when": 1767182326432,
       "tag": "0020_dazzling_whizzer",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1767232859807,
+      "tag": "0021_slimy_chat",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1767237482702,
+      "tag": "0022_steep_santa_claus",
+      "breakpoints": true
     }
   ]
 }

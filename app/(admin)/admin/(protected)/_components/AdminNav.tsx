@@ -11,6 +11,7 @@ import {
   CalendarClock, 
   ClipboardList,
   BarChart3,
+  Pyramid,
 } from "lucide-react";
 
 const BRAND = {
@@ -28,6 +29,7 @@ const nav = [
   { label: "Analytics", href: "/admin/analytics", icon: BarChart3 },
   { label: "Social", href: "/admin/social", icon: Megaphone },
   { label: "Settings", href: "/admin/settings", icon: Settings },
+  { label: "Clients", href: "/admin/clients", icon:  Pyramid },
 
 ];
 

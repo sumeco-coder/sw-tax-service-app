@@ -1,12 +1,18 @@
-// app/(client)/_components/ClientShell.tsx
+// app/(client)(protected)/_components/ClientShell.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import HeaderClient from "./HeaderClient";
+import { ActivityHeartbeat } from "./ActivityHeartbeat";
 import { configureAmplify } from "@/lib/amplifyClient";
-import { getCurrentUser, fetchUserAttributes, signOut } from "aws-amplify/auth";
+import {
+  getCurrentUser,
+  fetchUserAttributes,
+  signOut,
+  fetchAuthSession,
+} from "aws-amplify/auth";
 import {
   LayoutDashboard,
   User2,
@@ -101,9 +107,16 @@ function NavLink({
           background: `linear-gradient(180deg, ${BRAND.pink}, ${BRAND.copper})`,
         }}
       />
-      <Icon className={cx("h-4.5 w-4.5", active ? "opacity-100" : "opacity-85")} />
+      <Icon
+        className={cx("h-4.5 w-4.5", active ? "opacity-100" : "opacity-85")}
+      />
       <span className="flex-1">{item.name}</span>
-      <ChevronRight className={cx("h-4 w-4 transition", active ? "opacity-70" : "opacity-0 group-hover:opacity-50")} />
+      <ChevronRight
+        className={cx(
+          "h-4 w-4 transition",
+          active ? "opacity-70" : "opacity-0 group-hover:opacity-50"
+        )}
+      />
     </Link>
   );
 }
@@ -162,6 +175,47 @@ export default function ClientShell({
       cancelled = true;
     };
   }, [router]);
+
+  // ✅ Heartbeat: updates lastSeenAt (for "Active now" + "Last active")
+  const heartbeat = React.useCallback(async () => {
+    try {
+      const session = await fetchAuthSession();
+      const token =
+        session.tokens?.idToken?.toString() ||
+        session.tokens?.accessToken?.toString();
+
+      await fetch("/api/heartbeat", {
+        method: "POST",
+        cache: "no-store",
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      });
+    } catch {}
+  }, []);
+
+  // ✅ ping on load + on route change
+  useEffect(() => {
+    if (!authLoading) heartbeat();
+  }, [authLoading, pathname, heartbeat]);
+
+  // ✅ keep pinging while active + when returning to tab
+  useEffect(() => {
+    if (authLoading) return;
+
+    const id = setInterval(heartbeat, 60_000);
+
+    const onVis = () => {
+      if (document.visibilityState === "visible") heartbeat();
+    };
+
+    window.addEventListener("focus", heartbeat);
+    document.addEventListener("visibilitychange", onVis);
+
+    return () => {
+      clearInterval(id);
+      window.removeEventListener("focus", heartbeat);
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  }, [authLoading, heartbeat]);
 
   async function handleLogout() {
     try {
@@ -284,7 +338,10 @@ export default function ClientShell({
             <div className="mx-auto max-w-6xl px-4 py-3 space-y-3">
               <div
                 className="rounded-2xl border p-3"
-                style={{ borderColor: "rgba(255,255,255,0.10)", background: "rgba(255,255,255,0.03)" }}
+                style={{
+                  borderColor: "rgba(255,255,255,0.10)",
+                  background: "rgba(255,255,255,0.03)",
+                }}
               >
                 <div className="text-xs text-white/50">Signed in as</div>
                 <div className="mt-1 text-sm font-semibold text-white/90">
@@ -335,7 +392,7 @@ export default function ClientShell({
                   />
                 ))}
               </nav>
-
+              <ActivityHeartbeat />
               <button
                 type="button"
                 onClick={async () => {

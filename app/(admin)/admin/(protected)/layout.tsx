@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { redirect } from "next/navigation";
-import AdminShell from "../_components/AdminShell";
+import AdminShell from "./_components/AdminShell";
 import { getServerRole } from "@/lib/auth/roleServer";
 
 export default async function AdminProtectedLayout({
