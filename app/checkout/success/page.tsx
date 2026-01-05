@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
-export default function CheckoutSuccessPage() {
+function CheckoutSuccessInner() {
   const router = useRouter();
   const sp = useSearchParams();
   const [msg, setMsg] = useState("Confirming payment…");
@@ -16,7 +16,9 @@ export default function CheckoutSuccessPage() {
     }
 
     (async () => {
-      const res = await fetch(`/api/stripe/confirm?session_id=${encodeURIComponent(sessionId)}`);
+      const res = await fetch(
+        `/api/stripe/confirm?session_id=${encodeURIComponent(sessionId)}`
+      );
       const data = await res.json().catch(() => null);
 
       if (!res.ok || !data?.ok) {
@@ -36,5 +38,22 @@ export default function CheckoutSuccessPage() {
         If this takes longer than a few seconds, refresh your results page.
       </p>
     </main>
+  );
+}
+
+export default function CheckoutSuccessPage() {
+  return (
+    <Suspense
+      fallback={
+        <main className="mx-auto max-w-lg p-8">
+          <h1 className="text-xl font-semibold">Confirming payment…</h1>
+          <p className="mt-2 text-sm text-muted-foreground">
+            Loading checkout confirmation…
+          </p>
+        </main>
+      }
+    >
+      <CheckoutSuccessInner />
+    </Suspense>
   );
 }

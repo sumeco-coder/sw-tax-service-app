@@ -14,7 +14,7 @@ export function estimateQuickCTC2025({
 
   // Quick estimate: assumes child qualifies + SSN verified later.
   const MAX_PER_CHILD = 2200;
-  let credit = qualifyingChildren * MAX_PER_CHILD;
+  const credit = qualifyingChildren * MAX_PER_CHILD;
 
   const threshold = filingStatus === "mfj" ? 400_000 : 200_000;
   if (magi <= threshold) return credit;
