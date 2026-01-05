@@ -1,7 +1,7 @@
 // app(admin)/admin/(protected)/clients/[userId]/documents/page
 import { redirect } from "next/navigation";
 import { getServerRole } from "@/lib/auth/roleServer";
-import DocumentsClient from "../../../../../../(client)/(protected)/documents/_components/DocumentsClient"
+import DocumentsClient from "../../../../../../(client)/(protected)/(app)/documents/_components/DocumentsClient"
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;

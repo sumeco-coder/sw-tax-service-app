@@ -5,7 +5,7 @@ import { conversations, users } from "@/drizzle/schema";
 import { desc, eq } from "drizzle-orm";
 
 // 👇 import the existing server action
-import { sendMessage } from "@/app/(client)/(protected)/messages/actions";
+import { sendMessage } from "@/app/(client)/(protected)/(app)/messages/actions";
 
 export async function getAllClientConversations() {
   return db

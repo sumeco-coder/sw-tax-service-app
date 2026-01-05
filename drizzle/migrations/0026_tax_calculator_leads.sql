@@ -1,0 +1,1 @@
+ALTER TABLE "tax_calculator_leads" ALTER COLUMN "source" SET NOT NULL;

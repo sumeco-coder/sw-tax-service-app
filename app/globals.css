@@ -148,3 +148,30 @@
     @apply bg-background text-foreground;
   }
 }
+
+@layer components {
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2
+      rounded-xl bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground
+      shadow-sm transition hover:opacity-95 hover:shadow-md
+      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2
+      disabled:opacity-60 disabled:cursor-not-allowed;
+  }
+
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-2
+      rounded-xl border border-border bg-background px-4 py-3 text-sm font-semibold
+      transition hover:bg-muted/40
+      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2
+      disabled:opacity-60 disabled:cursor-not-allowed;
+  }
+
+  .btn-outline {
+    @apply inline-flex items-center justify-center gap-2
+      rounded-xl border border-border bg-transparent px-4 py-3 text-sm font-semibold
+      transition hover:bg-muted/40
+      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2
+      disabled:opacity-60 disabled:cursor-not-allowed;
+  }
+}
+

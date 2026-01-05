@@ -1,0 +1,2 @@
+ALTER TABLE "tax_calculator_leads" ADD COLUMN "tax_plan_unlocked" boolean DEFAULT false NOT NULL;--> statement-breakpoint
+ALTER TABLE "tax_calculator_leads" ADD COLUMN "tax_plan_unlocked_at" timestamp with time zone;

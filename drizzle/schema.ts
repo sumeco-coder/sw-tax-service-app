@@ -44,6 +44,19 @@ export const taskStatus = pgEnum("task_status", [
   "CANCELLED",
 ]);
 
+export const agreementKindEnum = pgEnum("agreement_kind", [
+  "ENGAGEMENT",
+  "CONSENT_7216_USE",
+  "CONSENT_PAYMENT",
+]);
+
+export const agreementDecisionEnum = pgEnum("agreement_decision", [
+  "SIGNED",
+  "GRANTED",
+  "DECLINED",
+  "SKIPPED",
+]);
+
 export const profileVisibility = pgEnum("profile_visibility", [
   "public",
   "private",
@@ -167,6 +180,7 @@ export const onboardingStepEnum = pgEnum("onboarding_step", [
   "DOCUMENTS",
   "QUESTIONS",
   "SCHEDULE",
+  "AGREEMENTS",
   "SUMMARY",
   "SUBMITTED",
   "DONE",
@@ -408,6 +422,10 @@ export const users = pgTable(
     disabledReason: text("disabled_reason"),
     adminNotes: text("admin_notes"),
     lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
+    hasPaidForPlan: boolean("has_paid_for_plan").notNull().default(false),
+
+    filingClient: boolean("filing_client").notNull().default(false),
+
     onboardingStep: onboardingStepEnum("onboarding_step")
       .default("PROFILE")
       .notNull(),
@@ -415,7 +433,7 @@ export const users = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
-      
+
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .defaultNow()
       .$onUpdate(() => new Date())
@@ -559,8 +577,12 @@ export const estimatedStateTaxPayments = pgTable(
     // stores your Zod form values
     data: jsonb("data").notNull(),
 
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (t) => ({
     userUnique: uniqueIndex("est_state_tax_payments_user_unique").on(t.userId),
@@ -578,8 +600,12 @@ export const estimatedTaxPayments = pgTable(
 
     data: jsonb("data").notNull(),
 
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (t) => ({
     userUnique: uniqueIndex("estimated_tax_payments_user_unique").on(t.userId),
@@ -616,10 +642,16 @@ export const qualifyingChildren = pgTable(
   "qualifying_children",
   {
     id: uuid("id").defaultRandom().primaryKey(),
-    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
     data: jsonb("data").$type<Record<string, any>>().notNull(),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (t) => ({
     userUnique: uniqueIndex("qualifying_children_user_unique").on(t.userId),
@@ -639,11 +671,17 @@ export const foreignAccountsDigitalAssets = pgTable(
     // stores your component payload as JSON
     data: jsonb("data").$type<Record<string, any>>().notNull(),
 
-    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
   },
   (t) => ({
-    userUnique: uniqueIndex("foreign_accounts_digital_assets_user_unique").on(t.userId),
+    userUnique: uniqueIndex("foreign_accounts_digital_assets_user_unique").on(
+      t.userId
+    ),
     userIdx: index("foreign_accounts_digital_assets_user_idx").on(t.userId),
   })
 );
@@ -778,13 +816,12 @@ export const clientAgreements = pgTable("client_agreements", {
 
   userId: text("user_id").notNull(),
   taxYear: text("tax_year").notNull(),
-  kind: text("kind").notNull(),
 
   version: text("version").notNull(),
   contentHash: text("content_hash").notNull(),
 
-  // ✅ add this
-  decision: text("decision").notNull().default("SIGNED"), // SIGNED | GRANTED | DECLINED | SKIPPED
+  kind: agreementKindEnum("kind").notNull(),
+  decision: agreementDecisionEnum("decision").notNull().default("SIGNED"), // SIGNED | GRANTED | DECLINED | SKIPPED
 
   taxpayerName: text("taxpayer_name").notNull(),
   taxpayerSignedAt: timestamp("taxpayer_signed_at", {
@@ -1448,5 +1485,82 @@ export const directDeposit = pgTable(
   },
   (t) => ({
     userUnique: uniqueIndex("direct_deposit_user_id_uq").on(t.userId),
+  })
+);
+
+export const taxCalculatorLeads = pgTable(
+  "tax_calculator_leads",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+
+    // Store the raw email + a normalized lower version for case-insensitive uniqueness
+    email: text("email").notNull(),
+    emailLower: text("email_lower").notNull(),
+
+    // Optional: if a logged-in user later exists, link it
+    userId: uuid("user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+
+    // Where it came from (tax-calculator, ig-bio, etc)
+    source: text("source").notNull().default("tax-calculator"),
+
+    // UTM params / tracking (optional)
+    utm: jsonb("utm").$type<
+      Partial<{
+        utm_source: string;
+        utm_medium: string;
+        utm_campaign: string;
+        utm_term: string;
+        utm_content: string;
+      }>
+    >(),
+
+    // Snapshot of quick inputs (safe + no SSNs)
+    snapshot: jsonb("snapshot").$type<{
+      filingStatus?: string;
+      w2Income?: number;
+      selfEmployedIncome?: number;
+      withholding?: number;
+      dependentsCount?: number;
+      otherDependentsCount?: number;
+      useMultiW2?: boolean;
+      w2sCount?: number;
+    }>(),
+
+    // Optional metadata (helps with fraud/spam + analytics)
+    ip: text("ip"),
+    userAgent: text("user_agent"),
+    referrer: text("referrer"),
+
+    // If you want an opt-in checkbox later
+    marketingOptIn: boolean("marketing_opt_in").notNull().default(false),
+    taxPlanUnlocked: boolean("tax_plan_unlocked").notNull().default(false),
+    taxPlanUnlockedAt: timestamp("tax_plan_unlocked_at", { withTimezone: true }),
+    paidAt: timestamp("paid_at", { withTimezone: true }),
+    stripeCheckoutSessionId: text("stripe_checkout_session_id"),
+    stripeCustomerId: text("stripe_customer_id"),
+    stripePaymentIntentId: text("stripe_payment_intent_id"),
+
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => ({
+    emailLowerUnique: uniqueIndex("tax_calc_leads_email_lower_unique").on(
+      t.emailLower
+    ),
+    createdAtIdx: index("tax_calc_leads_created_at_idx").on(t.createdAt),
+    paidAtIdx: index("tax_calc_leads_paid_at_idx").on(t.paidAt),
+    stripeSessionIdx: index("tax_calc_leads_stripe_session_idx").on(
+      t.stripeCheckoutSessionId
+    ),
+    stripeCustomerIdx: index("tax_calc_leads_stripe_customer_idx").on(
+      t.stripeCustomerId
+    ),
   })
 );

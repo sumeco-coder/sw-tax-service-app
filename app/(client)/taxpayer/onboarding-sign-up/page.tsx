@@ -2,7 +2,7 @@
 import { db } from "@/drizzle/db";
 import { invites } from "@/drizzle/schema";
 import { eq } from "drizzle-orm";
-import OnboardingSignUpForm from "../_components/OnboardingSignUpForm";
+import OnboardingSignUpForm from "../_components/OnboardingSignUpForm"
 import { headers } from "next/headers";
 
 export const dynamic = "force-dynamic";

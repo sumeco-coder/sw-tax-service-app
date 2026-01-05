@@ -6,6 +6,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import HeaderClient from "./HeaderClient";
 import { ActivityHeartbeat } from "./ActivityHeartbeat";
+import IdleSignOut from "./IdleSignOut";
 import { configureAmplify } from "@/lib/amplifyClient";
 import {
   getCurrentUser,
@@ -392,7 +393,14 @@ export default function ClientShell({
                   />
                 ))}
               </nav>
-              <ActivityHeartbeat />
+              <>
+                <ActivityHeartbeat />
+              </>
+
+              <>
+                <IdleSignOut minutes={20} />
+                {/* rest of your shell */}
+              </>
               <button
                 type="button"
                 onClick={async () => {

@@ -1,9 +1,9 @@
 // app/(admin)/(protected)/messages/_components/AdminMessageThread.tsx
 "use client";
 
-import { MessageBubble } from "@/app/(client)/(protected)/messages/_components/MessageBubble";
+import { MessageBubble } from "@/app/(client)/(protected)/(app)/messages/_components/MessageBubble";
 import { AdminMessageInput } from "../components/AdminMessageInput";
-import { getMessages } from "@/app/(client)/(protected)/messages/actions";
+import { getMessages } from "@/app/(client)/(protected)/(app)/messages/actions";
 import { useEffect, useState } from "react";
 
 export function AdminMessageThread({ conversationId }: { conversationId: string }) {

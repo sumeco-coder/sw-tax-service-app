@@ -12,6 +12,7 @@ import {
   ClipboardList,
   BarChart3,
   Pyramid,
+  ToolCase
 } from "lucide-react";
 
 const BRAND = {
@@ -30,6 +31,7 @@ const nav = [
   { label: "Social", href: "/admin/social", icon: Megaphone },
   { label: "Settings", href: "/admin/settings", icon: Settings },
   { label: "Clients", href: "/admin/clients", icon:  Pyramid },
+  { label: "Tax Tools", href: "/admin/tax-tools/unlock", icon:  ToolCase },
 
 ];
 

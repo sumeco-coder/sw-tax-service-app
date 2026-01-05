@@ -9,10 +9,15 @@ export async function POST() {
     { headers: { "Cache-Control": "no-store" } }
   );
 
-  // ✅ Most reliable: delete + overwrite with expired cookie
-  for (const name of ["accessToken", "idToken"]) {
-    res.cookies.delete(name); // (name only) matches Next's types
+  const names = ["accessToken", "idToken", "refreshToken"];
+
+  for (const name of names) {
+    // delete (Next helper)
+    res.cookies.delete(name);
+
+    // overwrite expired on common paths
     res.cookies.set(name, "", { path: "/", maxAge: 0 });
+    res.cookies.set(name, "", { path: "/admin", maxAge: 0 });
   }
 
   return res;
