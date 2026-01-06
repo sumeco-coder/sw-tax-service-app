@@ -1,5 +1,8 @@
+// app/api/stripe/checkout/route.ts
+export const runtime = "nodejs";
+
 import { NextResponse } from "next/server";
-import { stripe } from "@/lib/stripe";
+import { getStripe } from "@/lib/stripe";
 
 export async function POST(req: Request) {
   const { product, email, cognitoSub } = await req.json().catch(() => ({}));
@@ -15,11 +18,17 @@ export async function POST(req: Request) {
 
   const price = process.env.STRIPE_PRICE_TAX_PLAN;
   if (!price) {
-    return NextResponse.json({ error: "Missing STRIPE_PRICE_TAX_PLAN" }, { status: 500 });
+    return NextResponse.json(
+      { error: "Missing STRIPE_PRICE_TAX_PLAN" },
+      { status: 500 }
+    );
   }
 
   const origin =
-    process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "") || "https://swtaxservice.com";
+    process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "") ||
+    "https://swtaxservice.com";
+
+  const stripe = getStripe();
 
   const session = await stripe.checkout.sessions.create({
     mode: "payment",

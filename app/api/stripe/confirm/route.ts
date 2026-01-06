@@ -1,5 +1,8 @@
+// app/api/stripe/confirm/route.ts
+export const runtime = "nodejs";
+
 import { NextResponse } from "next/server";
-import { stripe } from "@/lib/stripe";
+import { getStripe } from "@/lib/stripe";
 import { db } from "@/drizzle/db";
 import { taxCalculatorLeads, users } from "@/drizzle/schema";
 import { eq, sql } from "drizzle-orm";
@@ -10,11 +13,15 @@ export async function GET(req: Request) {
 
   if (!sessionId) return NextResponse.json({ ok: false }, { status: 400 });
 
+  const stripe = getStripe();
   const session = await stripe.checkout.sessions.retrieve(sessionId);
 
   const paid = session.payment_status === "paid";
-  const emailLower =
-    String(session?.metadata?.emailLower ?? session?.customer_email ?? "").trim().toLowerCase();
+  const emailLower = String(
+    session?.metadata?.emailLower ?? session?.customer_email ?? ""
+  )
+    .trim()
+    .toLowerCase();
 
   if (paid && emailLower) {
     await db
@@ -46,7 +53,10 @@ export async function GET(req: Request) {
       .limit(1);
 
     if (found[0]) {
-      await db.update(users).set({ hasPaidForPlan: true }).where(eq(users.id, found[0].id));
+      await db
+        .update(users)
+        .set({ hasPaidForPlan: true })
+        .where(eq(users.id, found[0].id));
     }
   }
 

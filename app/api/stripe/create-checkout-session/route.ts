@@ -1,7 +1,8 @@
-import { NextResponse } from "next/server";
-import { stripe } from "@/lib/stripe";
-
+// app/api/stripe/create-checkout-session/route.ts
 export const runtime = "nodejs";
+
+import { NextResponse } from "next/server";
+import { getStripe } from "@/lib/stripe";
 
 function mustEnv(name: string) {
   const v = process.env[name];
@@ -19,6 +20,8 @@ export async function POST(req: Request) {
 
   const PRICE_ID = mustEnv("STRIPE_PRICE_TAX_PLAN");
   const APP_URL = mustEnv("NEXT_PUBLIC_APP_URL"); // e.g. https://swtaxservice.com
+
+  const stripe = getStripe();
 
   const session = await stripe.checkout.sessions.create({
     mode: "payment",
