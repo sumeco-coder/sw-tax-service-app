@@ -195,13 +195,16 @@ export const emailCampaignStatus = pgEnum("email_campaign_status", [
   "sending",
   "sent",
   "failed",
+  "cancelled",
 ]);
 
 export const emailRecipientStatus = pgEnum("email_recipient_status", [
   "queued",
   "sent",
+  "sending",
   "failed",
   "unsubscribed",
+  "scheduled",
 ]);
 
 export const emailCampaignSegment = pgEnum("email_campaign_segment", [
