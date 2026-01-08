@@ -1567,3 +1567,143 @@ export const taxCalculatorLeads = pgTable(
     ),
   })
 );
+
+// =========================
+// 2.2 BUSINESS INFO
+// =========================
+export const entityTypeEnum = pgEnum("entity_type", [
+  "SOLE_PROP",
+  "LLC",
+  "S_CORP",
+  "C_CORP",
+  "PARTNERSHIP",
+  "NONPROFIT",
+  "OTHER",
+]);
+
+export const clientBusinesses = pgTable(
+  "client_businesses",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+
+    // ✅ NEW (recommended)
+    taxYear: integer("tax_year"), // 2024, 2025, etc.
+    isActive: boolean("is_active").notNull().default(true),
+    isPrimary: boolean("is_primary").notNull().default(false),
+
+    businessName: varchar("business_name", { length: 140 }).notNull(),
+    ein: varchar("ein", { length: 15 }),
+    entityType: entityTypeEnum("entity_type").notNull().default("SOLE_PROP"),
+
+    industry: varchar("industry", { length: 120 }),
+    naicsCode: varchar("naics_code", { length: 10 }),
+    businessStartDate: date("business_start_date"),
+    businessAddress: text("business_address"),
+
+    has1099Income: boolean("has_1099_income").notNull().default(false),
+    notes: text("notes"),
+
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (t) => ({
+    userIdx: index("client_businesses_user_idx").on(t.userId),
+
+    // ✅ NEW index (recommended)
+    yearIdx: index("client_businesses_year_idx").on(t.taxYear),
+
+    // optional helpful index
+    activeIdx: index("client_businesses_active_idx").on(t.isActive),
+  })
+);
+
+
+// =========================
+// 2.3 NOTICES TRACKER
+// =========================
+export const noticeAgencyEnum = pgEnum("notice_agency", [
+  "IRS",
+  "STATE",
+  "FTB",
+  "OTHER",
+]);
+
+export const noticeStatusEnum = pgEnum("notice_status", [
+  "OPEN",
+  "IN_PROGRESS",
+  "RESPONDED",
+  "RESOLVED",
+]);
+
+export const clientNotices = pgTable(
+  "client_notices",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+
+    agency: noticeAgencyEnum("agency").notNull().default("IRS"),
+    noticeNumber: varchar("notice_number", { length: 30 }), // CP2000, LT11, etc.
+    taxYear: integer("tax_year"),
+    receivedDate: date("received_date"),
+    dueDate: date("due_date"),
+
+    status: noticeStatusEnum("status").notNull().default("OPEN"),
+    summary: text("summary"),
+    resolutionNotes: text("resolution_notes"),
+
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (t) => ({
+    userIdx: index("client_notices_user_idx").on(t.userId),
+    dueIdx: index("client_notices_due_idx").on(t.dueDate),
+  })
+);
+
+// =========================
+// 2.4 NEXT STEPS
+// =========================
+export const nextStepStatusEnum = pgEnum("next_step_status", ["OPEN", "DONE"]);
+export const nextStepPriorityEnum = pgEnum("next_step_priority", [
+  "LOW",
+  "NORMAL",
+  "HIGH",
+]);
+
+export const clientNextSteps = pgTable(
+  "client_next_steps",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+
+    title: varchar("title", { length: 140 }).notNull(),
+    details: text("details"),
+    dueDate: date("due_date"),
+
+    status: nextStepStatusEnum("status").notNull().default("OPEN"),
+    priority: nextStepPriorityEnum("priority").notNull().default("NORMAL"),
+
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (t) => ({
+    userIdx: index("client_next_steps_user_idx").on(t.userId),
+    dueIdx: index("client_next_steps_due_idx").on(t.dueDate),
+  })
+);
