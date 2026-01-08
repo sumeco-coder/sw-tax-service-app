@@ -3,8 +3,8 @@
 
 import crypto from "crypto";
 import { db } from "@/drizzle/db";
-import { emailCampaigns, emailRecipients } from "@/drizzle/schema";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { emailCampaigns, emailRecipients, invites } from "@/drizzle/schema";
+import { and, eq, sql, desc } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
@@ -14,27 +14,29 @@ import { htmlToText } from "html-to-text";
 import { buildEmailFooterHTML, buildEmailFooterText } from "@/lib/email/footer";
 
 const BATCH_SIZE = 200;
-
-// Safety cap so a single click doesn’t try to send 30k in one server-action run
-// (Click “Send Now” again to continue if you have more than this)
 const MAX_PER_RUN = 2000;
-
 const REPLY_TO = "support@swtaxservice.com";
 
-function makeToken() {
-  return crypto.randomBytes(24).toString("base64url");
+/* ---------------------------
+   Helpers
+---------------------------- */
+function normalizeEmail(v: unknown) {
+  return String(v ?? "").trim().toLowerCase();
+}
+
+function makeToken(bytes = 24) {
+  return crypto.randomBytes(bytes).toString("base64url");
 }
 
 function getSiteUrl() {
   const base =
     process.env.APP_ORIGIN ??
     process.env.APP_URL ??
-    process.env.SITE_URL
+    process.env.SITE_URL ??
     "https://www.swtaxservice.com";
 
   return String(base).trim().replace(/\/$/, "");
 }
-
 
 function buildUnsubUrls(token: string) {
   const base = getSiteUrl();
@@ -45,13 +47,90 @@ function buildUnsubUrls(token: string) {
 }
 
 function assertResendWindow(sendAt: Date) {
-  const max = Date.now() + 30 * 24 * 60 * 60 * 1000; // 30 days
+  const max = Date.now() + 30 * 24 * 60 * 60 * 1000;
   if (sendAt.getTime() < Date.now() + 60_000) {
     throw new Error("Send time must be at least 1 minute in the future.");
   }
   if (sendAt.getTime() > max) {
     throw new Error("Resend can only schedule up to 30 days in advance.");
   }
+}
+
+function fmtInviteExpires(expiresAt: unknown) {
+  if (!expiresAt) return "";
+  const d = expiresAt instanceof Date ? expiresAt : new Date(expiresAt as any);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
+function templateNeedsInviteTokens(subject: string, htmlTpl: string, textTpl: string) {
+  const blob = `${subject}\n${htmlTpl}\n${textTpl}`;
+  return /{{\s*(invite_link|sign_in_link|portal_link|invite_token|invite_expires_at|expires_text)\s*}}/i.test(
+    blob
+  );
+}
+
+/**
+ * ✅ Prevent duplicate INVITES (concurrency safe):
+ * - reuse latest pending, unexpired invite (type=taxpayer) for that email
+ * - otherwise create a new one
+ */
+async function ensureTaxpayerInvite(emailRaw: string, meta: Record<string, any>) {
+  const email = normalizeEmail(emailRaw);
+  if (!email) throw new Error("Missing email");
+
+  const now = new Date();
+
+  return db.transaction(async (tx) => {
+    // ✅ Prevent duplicates under concurrency (per-email lock)
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${email}))`);
+
+    // reuse existing pending + unexpired
+    const existing = await tx
+      .select({
+        token: invites.token,
+        expiresAt: invites.expiresAt,
+      })
+      .from(invites)
+      .where(
+        and(
+          sql`lower(${invites.email}) = ${email}`,
+          eq(invites.type as any, "taxpayer" as any),
+          eq(invites.status as any, "pending" as any),
+          sql`${invites.expiresAt} is null or ${invites.expiresAt} > now()`
+        )
+      )
+      .orderBy(desc(invites.createdAt))
+      .limit(1);
+
+    if (existing?.[0]?.token) {
+      return {
+        token: String(existing[0].token),
+        expiresAt: existing[0].expiresAt ?? null,
+      };
+    }
+
+    const token = makeToken();
+
+    const daysRaw = String(process.env.INVITE_EXPIRES_DAYS ?? "14");
+    const days = Number(daysRaw);
+    const expiresDays = Number.isFinite(days) ? days : 14;
+
+    const expiresAt = new Date(now.getTime() + expiresDays * 24 * 60 * 60 * 1000);
+
+    await tx.insert(invites).values({
+      email,
+      type: "taxpayer" as any,
+      token,
+      status: "pending" as any,
+      expiresAt,
+      meta: meta as any,
+      createdAt: now,
+      updatedAt: now,
+    } as any);
+
+    return { token, expiresAt };
+  });
 }
 
 async function getCampaign(campaignId: string) {
@@ -81,12 +160,8 @@ async function getCampaign(campaignId: string) {
   return { campaign, htmlTpl, textTpl, templateHasFooterHtml, templateHasFooterText };
 }
 
-/**
- * Claim a batch of queued recipients by flipping them to "sending" first.
- * This prevents double-send / double-schedule.
- */
-async function claimQueuedBatch(campaignId: string) {
-  const queued = await db
+async function loadQueuedBatch(campaignId: string) {
+  return db
     .select({
       id: emailRecipients.id,
       email: emailRecipients.email,
@@ -101,51 +176,74 @@ async function claimQueuedBatch(campaignId: string) {
     )
     .orderBy(sql`${emailRecipients.createdAt} asc`)
     .limit(BATCH_SIZE);
-
-  if (!queued.length) return [];
-
-  const ids = queued.map((r) => r.id);
-
-  // ✅ only claim ones still queued (if another process claimed first, it won’t return)
-  const claimed = await db
-    .update(emailRecipients)
-    .set({ status: "sending" as any, updatedAt: new Date() } as any)
-    .where(
-      and(
-        eq(emailRecipients.campaignId, campaignId),
-        inArray(emailRecipients.id, ids),
-        eq(emailRecipients.status as any, "queued" as any)
-      )
-    )
-    .returning({
-      id: emailRecipients.id,
-      email: emailRecipients.email,
-      unsubToken: (emailRecipients as any).unsubToken,
-    });
-
-  return claimed;
 }
 
-function buildVars(opts: { unsubPageUrl: string; oneClickUrl: string; footerHtml: string; footerText: string }) {
-  const { unsubPageUrl, oneClickUrl, footerHtml, footerText } = opts;
+/**
+ * ✅ Build vars per recipient
+ * Only creates invites IF the template needs invite tokens.
+ */
+async function buildVarsForRecipient(opts: {
+  campaignId: string;
+  email: string;
+  inviteRequired: boolean;
+  unsubPageUrl: string;
+  oneClickUrl: string;
+  footerHtml: string;
+  footerText: string;
+}) {
+  const { campaignId, email, inviteRequired, unsubPageUrl, oneClickUrl, footerHtml, footerText } =
+    opts;
+
+  const base = getSiteUrl();
+
+  // defaults (non-invite templates)
+  let invite_token = "";
+  let invite_expires_at = "";
+  let invite_link = `${base}/sign-up`;
+  let sign_in_link = `${base}/sign-in`;
+
+  if (inviteRequired) {
+    const invite = await ensureTaxpayerInvite(email, {
+      source: "directResend",
+      campaignId,
+    });
+
+    invite_token = invite.token;
+    invite_expires_at = fmtInviteExpires(invite.expiresAt);
+
+    invite_link = `${base}/taxpayer/onboarding-sign-up?invite=${encodeURIComponent(invite_token)}`;
+    sign_in_link = `${base}/sign-in?invite=${encodeURIComponent(
+      invite_token
+    )}&next=${encodeURIComponent("/onboarding/profile")}`;
+  }
 
   return {
     company_name: "SW Tax Service",
     support_email: "support@swtaxservice.com",
-    website: "https://www.swtaxservice.com",
-    waitlist_link: "https://www.swtaxservice.com/waitlist",
+    website: base,
+    waitlist_link: `${base}/waitlist`,
     first_name: "there",
     signature_name: "SW Tax Service Team",
+
+    sign_in_url: `${base}/sign-in`,
+    sign_up_url: `${base}/sign-up`,
+
+    invite_token,
+    invite_link,
+    sign_in_link,
+    portal_link: sign_in_link,
+    invite_expires_at,
+    expires_text: invite_expires_at ? `Link expires: ${invite_expires_at}` : "",
+
     unsubscribe_link: unsubPageUrl,
     one_click_unsub_url: oneClickUrl,
+
     footer_html: footerHtml,
     footer_text: footerText,
 
-    logo_url: "https://www.swtaxservice.com/swtax-favicon-pack/android-chrome-512x512.png",
+    logo_url: `${base}/swtax-favicon-pack/android-chrome-512x512.png`,
     logo_alt: "SW Tax Service",
-    logo_link: "https://www.swtaxservice.com",
-
-    // ✅ IMPORTANT: use NUMBER (not "72px")
+    logo_link: base,
     logo_width: 72,
   } as Record<string, any>;
 }
@@ -155,10 +253,7 @@ async function markCampaignStatus(campaignId: string, patch: any) {
 }
 
 /**
- * ✅ Send NOW (Direct Resend)
- * Sends multiple batches until:
- * - no more queued, OR
- * - MAX_PER_RUN reached
+ * ✅ Send NOW (Direct Resend) — NO DUPLICATES
  */
 export async function sendNowDirectResend(campaignId: string) {
   const id = String(campaignId ?? "").trim();
@@ -167,42 +262,71 @@ export async function sendNowDirectResend(campaignId: string) {
   const { campaign, htmlTpl, textTpl, templateHasFooterHtml, templateHasFooterText } =
     await getCampaign(id);
 
-  if (String(campaign.status) === "sent") {
-    throw new Error("Campaign is already marked sent.");
+  if (String(campaign.status) === "sent") throw new Error("Campaign is already marked sent.");
+  if (String(campaign.status) === "sending") {
+    throw new Error(
+      "This campaign is in runner mode (status='sending'). Set it back to draft/scheduled before using Direct Resend."
+    );
   }
 
-  await markCampaignStatus(id, {
-    status: "sending" as any,
-    updatedAt: new Date(),
-    sentAt: null,
-  } as any);
+  const inviteRequired = templateNeedsInviteTokens(
+    String(campaign.subject ?? ""),
+    htmlTpl,
+    textTpl
+  );
+
+  const alreadySentRows = await db
+    .select({ e: sql<string>`lower(${emailRecipients.email})` })
+    .from(emailRecipients)
+    .where(and(eq(emailRecipients.campaignId, id), eq(emailRecipients.status as any, "sent" as any)));
+
+  const alreadySent = new Set(alreadySentRows.map((r) => String(r.e ?? "").trim()).filter(Boolean));
 
   let processed = 0;
 
   while (processed < MAX_PER_RUN) {
-    const recipients = await claimQueuedBatch(id);
+    const recipients = await loadQueuedBatch(id);
     if (!recipients.length) break;
 
+    const seenThisRun = new Set<string>();
+
     for (const r of recipients) {
-      const to = String(r.email ?? "").toLowerCase().trim();
+      const to = normalizeEmail(r.email);
 
       if (!to) {
-        await db
-          .update(emailRecipients)
-          .set({
-            status: "failed" as any,
-            error: "Missing email",
-            updatedAt: new Date(),
-          } as any)
-          .where(eq(emailRecipients.id, r.id));
+        await db.update(emailRecipients).set({
+          status: "failed" as any,
+          error: "Missing email",
+          updatedAt: new Date(),
+        } as any).where(eq(emailRecipients.id, r.id));
         continue;
       }
 
+      if (alreadySent.has(to)) {
+        await db.update(emailRecipients).set({
+          status: "sent" as any,
+          sentAt: new Date(),
+          error: "Skipped (duplicate email already sent in this campaign)",
+          updatedAt: new Date(),
+        } as any).where(eq(emailRecipients.id, r.id));
+        continue;
+      }
+
+      if (seenThisRun.has(to)) {
+        await db.update(emailRecipients).set({
+          status: "sent" as any,
+          sentAt: new Date(),
+          error: "Skipped (duplicate email in this batch)",
+          updatedAt: new Date(),
+        } as any).where(eq(emailRecipients.id, r.id));
+        continue;
+      }
+
+      seenThisRun.add(to);
+
       const unsubToken = String(r.unsubToken ?? "").trim() || makeToken();
       if (!r.unsubToken) {
-        await db
-          .update(emailRecipients)
-          .set({ unsubToken, updatedAt: new Date() } as any)
+        await db.update(emailRecipients).set({ unsubToken, updatedAt: new Date() } as any)
           .where(eq(emailRecipients.id, r.id));
       }
 
@@ -212,7 +336,7 @@ export async function sendNowDirectResend(campaignId: string) {
         companyName: "SW Tax Service",
         addressLine: "Las Vegas, NV",
         supportEmail: "support@swtaxservice.com",
-        website: "https://www.swtaxservice.com",
+        website: getSiteUrl(),
         unsubUrl: pageUrl,
         includeDivider: false,
         includeUnsubscribe: true,
@@ -222,11 +346,14 @@ export async function sendNowDirectResend(campaignId: string) {
         companyName: "SW Tax Service",
         addressLine: "Las Vegas, NV",
         supportEmail: "support@swtaxservice.com",
-        website: "https://www.swtaxservice.com",
+        website: getSiteUrl(),
         unsubUrl: pageUrl,
       });
 
-      const vars = buildVars({
+      const vars = await buildVarsForRecipient({
+        campaignId: id,
+        email: to,
+        inviteRequired,
         unsubPageUrl: pageUrl,
         oneClickUrl,
         footerHtml,
@@ -266,47 +393,37 @@ export async function sendNowDirectResend(campaignId: string) {
           },
         });
 
-        await db
-          .update(emailRecipients)
-          .set({
-            status: "sent" as any,
-            sentAt: new Date(),
-            error: null,
-            updatedAt: new Date(),
-          } as any)
-          .where(eq(emailRecipients.id, r.id));
+        alreadySent.add(to);
+
+        await db.update(emailRecipients).set({
+          status: "sent" as any,
+          sentAt: new Date(),
+          error: null,
+          updatedAt: new Date(),
+        } as any).where(eq(emailRecipients.id, r.id));
       } catch (err: any) {
-        await db
-          .update(emailRecipients)
-          .set({
-            status: "failed" as any,
-            error: String(err?.message ?? err ?? "Send failed"),
-            updatedAt: new Date(),
-          } as any)
-          .where(eq(emailRecipients.id, r.id));
+        await db.update(emailRecipients).set({
+          status: "failed" as any,
+          error: String(err?.message ?? err ?? "Send failed"),
+          updatedAt: new Date(),
+        } as any).where(eq(emailRecipients.id, r.id));
       }
     }
 
     processed += recipients.length;
   }
 
-  // If nothing left queued/sending, mark campaign as sent
   const [remaining] = await db
     .select({
-      open: sql<number>`sum(case when ${emailRecipients.status} in ('queued','sending') then 1 else 0 end)::int`,
+      open: sql<number>`coalesce(sum(case when ${emailRecipients.status} = 'queued' then 1 else 0 end),0)::int`,
     })
     .from(emailRecipients)
     .where(eq(emailRecipients.campaignId, id));
 
   if ((remaining?.open ?? 0) === 0) {
-    await markCampaignStatus(id, {
-      status: "sent" as any,
-      sentAt: new Date(),
-      updatedAt: new Date(),
-    } as any);
+    await markCampaignStatus(id, { status: "sent" as any, sentAt: new Date(), updatedAt: new Date() } as any);
   } else {
-    // keep it in sending; user can click Send Now again to continue
-    await markCampaignStatus(id, { status: "sending" as any, updatedAt: new Date() } as any);
+    await markCampaignStatus(id, { updatedAt: new Date() } as any);
   }
 
   revalidatePath("/admin/email/campaigns");
@@ -315,14 +432,9 @@ export async function sendNowDirectResend(campaignId: string) {
 }
 
 /**
- * ✅ Schedule (Direct Resend)
- * Schedules emails in Resend AND locks recipients in DB
- * so your runner/other actions won’t pick them up again.
+ * ✅ Schedule (Direct Resend) — NO DUPLICATES
  */
-export async function scheduleDirectResend(
-  campaignId: string,
-  sendAtOrForm: string | FormData
-) {
+export async function scheduleDirectResend(campaignId: string, sendAtOrForm: string | FormData) {
   const id = String(campaignId ?? "").trim();
   if (!id) throw new Error("campaignId missing");
 
@@ -332,9 +444,7 @@ export async function scheduleDirectResend(
       : String(sendAtOrForm.get("sendAtIso") ?? sendAtOrForm.get("sendAt") ?? "").trim();
 
   const sendAtLocal =
-    typeof sendAtOrForm === "string"
-      ? ""
-      : String(sendAtOrForm.get("sendAtLocal") ?? "").trim();
+    typeof sendAtOrForm === "string" ? "" : String(sendAtOrForm.get("sendAtLocal") ?? "").trim();
 
   if (!sendAtIso) throw new Error("Pick a date/time.");
 
@@ -348,13 +458,21 @@ export async function scheduleDirectResend(
   const { campaign, htmlTpl, textTpl, templateHasFooterHtml, templateHasFooterText } =
     await getCampaign(id);
 
-  if (String(campaign.status) === "sent") {
-    throw new Error("Campaign is already marked sent.");
+  if (String(campaign.status) === "sent") throw new Error("Campaign is already marked sent.");
+  if (String(campaign.status) === "sending") {
+    throw new Error(
+      "This campaign is in runner mode (status='sending'). Set it back to draft/scheduled before using Direct Resend."
+    );
   }
+
+  const inviteRequired = templateNeedsInviteTokens(
+    String(campaign.subject ?? ""),
+    htmlTpl,
+    textTpl
+  );
 
   const scheduledAt = sendAt.toISOString();
 
-  // Mark campaign as scheduled in YOUR DB too (UI)
   await markCampaignStatus(id, {
     status: "scheduled" as any,
     scheduledAt: sendAt,
@@ -363,21 +481,50 @@ export async function scheduleDirectResend(
     updatedAt: new Date(),
   } as any);
 
+  const alreadySentRows = await db
+    .select({ e: sql<string>`lower(${emailRecipients.email})` })
+    .from(emailRecipients)
+    .where(and(eq(emailRecipients.campaignId, id), eq(emailRecipients.status as any, "sent" as any)));
+
+  const alreadySent = new Set(alreadySentRows.map((r) => String(r.e ?? "").trim()).filter(Boolean));
+
   let processed = 0;
 
   while (processed < MAX_PER_RUN) {
-    const recipients = await claimQueuedBatch(id);
+    const recipients = await loadQueuedBatch(id);
     if (!recipients.length) break;
 
+    const seenThisRun = new Set<string>();
+
     for (const r of recipients) {
-      const to = String(r.email ?? "").toLowerCase().trim();
+      const to = normalizeEmail(r.email);
       if (!to) continue;
+
+      if (alreadySent.has(to)) {
+        await db.update(emailRecipients).set({
+          status: "sent" as any,
+          sentAt: sendAt,
+          error: "Skipped (duplicate email already sent in this campaign)",
+          updatedAt: new Date(),
+        } as any).where(eq(emailRecipients.id, r.id));
+        continue;
+      }
+
+      if (seenThisRun.has(to)) {
+        await db.update(emailRecipients).set({
+          status: "sent" as any,
+          sentAt: sendAt,
+          error: "Skipped (duplicate email in this batch)",
+          updatedAt: new Date(),
+        } as any).where(eq(emailRecipients.id, r.id));
+        continue;
+      }
+
+      seenThisRun.add(to);
 
       const unsubToken = String(r.unsubToken ?? "").trim() || makeToken();
       if (!r.unsubToken) {
-        await db
-          .update(emailRecipients)
-          .set({ unsubToken, updatedAt: new Date() } as any)
+        await db.update(emailRecipients).set({ unsubToken, updatedAt: new Date() } as any)
           .where(eq(emailRecipients.id, r.id));
       }
 
@@ -387,7 +534,7 @@ export async function scheduleDirectResend(
         companyName: "SW Tax Service",
         addressLine: "Las Vegas, NV",
         supportEmail: "support@swtaxservice.com",
-        website: "https://www.swtaxservice.com",
+        website: getSiteUrl(),
         unsubUrl: pageUrl,
       });
 
@@ -395,11 +542,14 @@ export async function scheduleDirectResend(
         companyName: "SW Tax Service",
         addressLine: "Las Vegas, NV",
         supportEmail: "support@swtaxservice.com",
-        website: "https://www.swtaxservice.com",
+        website: getSiteUrl(),
         unsubUrl: pageUrl,
       });
 
-      const vars = buildVars({
+      const vars = await buildVarsForRecipient({
+        campaignId: id,
+        email: to,
+        inviteRequired,
         unsubPageUrl: pageUrl,
         oneClickUrl,
         footerHtml,
@@ -440,25 +590,20 @@ export async function scheduleDirectResend(
           },
         });
 
-        // ✅ Keep as "sending" so nothing else re-queues it.
-        // Store a helpful note so you can see it in your logs UI.
-        await db
-          .update(emailRecipients)
-          .set({
-            status: "sending" as any,
-            error: `Scheduled in Resend for ${scheduledAt}`,
-            updatedAt: new Date(),
-          } as any)
-          .where(eq(emailRecipients.id, r.id));
+        alreadySent.add(to);
+
+        await db.update(emailRecipients).set({
+          status: "sent" as any,
+          sentAt: sendAt,
+          error: `Scheduled in Resend for ${scheduledAt}`,
+          updatedAt: new Date(),
+        } as any).where(eq(emailRecipients.id, r.id));
       } catch (err: any) {
-        await db
-          .update(emailRecipients)
-          .set({
-            status: "failed" as any,
-            error: String(err?.message ?? err ?? "Schedule failed"),
-            updatedAt: new Date(),
-          } as any)
-          .where(eq(emailRecipients.id, r.id));
+        await db.update(emailRecipients).set({
+          status: "failed" as any,
+          error: String(err?.message ?? err ?? "Schedule failed"),
+          updatedAt: new Date(),
+        } as any).where(eq(emailRecipients.id, r.id));
       }
     }
 

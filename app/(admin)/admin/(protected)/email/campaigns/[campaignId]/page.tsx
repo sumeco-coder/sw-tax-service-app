@@ -91,26 +91,29 @@ export default async function CampaignDetailPage({ params }: PageProps) {
     .limit(200);
 
   // ✅ KPI counts
-  const [counts] = await db
-    .select({
-      queued: sql<number>`sum(case when ${emailRecipients.status} = 'queued' then 1 else 0 end)::int`,
-      sending: sql<number>`sum(case when ${emailRecipients.status} = 'sending' then 1 else 0 end)::int`,
-      sent: sql<number>`sum(case when ${emailRecipients.status} = 'sent' then 1 else 0 end)::int`,
-      failed: sql<number>`sum(case when ${emailRecipients.status} = 'failed' then 1 else 0 end)::int`,
-      unsubscribed: sql<number>`sum(case when ${emailRecipients.status} = 'unsubscribed' then 1 else 0 end)::int`,
-      total: sql<number>`count(*)::int`,
-    })
-    .from(emailRecipients)
-    .where(eq(emailRecipients.campaignId, campaign.id));
+    // ✅ KPI counts (recipient statuses only)
+ const [counts] = await db
+  .select({
+    queued: sql<number>`coalesce(sum(case when ${emailRecipients.status} = 'queued' then 1 else 0 end),0)::int`,
+    sent: sql<number>`coalesce(sum(case when ${emailRecipients.status} = 'sent' then 1 else 0 end),0)::int`,
+    failed: sql<number>`coalesce(sum(case when ${emailRecipients.status} = 'failed' then 1 else 0 end),0)::int`,
+    unsubscribed: sql<number>`coalesce(sum(case when ${emailRecipients.status} = 'unsubscribed' then 1 else 0 end),0)::int`,
+    total: sql<number>`count(*)::int`,
+  })
+  .from(emailRecipients)
+  .where(eq(emailRecipients.campaignId, campaign.id));
 
-  const kpi = {
-    queued: counts?.queued ?? 0,
-    sending: (counts as any)?.sending ?? 0,
-    sent: counts?.sent ?? 0,
-    failed: counts?.failed ?? 0,
-    unsubscribed: counts?.unsubscribed ?? 0,
-    total: counts?.total ?? 0,
-  };
+
+
+    const kpi = {
+  queued: counts?.queued ?? 0,
+  sent: counts?.sent ?? 0,
+  failed: counts?.failed ?? 0,
+  unsubscribed: counts?.unsubscribed ?? 0,
+  total: counts?.total ?? 0,
+};
+
+
 
   const recentRecipients = await db
     .select({

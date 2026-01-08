@@ -2,14 +2,18 @@
 
 export const EMAIL_PLACEHOLDERS = [
   "company_name",
-  "waitlist_link",
-  "support_email",
-  "website",
-  "sign_in_url",
-  "sign_up_url",
-  "expires_text",
   "first_name",
   "signature_name",
+  "support_email",
+  "website",
+  "waitlist_link",
+  "sign_in_url",
+  "sign_up_url",
+  "invite_link",
+  "sign_in_link",
+  "invite_expires_at",
+  "portal_link",
+  "expires_text",
   "unsubscribe_link",
   "footer_html",
   "footer_text",
@@ -21,11 +25,20 @@ export const EMAIL_PLACEHOLDERS = [
 
 export type EmailPlaceholder = (typeof EMAIL_PLACEHOLDERS)[number];
 
-export type TemplateVars = Partial<
-  Record<EmailPlaceholder, string | number | null | undefined>
->;
+// ✅ extra keys that some templates use
+export type KnownTemplateVarKey =
+  | "due_date"
+  | "accepted_by"
+  | "reject_reason"
+  | "client_action"
+  | `missing_item_${number}`; // ✅ allows missing_item_1,2,3,... without listing all
 
-export type Recipient = { email: string };
+// ✅ all allowed template var keys
+export type TemplateVarKey = EmailPlaceholder | KnownTemplateVarKey;
+
+export type TemplateVars = Partial<
+  Record<TemplateVarKey, string | number | boolean | null | undefined>
+>;
 
 export type EmailTemplate = {
   id: string;
@@ -34,6 +47,12 @@ export type EmailTemplate = {
   html?: string;
   mjml?: string;
   text: string;
-  placeholders: EmailPlaceholder[];
+
+  // ✅ IMPORTANT: widen this too so templates can declare due_date etc
+  placeholders: TemplateVarKey[];
+
   category?: string;
 };
+
+// ✅ Standardized email recipient shape
+export type Recipient = { email: string };

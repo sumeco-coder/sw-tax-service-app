@@ -8,6 +8,9 @@ export const EMAIL_DEFAULTS = {
   website: "https://www.swtaxservice.com",
   first_name: "there",
   signature_name: "SW Tax Service Team",
+  sign_in_link: "https://www.swtaxservice.com/sign-in",
+  invite_link: "https://www.swtaxservice.com/sign-up",
+  portal_link: "https://www.swtaxservice.com/sign-in",
 
   logo_url:
     "https://www.swtaxservice.com/swtax-favicon-pack/android-chrome-512x512.png",
@@ -21,5 +24,3 @@ export const EMAIL_DEFAULTS = {
   footer_text: "",
 } as const;
 
-// OPTIONAL: if other code still imports DEFAULT_EMAIL_VARS, alias it so nothing breaks
-export const DEFAULT_EMAIL_VARS = EMAIL_DEFAULTS;

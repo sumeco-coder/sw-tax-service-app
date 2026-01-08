@@ -1,3 +1,4 @@
+// app/(admin)/admin/(protected)/templates/page.tsx
 import Link from "next/link";
 import { listEmailTemplates, renderEmailTemplate } from "./actions";
 import { EMAIL_DEFAULTS } from "@/lib/constants/email-defaults";
@@ -11,9 +12,18 @@ export default async function EmailTemplatesPage({ searchParams }: PageProps) {
   const selectedId = searchParams?.t ?? templates[0]?.id ?? "waitlist/01-prelaunch";
 
   const previewVars = {
-    ...EMAIL_DEFAULTS,
-    first_name: "there",
-  };
+  ...EMAIL_DEFAULTS,
+  first_name: "there",
+  portal_link: "https://www.swtaxservice.com/",
+  due_date: "January 15, 2026",
+  missing_item_1: "W-2 from your employer",
+  missing_item_2: "1099-G (unemployment)",
+  missing_item_3: "Photo ID (front/back)",
+  accepted_by: "IRS",
+  reject_reason: "AGI mismatch from prior year",
+  client_action: "Confirm your prior-year AGI (or upload last year return)",
+};
+
 
   const rendered = await renderEmailTemplate(selectedId, previewVars);
 
@@ -28,7 +38,7 @@ export default async function EmailTemplatesPage({ searchParams }: PageProps) {
         </div>
 
         <div className="space-y-2">
-          {templates.map((t) => {
+          {templates.map((t: typeof templates[number]) => {
             const active = t.id === selectedId;
             return (
               <Link
@@ -62,14 +72,22 @@ export default async function EmailTemplatesPage({ searchParams }: PageProps) {
         </div>
 
         <div className="mb-6">
-          <div className="text-xs uppercase tracking-wide text-gray-500">HTML Preview</div>
-          <div className="mt-1 rounded-lg border p-4">
-            <div
-              className="prose max-w-none"
-              dangerouslySetInnerHTML={{ __html: rendered.html }}
-            />
-          </div>
-        </div>
+  <div className="text-xs uppercase tracking-wide text-muted-foreground">
+    HTML Preview
+  </div>
+
+  <div className="mt-2 rounded-2xl border bg-muted/30 p-4">
+    <div className="mx-auto max-w-[820px] overflow-hidden rounded-2xl border bg-background shadow-sm">
+      <iframe
+        title="Email preview"
+        className="block w-full"
+        style={{ height: 820 }}
+        srcDoc={rendered.html}
+      />
+    </div>
+  </div>
+</div>
+
 
         <div>
           <div className="text-xs uppercase tracking-wide text-gray-500">Text Version</div>

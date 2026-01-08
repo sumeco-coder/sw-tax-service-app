@@ -1,3 +1,4 @@
+// lib/auth/guards.ts
 import { redirect } from "next/navigation";
 import type { AppRole } from "./roleClient";
 import { getServerRole } from "./roleServer";

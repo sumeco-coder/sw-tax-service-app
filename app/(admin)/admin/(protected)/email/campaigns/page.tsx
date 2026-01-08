@@ -9,20 +9,61 @@ import { createCampaign } from "./actions";
 import { ALL_TEMPLATES } from "../templates/_templates";
 import NewCampaignForm from "./_components/new-campaign-form";
 
+// ✅ your shared defaults (single source of truth)
+import { EMAIL_DEFAULT_VARS } from "@/lib/email/defaultVars";
+
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-const DEFAULT_VARS = {
-  company_name: "SW Tax Service",
-  support_email: "support@swtaxservice.com",
-  website: "https://www.swtaxservice.com",
-  signature_name: "Sumeco Wynn",
-  waitlist_link: "https://www.swtaxservice.com/waitlist",
-  logo_url: "https://www.swtaxservice.com/swtax-favicon-pack/android-chrome-512x512.png",
-  logo_alt: "SW Tax Service",
-  logo_link: "https://www.swtaxservice.com",
-  logo_width: "72px",
+type PickerTemplate = {
+  id: string;
+  name: string;
+  category?: string;
+  subject: string;
+  html: string; // compiled html (or direct html)
+  text: string;
 };
+
+async function buildPickerTemplates(): Promise<PickerTemplate[]> {
+  // Try to support MJML templates too (if mjml is installed)
+  let mjml2html: any = null;
+  try {
+    const mod: any = await import("mjml");
+    mjml2html = mod?.default ?? mod;
+  } catch {
+    // mjml not installed — MJML templates will just have empty html
+    mjml2html = null;
+  }
+
+  return ALL_TEMPLATES.map((t: any) => {
+    const htmlFromTemplate =
+      typeof t.html === "string" && t.html.trim() ? t.html.trim() : "";
+
+    const mjmlFromTemplate =
+      typeof t.mjml === "string" && t.mjml.trim() ? t.mjml.trim() : "";
+
+    let html = htmlFromTemplate;
+
+    // If no html but has mjml and compiler available, compile to html
+    if (!html && mjmlFromTemplate && mjml2html) {
+      try {
+        const out = mjml2html(mjmlFromTemplate, { validationLevel: "soft" });
+        html = String(out?.html ?? "").trim();
+      } catch {
+        html = "";
+      }
+    }
+
+    return {
+      id: String(t.id),
+      name: String(t.name),
+      category: t.category ? String(t.category) : undefined,
+      subject: String(t.subject ?? ""),
+      html,
+      text: String(t.text ?? ""),
+    };
+  });
+}
 
 export default async function CampaignsPage() {
   const campaigns = await db
@@ -39,14 +80,7 @@ export default async function CampaignsPage() {
     .orderBy(desc(emailCampaigns.createdAt))
     .limit(50);
 
-  const templates = ALL_TEMPLATES.map((t) => ({
-    id: t.id,
-    name: t.name,
-    category: t.category,
-    subject: t.subject,
-    html: t.html ?? "",
-    text: t.text ?? "",
-  }));
+  const templates = await buildPickerTemplates();
 
   return (
     <div className="space-y-6">
@@ -70,11 +104,10 @@ export default async function CampaignsPage() {
       <section className="rounded-3xl border bg-white p-5 shadow-sm">
         <h2 className="text-sm font-semibold text-[#202030]">New campaign</h2>
 
-        {/* ✅ client form that can auto-fill from templates */}
         <NewCampaignForm
           action={createCampaign}
           templates={templates}
-          defaults={DEFAULT_VARS}
+          defaults={EMAIL_DEFAULT_VARS}
         />
       </section>
 
@@ -101,7 +134,9 @@ export default async function CampaignsPage() {
                     month: "short",
                     day: "numeric",
                     year: "numeric",
-                  }).format(c.createdAt instanceof Date ? c.createdAt : new Date(c.createdAt as any))}
+                  }).format(
+                    c.createdAt instanceof Date ? c.createdAt : new Date(c.createdAt as any)
+                  )}
                 </div>
               </div>
 
@@ -113,9 +148,7 @@ export default async function CampaignsPage() {
                 </span>
               </div>
 
-              <div className="col-span-2 text-xs text-[#202030]/70">
-                {c.segment}
-              </div>
+              <div className="col-span-2 text-xs text-[#202030]/70">{c.segment}</div>
             </Link>
           ))}
 

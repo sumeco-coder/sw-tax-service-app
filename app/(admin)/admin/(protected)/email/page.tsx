@@ -48,14 +48,22 @@ export default async function AdminEmailPage() {
     new Map((ALL_TEMPLATES ?? []).map((t) => [t.id, t])).values()
   );
 
-  const templates = uniqueTemplates.map((t) => ({
+  // ✅ normalize template html safely (handles html OR mjml-only templates)
+const templates = uniqueTemplates.map((t) => {
+  const html =
+    ("html" in t && typeof (t as any).html === "string" ? (t as any).html : "") ||
+    ("mjml" in t && typeof (t as any).mjml === "string" ? (t as any).mjml : "") ||
+    "";
+
+  return {
     id: t.id,
     name: t.name,
-    category: t.category,
+    category: "category" in t ? (t as any).category : undefined,
     subject: t.subject,
-    html: t.mjml ?? t.html ?? "",
-    text: t.text ?? "",
-  }));
+    html,
+    text: (t as any).text ?? "",
+  };
+});
 
   /**
    * You do NOT have an `email_lists` table right now.

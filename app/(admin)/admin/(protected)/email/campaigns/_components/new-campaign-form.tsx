@@ -1,19 +1,42 @@
+// app/(admin)/admin/(protected)/email/campaigns/_components/new-campaign-form.tsx
 "use client";
 
 import * as React from "react";
-import { renderString as renderFromLib } from "@/lib/helpers/render-template";
+import type { TemplateVars } from "@/types/email";
 
 type TemplateItem = {
   id: string;
   name: string;
   category?: string;
   subject: string;
-  html: string;
+  html: string; // already compiled html (or empty)
   text: string;
 };
 
-type Defaults = Record<string, string | number>;
-type Vars = Record<string, string | number | null | undefined>;
+// ✅ defaults come from EMAIL_DEFAULT_VARS
+type Defaults = TemplateVars;
+
+// ✅ vars we use for preview-fill in this UI (stringify when injecting)
+type Vars = Record<string, string | number | boolean | null | undefined>;
+
+function escapeRegExp(s: string) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * ✅ Client-safe: replace ONLY keys provided in vars
+ * - supports {{key}} and {{{key}}}
+ * - leaves unknown tokens untouched (so send-time can fill them per recipient)
+ */
+function fillKnownDefaultsKeepUnknown(input: string, vars: Vars) {
+  let out = String(input ?? "");
+  for (const [k, v] of Object.entries(vars)) {
+    const safeV = v == null ? "" : String(v);
+    const re = new RegExp(`{{{?\\s*${escapeRegExp(k)}\\s*}?}}`, "g");
+    out = out.replace(re, safeV);
+  }
+  return out;
+}
 
 export default function NewCampaignForm({
   action,
@@ -40,16 +63,26 @@ export default function NewCampaignForm({
     if (!selected) return;
 
     // ✅ Fill only stable defaults here.
-    // 🚫 DO NOT fill: first_name, footer_html, footer_text, unsubscribe_link
-    //    (those must remain tokens for send-time per-recipient rendering)
-    const { first_name, footer_html, footer_text, unsubscribe_link, ...known } =
-      defaults as any;
+    // Keep per-recipient tokens untouched for send-time:
+    const {
+      first_name,
+      footer_html,
+      footer_text,
+      unsubscribe_link,
+      one_click_unsub_url,
+      invite_link,
+      sign_in_link,
+      portal_link,
+      invite_expires_at,
+      expires_text,
+      ...stable
+    } = defaults as any;
 
-    const vars: Vars = { ...known };
+    const vars: Vars = { ...(stable as any) };
 
-    setSubject(renderFromLib(selected.subject, vars as any));
-    setHtmlBody(renderFromLib(selected.html.trim(), vars as any));
-    setTextBody(renderFromLib(selected.text.trim(), vars as any));
+    setSubject(fillKnownDefaultsKeepUnknown(selected.subject, vars));
+    setHtmlBody(fillKnownDefaultsKeepUnknown(selected.html.trim(), vars));
+    setTextBody(fillKnownDefaultsKeepUnknown(selected.text.trim(), vars));
 
     if (!name) setName(selected.name);
   }

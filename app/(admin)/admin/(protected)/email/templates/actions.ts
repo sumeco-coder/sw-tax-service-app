@@ -8,13 +8,26 @@ import type { TemplateVars } from "@/types/email";
 import { compileMjmlToHtmlIfNeeded } from "@/lib/helpers/email-compile.server";
 import { buildEmailFooterHTML, buildEmailFooterText } from "@/lib/email/footer";
 
+type AnyTemplate = (typeof ALL_TEMPLATES)[number];
+
+function getTemplateBodySource(t: AnyTemplate) {
+  // ✅ Prefer mjml if present, else html, else empty
+  const mjml = "mjml" in t ? (t as any).mjml : undefined;
+  if (typeof mjml === "string" && mjml.trim()) return mjml;
+
+  const html = "html" in t ? (t as any).html : undefined;
+  if (typeof html === "string" && html.trim()) return html;
+
+  return "";
+}
+
 export async function listEmailTemplates() {
   return ALL_TEMPLATES.map((t) => ({
     id: t.id,
     name: t.name,
     subject: t.subject,
-    category: t.category,
-    placeholders: t.placeholders,
+    category: "category" in t ? (t as any).category : undefined,
+    placeholders: (t as any).placeholders ?? [],
   }));
 }
 
@@ -34,8 +47,7 @@ export async function renderEmailTemplate(templateId: string, vars: TemplateVars
     ...(vars ?? {}),
   };
 
-  // ✅ Preview-friendly defaults:
-  // If footer_html/footer_text not provided, generate them so {{#if footer_html}} works.
+  // ✅ Preview-friendly defaults so {{#if footer_html}} works in preview
   if (!v.footer_html) {
     v.footer_html = buildEmailFooterHTML("marketing", {
       companyName: String(v.company_name ?? ""),
@@ -43,8 +55,8 @@ export async function renderEmailTemplate(templateId: string, vars: TemplateVars
       website: String(v.website ?? ""),
       addressLine: "Las Vegas, NV",
       unsubUrl: String(v.unsubscribe_link ?? "") || undefined,
-      includeDivider: false,     // your template already has <hr> before footer
-      includeUnsubscribe: false, // your template renders unsubscribe separately
+      includeDivider: false,     // template already has <hr> before footer injection
+      includeUnsubscribe: false, // template renders unsubscribe separately
     });
   }
 
@@ -58,18 +70,17 @@ export async function renderEmailTemplate(templateId: string, vars: TemplateVars
     });
   }
 
-  // Optional: give preview an unsubscribe link if blank (so the block can render)
   if (!v.unsubscribe_link) {
     v.unsubscribe_link = "https://www.swtaxservice.com/unsubscribe";
   }
 
-  // ✅ MJML-first body source
-  const bodySource = String(t.mjml ?? t.html ?? "");
+  // ✅ Get the template body source safely (mjml first, then html)
+  const bodySource = getTemplateBodySource(t);
 
-  // ✅ Render variables into body/subject/text
+  // ✅ Render variables into subject/body/text
   const renderedSubject = renderString(String(t.subject ?? ""), v);
-  const renderedBody = renderString(bodySource, v);
-  const renderedText = renderString(String(t.text ?? ""), v);
+  const renderedBody = renderString(String(bodySource ?? ""), v);
+  const renderedText = renderString(String((t as any).text ?? ""), v);
 
   // ✅ Compile MJML -> HTML if needed (HTML passes through)
   const html = compileMjmlToHtmlIfNeeded(renderedBody);
