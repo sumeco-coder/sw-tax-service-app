@@ -1,15 +1,50 @@
 // app/(client)/(protected)/(app)/documents/_components/DocumentsClient.tsx
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import {
-  listClientDocuments,
   listMyDocuments,
   createUploadUrl,
   createMyDownloadUrl,
   createClientDownloadUrl,
-  deleteDocument,
+  deleteDocument, // ✅ keep this for S3-delete behavior if you already built it
 } from "../actions";
+
+// ✅ import admin server actions (DB-backed)
+import {
+  adminListDocuments,
+  adminDeleteDocument,
+  type AdminDocItem,
+} from "@/app/(admin)/admin/(protected)/clients/[userId]/documents/actions";
+
+type DocItem = {
+  id?: string; // admin DB rows have this
+  key: string;
+  name: string;
+  size: number;
+  lastModified: string | null;
+};
+
+function fmtSize(bytes: number) {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 KB";
+  const kb = bytes / 1024;
+  if (kb < 1024) return `${kb.toFixed(1)} KB`;
+  const mb = kb / 1024;
+  return `${mb.toFixed(1)} MB`;
+}
+
+function fmtDate(iso: string | null) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return new Intl.DateTimeFormat("en-US", {
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(d);
+}
 
 export default function DocumentsClient({
   targetUserId,
@@ -19,31 +54,40 @@ export default function DocumentsClient({
   mode: "client" | "admin";
 }) {
   const [busy, startTransition] = useTransition();
-  const [items, setItems] = useState<
-    Array<{
-      key: string;
-      name: string;
-      size: number;
-      lastModified: string | null;
-    }>
-  >([]);
+  const [items, setItems] = useState<DocItem[]>([]);
   const [err, setErr] = useState("");
 
-  async function refresh() {
-    const rows =
-      mode === "admin"
-        ? await listClientDocuments(targetUserId)
-        : await listMyDocuments();
+  const title = useMemo(
+    () => (mode === "admin" ? "Client documents" : "Documents"),
+    [mode]
+  );
 
-    setItems(rows);
+  async function refresh() {
+    const rows = mode === "admin"
+      ? ((await adminListDocuments(targetUserId)) as AdminDocItem[])
+      : await listMyDocuments();
+
+    // Normalize both shapes into DocItem
+    const normalized: DocItem[] = (rows as any[]).map((r) => ({
+      id: r.id ? String(r.id) : undefined,
+      key: String(r.key),
+      name: String(r.name ?? r.fileName ?? "Document"),
+      size: Number(r.size ?? 0),
+      lastModified: r.lastModified
+        ? String(r.lastModified)
+        : r.uploadedAt
+        ? new Date(r.uploadedAt).toISOString()
+        : null,
+    }));
+
+    setItems(normalized);
   }
 
   useEffect(() => {
     startTransition(() => {
-      refresh().catch((e: any) => {
-        setErr(e?.message ?? "Failed to load documents.");
-      });
+      refresh().catch((e: any) => setErr(e?.message ?? "Failed to load documents."));
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [targetUserId, mode]);
 
   async function onUpload(file: File) {
@@ -85,25 +129,50 @@ export default function DocumentsClient({
     window.open(out.url, "_blank");
   }
 
-  async function onDelete(key: string) {
+  async function onDelete(item: DocItem) {
     setErr("");
 
-    // UI already hides delete unless admin; this extra guard prevents accidental calls.
     if (mode !== "admin") throw new Error("Forbidden.");
 
-    await deleteDocument({ targetUserId, key });
+    // ✅ If we have a DB id, delete DB record
+    if (item.id) {
+      await adminDeleteDocument(targetUserId, item.id);
+    }
+
+    // ✅ If your existing deleteDocument removes from S3 (recommended),
+    // call it too so we don't leave orphaned S3 files.
+    // If deleteDocument ALSO deletes DB rows already, then remove adminDeleteDocument above.
+    await deleteDocument({ targetUserId, key: item.key });
+
     await refresh();
   }
 
   return (
     <div className="space-y-4">
-      <header>
-        <h1 className="text-2xl font-bold text-foreground">Documents</h1>
-        <p className="text-sm text-muted-foreground">
-          {mode === "admin"
-            ? "Upload documents to the client’s folder."
-            : "Upload your documents here and download them anytime."}
-        </p>
+      <header className="flex items-end justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-foreground">{title}</h1>
+          <p className="text-sm text-muted-foreground">
+            {mode === "admin"
+              ? "Upload, download, and manage files in this client’s folder."
+              : "Upload your documents here and download them anytime."}
+          </p>
+        </div>
+
+        <button
+          className="rounded-xl border border-border bg-card px-3 py-2 text-xs font-semibold hover:bg-secondary/40 disabled:opacity-60"
+          onClick={() =>
+            startTransition(() => {
+              setErr("");
+              refresh().catch((e: any) =>
+                setErr(e?.message ?? "Failed to load documents.")
+              );
+            })
+          }
+          disabled={busy}
+        >
+          Refresh
+        </button>
       </header>
 
       {err ? (
@@ -112,12 +181,17 @@ export default function DocumentsClient({
         </div>
       ) : null}
 
+      {/* Upload */}
       <div className="rounded-2xl bg-card p-4 ring-1 ring-border">
-        <label htmlFor="client-upload" className="text-sm font-semibold text-foreground">
+        <label
+          htmlFor="client-upload"
+          className="text-sm font-semibold text-foreground"
+        >
           Upload
         </label>
 
         <input
+          id="client-upload"
           type="file"
           className={[
             "mt-2 block w-full cursor-pointer rounded-xl border border-border px-3 py-2 text-sm",
@@ -145,41 +219,28 @@ export default function DocumentsClient({
         />
       </div>
 
+      {/* Files */}
       <div className="rounded-2xl bg-card p-4 ring-1 ring-border">
-        <div className="flex items-center justify-between">
-          <p className="text-sm font-semibold text-foreground">Files</p>
-
-          <button
-            className="rounded-lg cursor-pointer border border-border bg-card px-3 py-1 text-xs font-semibold text-foreground hover:bg-secondary/40 disabled:opacity-60 disabled:cursor-not-allowed"
-            onClick={() =>
-              startTransition(() => {
-                setErr("");
-                refresh().catch((e: any) => setErr(e?.message ?? "Failed to load documents."));
-              })
-            }
-            disabled={busy}
-          >
-            Refresh
-          </button>
-        </div>
+        <p className="text-sm font-semibold text-foreground">Files</p>
 
         <ul className="mt-3 space-y-2">
           {items.map((it) => (
             <li
               key={it.key}
-              className="flex items-center justify-between rounded-xl border border-border bg-secondary/30 px-3 py-2"
+              className="flex flex-col gap-2 rounded-xl border border-border bg-secondary/30 px-3 py-2 sm:flex-row sm:items-center sm:justify-between"
             >
               <div className="min-w-0">
                 <p className="truncate text-sm font-semibold">{it.name}</p>
                 <p className="text-[11px] text-muted-foreground">
-                  {it.lastModified ? new Date(it.lastModified).toLocaleString() : ""} ·{" "}
-                  {(it.size / 1024).toFixed(1)} KB
+                  {fmtDate(it.lastModified)}{it.lastModified ? " · " : ""}
+                  {fmtSize(it.size)}
                 </p>
               </div>
 
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2 sm:justify-end">
                 <button
-                  className="rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground hover:opacity-90"
+                  className="rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground hover:opacity-90 disabled:opacity-60"
+                  disabled={busy}
                   onClick={() =>
                     startTransition(() => {
                       onDownload(it.key).catch((e: any) =>
@@ -193,10 +254,11 @@ export default function DocumentsClient({
 
                 {mode === "admin" ? (
                   <button
-                    className="rounded-lg border px-3 py-1.5 text-xs font-semibold hover:bg-secondary/40"
+                    className="rounded-lg border px-3 py-1.5 text-xs font-semibold hover:bg-secondary/40 disabled:opacity-60"
+                    disabled={busy}
                     onClick={() =>
                       startTransition(() => {
-                        onDelete(it.key).catch((e: any) =>
+                        onDelete(it).catch((e: any) =>
                           setErr(e?.message ?? "Delete failed.")
                         );
                       })

@@ -1,20 +1,10 @@
-// app/(admin)/admin/(protected)/clients/actions.ts
 "use server";
 
 import { z } from "zod";
-import { revalidatePath } from "next/cache";
-import { redirect } from "next/navigation";
 import { db } from "@/drizzle/db";
 import { users } from "@/drizzle/schema";
 import { eq } from "drizzle-orm";
-import { getServerRole } from "@/lib/auth/roleServer";
-
-function assertAdminOrRedirect(auth: any) {
-  const isAdmin =
-    auth?.role === "ADMIN" || auth?.role === "LMS_ADMIN" || auth?.role === "LMS_PREPARER";
-  if (!auth) redirect("/admin/sign-in");
-  if (!isAdmin) redirect("/admin");
-}
+import { requireAdminOrRedirect, revalidateClientPaths } from "./_helpers";
 
 const StatusSchema = z.object({
   userId: z.string().min(1),
@@ -23,8 +13,7 @@ const StatusSchema = z.object({
 });
 
 export async function setClientStatus(formData: FormData) {
-  const auth = await getServerRole();
-  assertAdminOrRedirect(auth);
+  await requireAdminOrRedirect();
 
   const parsed = StatusSchema.safeParse({
     userId: String(formData.get("userId") ?? ""),
@@ -41,11 +30,11 @@ export async function setClientStatus(formData: FormData) {
       status,
       disabledAt: status === "disabled" ? new Date() : null,
       disabledReason: status === "disabled" ? (reason ?? null) : null,
+      updatedAt: new Date(),
     })
     .where(eq(users.id, userId));
 
-  revalidatePath("/admin/clients");
-  revalidatePath(`/admin/clients/${userId}`);
+  revalidateClientPaths(userId);
 }
 
 const ProfileSchema = z.object({
@@ -55,8 +44,7 @@ const ProfileSchema = z.object({
 });
 
 export async function updateClientProfile(formData: FormData) {
-  const auth = await getServerRole();
-  assertAdminOrRedirect(auth);
+  await requireAdminOrRedirect();
 
   const parsed = ProfileSchema.safeParse({
     userId: String(formData.get("userId") ?? ""),
@@ -72,9 +60,9 @@ export async function updateClientProfile(formData: FormData) {
     .set({
       name: name ?? null,
       adminNotes: adminNotes ?? null,
+      updatedAt: new Date(),
     })
     .where(eq(users.id, userId));
 
-  revalidatePath("/admin/clients");
-  revalidatePath(`/admin/clients/${userId}`);
+  revalidateClientPaths(userId);
 }
