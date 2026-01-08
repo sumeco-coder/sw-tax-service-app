@@ -81,6 +81,27 @@ function normalizeEffectiveStep(step: DbStep): StepCode {
   return (step as StepCode) ?? "PROFILE";
 }
 
+async function ensureServerSession() {
+  const session = await fetchAuthSession();
+
+  // ✅ IMPORTANT: send JWT strings, not token objects
+  const idToken = session.tokens?.idToken?.toString();
+  const accessToken = session.tokens?.accessToken?.toString();
+
+  if (!idToken || !accessToken) return null;
+
+  const res = await fetch("/api/auth/session", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ idToken, accessToken }),
+  });
+
+  if (!res.ok) return null;
+
+  return session; // return for reuse below
+}
+
 export default function OnboardingPage() {
   const [me, setMe] = useState<Me | null>(null);
   const [loading, setLoading] = useState(true);
@@ -89,7 +110,7 @@ export default function OnboardingPage() {
     (async () => {
       try {
         const u = await getCurrentUser();
-        const session = await fetchAuthSession();
+          const session = (await ensureServerSession()) ?? (await fetchAuthSession());
 
         const tokenEmail =
           (session.tokens?.idToken?.payload["email"] as string | undefined) ?? "";

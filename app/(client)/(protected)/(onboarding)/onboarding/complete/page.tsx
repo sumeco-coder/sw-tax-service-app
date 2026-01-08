@@ -1,70 +1,47 @@
-// app/(client)/onboarding/complete/page.tsx
-import { cookies } from "next/headers";
-import { decodeJwt } from "jose";
-import { db } from "@/drizzle/db";
-import { users } from "@/drizzle/schema";
-import { eq } from "drizzle-orm";
-import { redirect } from "next/navigation";
+import CompleteButton from "./_components/CompleteButton";
+import { completeOnboarding } from "./actions";
 
 const BRAND = {
-  primary: "#E00040", // your summary pink/red
-  accent: "#B04020", // your summary copper
+  primary: "#E00040",
+  accent: "#B04020",
   dark: "#202030",
 };
 
-/**
- * Server action: mark onboarding as DONE
- * Uses Cognito sub from idToken cookie.
- */
-async function completeOnboarding(_formData: FormData) {
-  "use server";
-
-  const cookieStore = await cookies();
-  const idToken = cookieStore.get("idToken")?.value;
-  // If you store accessToken instead, swap this cookie name.
-
-  if (!idToken) {
-    console.error("completeOnboarding: no idToken cookie");
-    redirect("/sign-in");
-  }
-
-  let sub: string | undefined;
-  try {
-    const decoded: any = decodeJwt(idToken!);
-    sub = decoded?.sub as string | undefined;
-  } catch (err) {
-    console.error("completeOnboarding: decode error", err);
-    redirect("/sign-in");
-  }
-
-  if (!sub) {
-    console.error("completeOnboarding: no sub in token");
-    redirect("/sign-in");
-  }
-
-  const [userRow] = await db
-    .select()
-    .from(users)
-    .where(eq(users.cognitoSub, sub!))
-    .limit(1);
-
-  if (!userRow) {
-    console.error("completeOnboarding: user not found for sub", sub);
-    redirect("/sign-in");
-  }
-
-  await db
-    .update(users)
-    .set({
-      onboardingStep: "DONE", // 🔥 your enum value
-      updatedAt: new Date(),
-    })
-    .where(eq(users.id, userRow.id));
-
-  redirect("/dashboard");
+function oneParam(v: string | string[] | undefined) {
+  return Array.isArray(v) ? v[0] : v;
 }
 
-export default async function OnboardingCompletePage() {
+function safeInternalPath(input: string | null | undefined, fallback: string) {
+  const raw = (input ?? "").trim();
+  if (!raw) return fallback;
+  if (!raw.startsWith("/")) return fallback;
+  if (raw.startsWith("//")) return fallback;
+  if (raw.includes("://")) return fallback;
+  return raw;
+}
+
+function normalizePostOnboardingTarget(path: string) {
+  if (path.startsWith("/onboarding")) return "/dashboard";
+  return path;
+}
+
+type SearchParams = { [key: string]: string | string[] | undefined };
+
+export default async function OnboardingCompletePage({
+  searchParams,
+}: {
+  // ✅ Next 15: treat searchParams as async
+  searchParams: Promise<SearchParams>;
+}) {
+  const sp = await searchParams;
+
+  const nextParam = oneParam(sp.next);
+  const intendedAfterOnboarding = normalizePostOnboardingTarget(
+    safeInternalPath(nextParam, "/dashboard")
+  );
+
+  const formId = "complete-onboarding-form";
+
   return (
     <main
       className="min-h-screen px-4 py-10"
@@ -89,13 +66,12 @@ export default async function OnboardingCompletePage() {
             </h1>
 
             <p className="mt-2 text-sm text-slate-600">
-              We&apos;ve received your onboarding information. If you booked a review
-              call, it&apos;s scheduled. Your tax pro will review everything and reach
-              out if anything else is needed.
+              We&apos;ve received your onboarding information. If you booked a
+              review call, it&apos;s scheduled. Your tax pro will review
+              everything and reach out if anything else is needed.
             </p>
           </header>
 
-          {/* Success banner */}
           <div
             className="mb-5 rounded-2xl p-4 text-white shadow-sm ring-1 ring-black/5"
             style={{
@@ -118,7 +94,8 @@ export default async function OnboardingCompletePage() {
           <section className="space-y-3 text-sm text-slate-700">
             <p>
               From your dashboard, you&apos;ll be able to upload extra documents,
-              view messages from your tax pro, and track the status of your return.
+              view messages from your tax pro, and track the status of your
+              return.
             </p>
 
             <ul className="list-disc pl-5 text-xs text-slate-600 space-y-1">
@@ -128,24 +105,18 @@ export default async function OnboardingCompletePage() {
             </ul>
           </section>
 
-          <form action={completeOnboarding} className="mt-6">
-            <button
-              type="submit"
-              className="inline-flex w-full items-center justify-center rounded-2xl px-4 py-2.5 text-sm font-extrabold text-white shadow-sm ring-1 ring-black/5 hover:opacity-95"
-              style={{
-                background: `linear-gradient(90deg, ${BRAND.primary}, ${BRAND.accent})`,
-              }}
-            >
-              Go to my dashboard
-            </button>
+          {/* Server action form (fallback). Button tries API first. */}
+          <form id={formId} action={completeOnboarding} className="mt-6">
+            <input type="hidden" name="next" value={intendedAfterOnboarding} />
+            <CompleteButton formId={formId} />
           </form>
 
           <p className="mt-3 text-[11px] text-center text-slate-500">
-            You can come back and update your information anytime by signing in to your account.
+            You can come back and update your information anytime by signing in
+            to your account.
           </p>
         </div>
 
-        {/* small footer note */}
         <p className="mt-4 text-center text-[11px] text-white/70">
           Need help? Contact support and we’ll walk you through it.
         </p>

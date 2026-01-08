@@ -1,6 +1,11 @@
+// app/api/auth/session/route.ts
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
+
+function looksLikeJwt(t: string) {
+  return t.split(".").length === 3;
+}
 
 export async function POST(req: Request) {
   const body = await req.json().catch(() => null);
@@ -8,29 +13,24 @@ export async function POST(req: Request) {
   const accessToken = String(body?.accessToken ?? "");
   const idToken = String(body?.idToken ?? "");
 
-  if (!accessToken || !idToken) {
+  if (!accessToken || !idToken || !looksLikeJwt(accessToken) || !looksLikeJwt(idToken)) {
     return NextResponse.json(
-      { ok: false, message: "Missing tokens" },
+      { ok: false, message: "Missing/invalid tokens" },
       { status: 400, headers: { "Cache-Control": "no-store" } }
     );
   }
 
   const secure = process.env.NODE_ENV === "production";
-
   const cookieOptions = {
     httpOnly: true,
     secure,
     sameSite: "lax" as const,
     path: "/",
-    maxAge: 60 * 60 * 24 * 7, // 7 days
+    maxAge: 60 * 60 * 24 * 7,
   };
 
-  const res = NextResponse.json(
-    { ok: true },
-    { headers: { "Cache-Control": "no-store" } }
-  );
+  const res = NextResponse.json({ ok: true }, { headers: { "Cache-Control": "no-store" } });
 
-  // ✅ Set cookies on the RESPONSE in route handlers
   res.cookies.set("accessToken", accessToken, cookieOptions);
   res.cookies.set("idToken", idToken, cookieOptions);
 

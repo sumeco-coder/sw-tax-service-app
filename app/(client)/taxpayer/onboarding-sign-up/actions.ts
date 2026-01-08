@@ -1,4 +1,4 @@
-// app/%28client%29/taxpayer/onboarding-sign-up/actions.ts
+// app/(client)/taxpayer/onboarding-sign-up/actions.ts
 "use server";
 
 import { db } from "@/drizzle/db";

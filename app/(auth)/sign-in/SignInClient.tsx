@@ -55,6 +55,12 @@ function safeInternalPath(input: string | null, fallback: string) {
   return raw;
 }
 
+/** ✅ next means "after onboarding" — never allow onboarding routes as final target */
+function normalizePostOnboardingTarget(path: string) {
+  if (path.startsWith("/onboarding")) return "/dashboard";
+  return path;
+}
+
 export default function SigninClient() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -65,10 +71,7 @@ export default function SigninClient() {
   }, []);
 
   // Invite context (token from your DB invite links can be passed as ?invite=TOKEN)
-  const invite = useMemo(
-    () => (searchParams.get("invite") ?? "").trim(),
-    [searchParams]
-  );
+  const invite = useMemo(() => (searchParams.get("invite") ?? "").trim(), [searchParams]);
 
   // support both next & redirect
   const nextParam = useMemo(
@@ -77,24 +80,26 @@ export default function SigninClient() {
   );
 
   // optional: show message if they were auto-logged-out
-  const reason = useMemo(
-    () => (searchParams.get("reason") ?? "").trim(),
-    [searchParams]
-  );
+  const reason = useMemo(() => (searchParams.get("reason") ?? "").trim(), [searchParams]);
 
-  // ✅ Invited users default into onboarding; otherwise dashboard
-  const redirectTo = useMemo(() => {
-    const fallback = invite ? "/onboarding/profile" : "/dashboard";
-    return safeInternalPath(nextParam, fallback);
-  }, [nextParam, invite]);
+  // ✅ This is the destination AFTER onboarding is complete
+  const intendedAfterOnboarding = useMemo(() => {
+    const safe = safeInternalPath(nextParam, "/dashboard");
+    return normalizePostOnboardingTarget(safe);
+  }, [nextParam]);
 
-  const signUpHref = useMemo(() => {
+  // ✅ Link shown on sign-in page.
+  // If invite exists, we send them to your invite sign-up page.
+  // Otherwise, go to general /sign-up.
+  const createAccountHref = useMemo(() => {
     const params = new URLSearchParams();
     if (invite) params.set("invite", invite);
-    if (redirectTo) params.set("next", redirectTo);
+    if (intendedAfterOnboarding) params.set("next", intendedAfterOnboarding);
+
+    const base = invite ? "/taxpayer/onboarding-sign-up" : "/sign-up";
     const qs = params.toString();
-    return `/sign-up${qs ? `?${qs}` : ""}`;
-  }, [invite, redirectTo]);
+    return `${base}${qs ? `?${qs}` : ""}`;
+  }, [invite, intendedAfterOnboarding]);
 
   const [view, setView] = useState<View>("signin");
   const [email, setEmail] = useState("");
@@ -115,7 +120,7 @@ export default function SigninClient() {
 
   /** ✅ Force onboarding for taxpayers (or invite flow) until onboardingComplete=true */
   async function routeAfterAuth() {
-    const intended = redirectTo || "/dashboard";
+    const intended = intendedAfterOnboarding || "/dashboard";
 
     try {
       const attrs = await fetchUserAttributes();
@@ -124,11 +129,11 @@ export default function SigninClient() {
         (attrs["custom:onboardingComplete"] ?? "").toLowerCase() === "true";
 
       // If they are invited OR taxpayer, and onboarding isn't complete, force onboarding.
-      // (Invite param is your strongest indicator they are in the onboarding funnel.)
       if ((invite || role === "taxpayer") && !onboardingComplete) {
         const qs = new URLSearchParams();
         // preserve intended destination so onboarding can send them there later
-        if (intended) qs.set("next", intended);
+        qs.set("next", intended);
+
         router.push(`/onboarding/profile?${qs.toString()}`);
         return;
       }
@@ -139,7 +144,7 @@ export default function SigninClient() {
     router.push(intended);
   }
 
-  // ✅ NEW: if already signed in, redirect right away
+  // ✅ If already signed in, redirect right away
   useEffect(() => {
     let cancelled = false;
 
@@ -159,8 +164,7 @@ export default function SigninClient() {
     return () => {
       cancelled = true;
     };
-    // invite/redirectTo affect routeAfterAuth behavior
-  }, [invite, redirectTo]); // eslint-friendly enough
+  }, [invite, intendedAfterOnboarding]); // affects routeAfterAuth behavior
 
   async function handleSignIn(e: React.FormEvent) {
     e.preventDefault();
@@ -195,20 +199,16 @@ export default function SigninClient() {
 
       if (step === "CONFIRM_SIGN_UP") {
         setView("confirmSignUp");
-        setMsg(
-          "Your account isn’t confirmed yet. Enter your confirmation code."
-        );
+        setMsg("Your account isn’t confirmed yet. Enter your confirmation code.");
         return;
       }
 
       setView("confirmSignIn");
-      setMsg(
-        step ? `Additional sign-in step required: ${step}` : "Continue sign-in."
-      );
+      setMsg(step ? `Additional sign-in step required: ${step}` : "Continue sign-in.");
     } catch (e: unknown) {
       const m = getErrMsg(e);
 
-      // ✅ NEW: if already signed in, just route them in
+      // ✅ if already signed in, just route them in
       if (m.toLowerCase().includes("already a signed in user")) {
         await routeAfterAuth();
         return;
@@ -320,10 +320,7 @@ export default function SigninClient() {
       <div className="w-full max-w-md rounded-3xl border border-white/10 bg-white/95 p-8 shadow-2xl backdrop-blur">
         {/* Brand header */}
         <div className="flex items-center justify-center gap-3">
-          <div
-            className="relative h-11 w-11 overflow-hidden rounded-2xl p-[2px]"
-            style={brandGradient}
-          >
+          <div className="relative h-11 w-11 overflow-hidden rounded-2xl p-[2px]" style={brandGradient}>
             <div className="relative h-full w-full rounded-[14px] bg-white">
               <Image
                 src="/swtax-favicon-pack/favicon-48x48.png"
@@ -336,27 +333,16 @@ export default function SigninClient() {
           </div>
 
           <div className="text-center">
-            <div className="text-sm font-semibold text-slate-900">
-              SW Tax Service
-            </div>
-            <div className="text-[11px] text-slate-500">
-              Secure client portal
-            </div>
+            <div className="text-sm font-semibold text-slate-900">SW Tax Service</div>
+            <div className="text-[11px] text-slate-500">Secure client portal</div>
           </div>
         </div>
 
         <h1 className="mt-6 text-2xl font-extrabold text-slate-900 text-center">
-          {view === "signin"
-            ? invite
-              ? "Sign in to continue onboarding"
-              : "Sign in"
-            : "Account access"}
+          {view === "signin" ? (invite ? "Sign in to continue onboarding" : "Sign in") : "Account access"}
         </h1>
 
-        <div
-          className="mt-3 h-1 w-24 mx-auto rounded-full"
-          style={brandGradient}
-        />
+        <div className="mt-3 h-1 w-24 mx-auto rounded-full" style={brandGradient} />
 
         {reason === "timeout" && (
           <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
@@ -367,9 +353,7 @@ export default function SigninClient() {
         {view === "signin" && (
           <form onSubmit={handleSignIn} className="mt-6 space-y-4">
             <div>
-              <label className="mb-1 block text-xs font-semibold text-slate-700">
-                Email
-              </label>
+              <label className="mb-1 block text-xs font-semibold text-slate-700">Email</label>
               <input
                 className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2"
                 style={{ boxShadow: "inset 0 0 0 1px rgba(0,0,0,0.02)" }}
@@ -383,9 +367,7 @@ export default function SigninClient() {
             </div>
 
             <div>
-              <label className="mb-1 block text-xs font-semibold text-slate-700">
-                Password
-              </label>
+              <label className="mb-1 block text-xs font-semibold text-slate-700">Password</label>
 
               <div className="relative">
                 <input
@@ -404,11 +386,7 @@ export default function SigninClient() {
                   className="absolute right-2 top-1/2 -translate-y-1/2 rounded-lg p-2 text-slate-600 hover:bg-slate-100 hover:text-slate-900"
                   aria-label={showPassword ? "Hide password" : "Show password"}
                 >
-                  {showPassword ? (
-                    <EyeOff className="h-5 w-5" />
-                  ) : (
-                    <Eye className="h-5 w-5" />
-                  )}
+                  {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
                 </button>
               </div>
             </div>
@@ -453,6 +431,31 @@ export default function SigninClient() {
                 Forgot password?
               </button>
             </div>
+
+            {/* ✅ Use the href so it’s not “declared but never read” */}
+            <div className="pt-1 text-center text-sm text-slate-700">
+              {invite ? (
+                <>
+                  Don’t have an account yet?{" "}
+                  <Link
+                    href={createAccountHref}
+                    className="font-semibold underline underline-offset-4 hover:text-slate-900"
+                  >
+                    Create it with your invite
+                  </Link>
+                </>
+              ) : (
+                <>
+                  New here?{" "}
+                  <Link
+                    href={createAccountHref}
+                    className="font-semibold underline underline-offset-4 hover:text-slate-900"
+                  >
+                    Create an account
+                  </Link>
+                </>
+              )}
+            </div>
           </form>
         )}
 
@@ -493,8 +496,7 @@ export default function SigninClient() {
         {view === "confirmSignUp" && (
           <form onSubmit={handleConfirmSignUp} className="mt-6 space-y-4">
             <div className="text-sm text-slate-700">
-              Your account isn’t confirmed yet. Enter the confirmation code sent
-              to your email.
+              Your account isn’t confirmed yet. Enter the confirmation code sent to your email.
             </div>
 
             <input
@@ -539,11 +541,7 @@ export default function SigninClient() {
 
         {view === "forgot" && (
           <div className="mt-6">
-            <ForgotPasswordForm
-              initialEmail={email}
-              onBack={backToSignIn}
-              onDone={backToSignIn}
-            />
+            <ForgotPasswordForm initialEmail={email} onBack={backToSignIn} onDone={backToSignIn} />
           </div>
         )}
 

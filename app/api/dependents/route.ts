@@ -165,7 +165,8 @@ export async function POST(req: Request) {
     const b = await req.json().catch(() => ({}));
 
     const firstName = clean(b.firstName, 80);
-    const middleName = clean(b.middleName ?? 60);
+    const middleName = clean(b.middleName ?? "", 80);
+
     const lastName = clean(b.lastName, 80);
     const dobStr = clean(b.dob, 10); // YYYY-MM-DD
     const relationship = clean(b.relationship, 80);

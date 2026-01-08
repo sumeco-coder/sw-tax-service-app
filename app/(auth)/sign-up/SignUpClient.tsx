@@ -90,6 +90,7 @@ export default function SignUpClient() {
     }
 
     setLoading(true);
+
     try {
       const { isSignUpComplete, nextStep } = await signUp({
         username,
@@ -97,10 +98,9 @@ export default function SignUpClient() {
         options: {
           userAttributes: {
             email: username,
-            // Only keep this if you CREATED this custom attribute in Cognito:
-            "custom:inviteToken": inviteToken,
           },
-          // ✅ PostConfirmation trigger can read this
+
+          // ✅ Keep metadata here (fine), but the MUST-HAVE is on confirmSignUp too
           clientMetadata: {
             inviteCode: inviteToken,
           },
@@ -118,7 +118,6 @@ export default function SignUpClient() {
       }
 
       if (isSignUpComplete) {
-        // Still not signed in; send to sign-in with invite + next
         router.push(signInHref);
         return;
       }
@@ -126,7 +125,16 @@ export default function SignUpClient() {
       setPhase("confirm");
       setMsg("Please check your email for a verification code.");
     } catch (err) {
-      setMsg(getErrMsg(err));
+      const m = getErrMsg(err);
+
+      // Nice UX: if account exists, push to sign-in
+      if (m.toLowerCase().includes("username exists")) {
+        setMsg("An account with this email already exists. Please sign in instead.");
+        router.push(signInHref);
+        return;
+      }
+
+      setMsg(m);
     } finally {
       setLoading(false);
     }
@@ -139,9 +147,17 @@ export default function SignUpClient() {
 
     try {
       const username = cleanEmail(email);
+
+      // ✅ CRITICAL: PostConfirmation trigger fires on confirmation.
+      // Pass inviteCode here so event.request.clientMetadata.inviteCode is present.
       await confirmSignUp({
         username,
         confirmationCode: code.trim(),
+        options: {
+          clientMetadata: {
+            inviteCode: inviteToken,
+          },
+        },
       });
 
       // ✅ confirm does NOT sign them in — route to sign-in (with invite + next)

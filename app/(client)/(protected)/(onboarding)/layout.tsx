@@ -37,9 +37,10 @@ export default async function OnboardingLayout({
   const step = String(u?.onboardingStep ?? "");
 
   // If they already submitted or are done, they shouldn't be in onboarding pages anymore
-  if (step === "SUBMITTED" || step === "DONE") {
-    redirect("/onboarding/complete"); // or "/dashboard"
-  }
+ // If they already submitted or are done, they shouldn't be in onboarding pages anymore
+if (step === "DONE") redirect("/dashboard");
+if (step === "SUBMITTED") redirect("/onboarding/complete"); // optional
+
 
   // ✅ IMPORTANT: no ClientShell here (no menus in onboarding)
   return <>{children}</>;
