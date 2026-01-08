@@ -1,9 +1,9 @@
 {
   "auth": {
-    "user_pool_id": "us-west-1_iVl9eOe2B",
+    "user_pool_id": "us-west-1_PvFot5M4h",
     "aws_region": "us-west-1",
-    "user_pool_client_id": "1v0k09750gtjb26ccd9t961bvr",
-    "identity_pool_id": "us-west-1:bf9f84f3-b378-42ea-bb03-ace0c74a2b9e",
+    "user_pool_client_id": "94462htlop4re4deg81k8pc9a",
+    "identity_pool_id": "us-west-1:e535b993-5943-466a-aea9-a6e4872ee271",
     "mfa_methods": [],
     "standard_required_attributes": [
       "email"
@@ -47,7 +47,7 @@
     "unauthenticated_identities_enabled": true
   },
   "data": {
-    "url": "https://i7d4mcdwgjeyxbrwjuy7kh4qxi.appsync-api.us-west-1.amazonaws.com/graphql",
+    "url": "https://b6nb5tbunrbaxbjcuj6gtislbq.appsync-api.us-west-1.amazonaws.com/graphql",
     "aws_region": "us-west-1",
     "default_authorization_type": "AMAZON_COGNITO_USER_POOLS",
     "authorization_types": [
@@ -936,11 +936,11 @@
   },
   "storage": {
     "aws_region": "us-west-1",
-    "bucket_name": "amplify-d3adn96jeso252-main-appfilesbucket23865b9a-ldui1nqmfgtk",
+    "bucket_name": "amplify-swtaxserviceapp-sum-appfilesbucket23865b9a-qucferd1apkl",
     "buckets": [
       {
         "name": "appFiles",
-        "bucket_name": "amplify-d3adn96jeso252-main-appfilesbucket23865b9a-ldui1nqmfgtk",
+        "bucket_name": "amplify-swtaxserviceapp-sum-appfilesbucket23865b9a-qucferd1apkl",
         "aws_region": "us-west-1",
         "paths": {
           "public/*": {
