@@ -23,7 +23,6 @@ import {
   ClipboardList,
   MessageSquare,
   Receipt,
-  Settings as SettingsIcon,
   HelpCircle,
   LogOut,
   Shield,
@@ -36,7 +35,7 @@ function cx(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
 }
 
-/** ✅ Brand colors (pulled from your logo) */
+/** ✅ Brand colors */
 const BRAND = {
   pink: "#E62A68",
   copper: "#BB4E2B",
@@ -51,7 +50,7 @@ type NavItem = {
   Icon: React.ComponentType<{ className?: string }>;
 };
 
-const navItems: NavItem[] = [
+const baseNavItems: NavItem[] = [
   { name: "Dashboard", href: "/dashboard", Icon: LayoutDashboard },
   { name: "Profile", href: "/profile", Icon: User2 },
   { name: "Dependents", href: "/dependents", Icon: Users2 },
@@ -108,9 +107,7 @@ function NavLink({
           background: `linear-gradient(180deg, ${BRAND.pink}, ${BRAND.copper})`,
         }}
       />
-      <Icon
-        className={cx("h-4.5 w-4.5", active ? "opacity-100" : "opacity-85")}
-      />
+      <Icon className={cx("h-4.5 w-4.5", active ? "opacity-100" : "opacity-85")} />
       <span className="flex-1">{item.name}</span>
       <ChevronRight
         className={cx(
@@ -136,13 +133,19 @@ export default function ClientShell({
   const [displayName, setDisplayName] = useState<string>("Client");
   const [authLoading, setAuthLoading] = useState<boolean>(true);
 
+  // ✅ Build nav: prepend Admin Hub only for admin view
+  const nav = useMemo<NavItem[]>(() => {
+    if (!isAdmin) return baseNavItems;
+    return [{ name: "Admin Hub", href: "/admin", Icon: Shield }, ...baseNavItems];
+  }, [isAdmin]);
+
   const activeItems = useMemo(
     () =>
-      navItems.map((item) => ({
+      nav.map((item) => ({
         ...item,
         active: isNavActive(pathname, item.href),
       })),
-    [pathname]
+    [pathname, nav]
   );
 
   // 🔐 Load Amplify user on mount
@@ -151,7 +154,7 @@ export default function ClientShell({
 
     async function loadUser() {
       try {
-        const user = await getCurrentUser(); // throws if not signed in
+        const user = await getCurrentUser();
         const attrs = await fetchUserAttributes().catch(() => ({}) as any);
         if (cancelled) return;
 
@@ -177,7 +180,7 @@ export default function ClientShell({
     };
   }, [router]);
 
-  // ✅ Heartbeat: updates lastSeenAt (for "Active now" + "Last active")
+  // ✅ Heartbeat
   const heartbeat = React.useCallback(async () => {
     try {
       const session = await fetchAuthSession();
@@ -193,12 +196,10 @@ export default function ClientShell({
     } catch {}
   }, []);
 
-  // ✅ ping on load + on route change
   useEffect(() => {
     if (!authLoading) heartbeat();
   }, [authLoading, pathname, heartbeat]);
 
-  // ✅ keep pinging while active + when returning to tab
   useEffect(() => {
     if (authLoading) return;
 
@@ -262,9 +263,7 @@ export default function ClientShell({
               SW
             </div>
             <div className="flex flex-col leading-tight">
-              <span className="text-sm font-semibold tracking-tight">
-                SW Tax Service
-              </span>
+              <span className="text-sm font-semibold tracking-tight">SW Tax Service</span>
               <span className="text-[11px]" style={{ color: BRAND.gray }}>
                 Client Portal{isAdmin ? " (Admin View)" : ""}
               </span>
@@ -288,17 +287,6 @@ export default function ClientShell({
               <MessageSquare className="h-4 w-4" />
               Messages
             </Link>
-
-            {isAdmin && (
-              <Link
-                href="/admin"
-                className="inline-flex items-center gap-2 rounded-xl border px-3 py-1.5 text-white/85 hover:bg-white/5"
-                style={{ borderColor: "rgba(255,255,255,0.12)" }}
-              >
-                <Shield className="h-4 w-4" />
-                Admin Hub
-              </Link>
-            )}
 
             {!authLoading && (
               <span className="text-[11px] text-white/45">
@@ -330,12 +318,9 @@ export default function ClientShell({
           </button>
         </div>
 
-        {/* Mobile menu (panel style) */}
+        {/* Mobile menu */}
         {mobileOpen && (
-          <div
-            className="md:hidden border-t"
-            style={{ borderColor: "rgba(255,255,255,0.08)" }}
-          >
+          <div className="md:hidden border-t" style={{ borderColor: "rgba(255,255,255,0.08)" }}>
             <div className="mx-auto max-w-6xl px-4 py-3 space-y-3">
               <div
                 className="rounded-2xl border p-3"
@@ -350,37 +335,6 @@ export default function ClientShell({
                 </div>
               </div>
 
-              <div className="space-y-1">
-                <Link
-                  href="/help"
-                  onClick={() => setMobileOpen(false)}
-                  className="flex items-center gap-3 rounded-xl px-3 py-2 text-white/75 hover:bg-white/5 hover:text-white"
-                >
-                  <HelpCircle className="h-4 w-4" />
-                  Help
-                </Link>
-
-                <Link
-                  href="/messages"
-                  onClick={() => setMobileOpen(false)}
-                  className="flex items-center gap-3 rounded-xl px-3 py-2 text-white/75 hover:bg-white/5 hover:text-white"
-                >
-                  <MessageSquare className="h-4 w-4" />
-                  Messages
-                </Link>
-
-                {isAdmin && (
-                  <Link
-                    href="/admin"
-                    onClick={() => setMobileOpen(false)}
-                    className="flex items-center gap-3 rounded-xl px-3 py-2 text-white/75 hover:bg-white/5 hover:text-white"
-                  >
-                    <Shield className="h-4 w-4" />
-                    Admin Hub
-                  </Link>
-                )}
-              </div>
-
               <div className="h-px bg-white/10" />
 
               <nav className="space-y-1">
@@ -393,14 +347,10 @@ export default function ClientShell({
                   />
                 ))}
               </nav>
-              <>
-                <ActivityHeartbeat />
-              </>
 
-              <>
-                <IdleSignOut minutes={20} />
-                {/* rest of your shell */}
-              </>
+              <ActivityHeartbeat />
+              <IdleSignOut minutes={20} />
+
               <button
                 type="button"
                 onClick={async () => {
@@ -463,16 +413,6 @@ export default function ClientShell({
                 <HelpCircle className="h-4 w-4" />
                 Help Center
               </Link>
-
-              {isAdmin && (
-                <Link
-                  href="/admin"
-                  className="mt-1 flex items-center gap-3 rounded-xl px-3 py-2 text-sm text-white/75 hover:bg-white/5 hover:text-white"
-                >
-                  <Shield className="h-4 w-4" />
-                  Admin Hub
-                </Link>
-              )}
 
               <button
                 type="button"

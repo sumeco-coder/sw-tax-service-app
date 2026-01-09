@@ -13,7 +13,8 @@ export default async function AppLayout({
   const me = await getServerRole();
   if (!me?.sub) redirect("/sign-in");
 
-  const role = String(me.role ?? "").toLowerCase();
+  const roleRaw = String(me.role ?? "");
+  const role = roleRaw.toLowerCase();
 
   const allowed =
     role === "taxpayer" ||
@@ -26,5 +27,8 @@ export default async function AppLayout({
 
   if (!allowed) redirect("/not-authorized");
 
-  return <ClientShell>{children}</ClientShell>;
+  // ✅ This is what was missing
+  const isAdmin = role === "admin" || role === "superadmin";
+
+  return <ClientShell isAdmin={isAdmin}>{children}</ClientShell>;
 }

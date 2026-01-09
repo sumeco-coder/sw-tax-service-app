@@ -39,6 +39,11 @@ function clientHref(userId: string, slug: string) {
   return `/admin/clients/${userId}/${slug}`;
 }
 
+const CURRENT_TAX_YEAR = new Date().getFullYear();
+
+function returnEditorHref(userId: string, year = CURRENT_TAX_YEAR) {
+  return `/admin/returns/${userId}?year=${year}`;
+}
 type Presence = "all" | "online" | "offline";
 type SortKey = "lastActive" | "name" | "onboarding";
 
@@ -46,7 +51,9 @@ const PRESENCE: Presence[] = ["all", "online", "offline"];
 const SORTS: SortKey[] = ["lastActive", "name", "onboarding"];
 
 function normalizePresence(v: unknown): Presence {
-  const s = String(v ?? "").trim().toLowerCase();
+  const s = String(v ?? "")
+    .trim()
+    .toLowerCase();
   return (PRESENCE as string[]).includes(s) ? (s as Presence) : "all";
 }
 
@@ -133,9 +140,7 @@ function onboardingPill(step: unknown) {
   }
   if (s === "SUBMITTED") {
     return (
-      <span
-        className={`${base} bg-blue-500/10 text-blue-700 ring-blue-500/20`}
-      >
+      <span className={`${base} bg-blue-500/10 text-blue-700 ring-blue-500/20`}>
         SUBMITTED
       </span>
     );
@@ -157,8 +162,8 @@ function OnboardingProgress({ step }: { step: unknown }) {
     s === "DONE"
       ? "Onboarding complete"
       : s === "SUBMITTED"
-      ? "Onboarding submitted"
-      : `Onboarding: ${s.replaceAll("_", " ")}`;
+        ? "Onboarding submitted"
+        : `Onboarding: ${s.replaceAll("_", " ")}`;
 
   return (
     <div className="mt-2">
@@ -227,7 +232,7 @@ export default async function AdminClientsPage({
     sort === "name"
       ? sql`${users.name} asc nulls last, ${users.email} asc nulls last`
       : sort === "onboarding"
-      ? sql`
+        ? sql`
           case ${users.onboardingStep}
             when 'PROFILE' then 1
             when 'DOCUMENTS' then 2
@@ -241,7 +246,7 @@ export default async function AdminClientsPage({
           end asc,
           ${users.lastSeenAt} desc nulls last
         `
-      : sql`${users.lastSeenAt} desc nulls last`;
+        : sql`${users.lastSeenAt} desc nulls last`;
 
   const base = db
     .select({
@@ -390,10 +395,7 @@ export default async function AdminClientsPage({
         ) : (
           <ul className="divide-y">
             {rows.map((c) => (
-              <li
-                key={c.id}
-                className="px-4 py-4 hover:bg-muted/30 transition"
-              >
+              <li key={c.id} className="px-4 py-4 hover:bg-muted/30 transition">
                 {/* Mobile / Tablet */}
                 <div className="lg:hidden space-y-3">
                   <div className="min-w-0">
@@ -424,6 +426,14 @@ export default async function AdminClientsPage({
 
                   {/* ✅ Actions as a grid (cleaner than wrap) */}
                   <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                    {/* ✅ NEW Return button */}
+                    <Link
+                      href={returnEditorHref(c.id)}
+                      className="inline-flex h-9 w-full items-center justify-center rounded-xl border bg-background px-3 text-xs font-semibold hover:bg-muted transition"
+                    >
+                      Return
+                    </Link>
+
                     {[
                       ["Docs", "documents"],
                       ["Dependents", "dependents"],
@@ -519,6 +529,13 @@ export default async function AdminClientsPage({
                       className="rounded-xl border bg-background px-3 py-1.5 text-xs font-semibold hover:bg-muted transition"
                     >
                       Edit
+                    </Link>
+
+                    <Link
+                      href={returnEditorHref(c.id)}
+                      className="rounded-xl border bg-background px-3 py-1.5 text-xs font-semibold hover:bg-muted transition"
+                    >
+                      Return
                     </Link>
 
                     <StatusActions

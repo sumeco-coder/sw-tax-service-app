@@ -1,4 +1,4 @@
-// app/(client)/profile/page.tsx
+// app/(client)/(protected)/(app)/profile/page.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";

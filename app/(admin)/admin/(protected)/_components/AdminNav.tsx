@@ -157,6 +157,7 @@ export default function AdminNav({ onNavigate }: { onNavigate?: () => void }) {
       { label: "Messages", href: "/admin/messages", icon: MessagesSquare },
       { label: "Billing", href: "/admin/billing", icon: CreditCard },
       { label: "Appointments", href: "/admin/appointments", icon: CalendarClock },
+      
     ],
     []
   );

@@ -3,7 +3,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-
+import RefundDeliveryCard from "./_components/RefundDeliveryCard"
 import DashboardHeader from "./_components/DashboardHeader";
 import NextStepsCard from "./_components/NextStepsCard";
 import AppointmentCard from "./_components/AppointmentCard";
@@ -40,6 +40,19 @@ import {
   formatRefundBalance,
 } from "@/lib/utils/dashboard";
 
+
+type RefundDelivery = {
+  method: "direct_deposit" | "check" | "not_set";
+  bankLast4?: string | null;
+};
+
+function normalizeDeliveryMethod(v: unknown): RefundDelivery["method"] {
+  const s = String(v ?? "").toLowerCase();
+  if (s === "direct_deposit" || s === "directdeposit" || s === "dd") return "direct_deposit";
+  if (s === "check" || s === "paper_check" || s === "papercheck") return "check";
+  return "not_set";
+}
+
 /* ------------------------- Dashboard Page ------------------------- */
 export default function DashboardPage() {
   const router = useRouter();
@@ -54,8 +67,14 @@ export default function DashboardPage() {
     amount: null,
   });
 
+  const [refundDelivery, setRefundDelivery] = useState<{
+  method: "direct_deposit" | "check" | "not_set";
+  bankLast4?: string | null;
+}>({ method: "not_set", bankLast4: null });
+
   // Keep this as your DB onboarding step enum type
   const [onboardingStep, setOnboardingStep] = useState<OnboardingStep>("PROFILE");
+
 
   const [tasks, setTasks] = useState<Task[]>([]);
   const [docs, setDocs] = useState<Doc[]>([]);
@@ -81,7 +100,7 @@ export default function DashboardPage() {
       setLoading(true);
       setError(null);
 
-      const [t, d, i, m, s, o, a, ys] = await Promise.all([
+      const [t, d, i, m, s, o, a, ys, q] = await Promise.all([
         apiGet<Task[]>(`/api/tasks?year=${year}`, []),
         apiGet<Doc[]>(`/api/documents?year=${year}`, []),
         apiGet<Invoice[]>(`/api/invoices?year=${year}`, []),
@@ -90,6 +109,7 @@ export default function DashboardPage() {
         apiGet<{ step: OnboardingStep }>(`/api/onboarding-step`, { step: "PROFILE" }),
         apiGet<Appointment | null>(`/api/appointments/next?year=${year}`, null),
         apiGet<YearSnapshot[]>(`/api/tax-years`, []),
+        apiGet<any>(`/api/questionnaire/summary?year=${year}`, {}), 
       ]);
 
       if (cancelled) return;
@@ -106,6 +126,11 @@ export default function DashboardPage() {
             ? Number(s.refundAmount)
             : (s?.refundAmount ?? null),
         eta: s?.refundEta ?? null,
+      });
+
+       setRefundDelivery({
+        method: normalizeDeliveryMethod(q?.refundMethod ?? q?.refundDeliveryMethod),
+        bankLast4: q?.bankLast4 ?? q?.ddLast4 ?? null,
       });
 
       setOnboardingStep(o?.step ?? "PROFILE");
@@ -242,88 +267,98 @@ export default function DashboardPage() {
 
   /* ------------------------------ Render ------------------------------ */
   return (
-    <div className="max-w-5xl mx-auto p-4 md:p-6 space-y-6">
-      {/* (Optional) show page error */}
-      {error ? (
-        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-          {error}
-        </div>
-      ) : null}
-
-      {/* Top Bar */}
-      <DashboardHeader
-        year={Number(year)}
-        years={years.map(Number)}
-        setYear={(y: number) => setYear(y.toString())}
-        status={status}
-      />
-
-      {/* Next Steps / Progress */}
-      <NextStepsCard
-        year={Number(year)}
-        progressPercent={progressPercent}
-        currentStepIndex={currentStepIndex}
-        totalSteps={totalSteps}
-        currentStepConfig={currentStepConfig}
-        isDone={isDone}
-      />
-
-      {/* Upcoming Appointment */}
-      <AppointmentCard year={Number(year)} nextAppt={nextAppt} loading={loading} />
-
-      {/* Missing Information / Required Docs */}
-      <MissingInfoCard loading={loading} blockingTasks={blockingTasks} />
-
-      {/* Refund + Invoices + Timeline + Quick Actions */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <RefundCard refund={refund} currency={currency} fmtDate={fmtDate} />
-
-        <InvoicesCard
-          loading={loading}
-          invoices={invoices.map((inv) => ({
-            ...inv,
-            amount: typeof inv.amount === "string" ? Number(inv.amount) : inv.amount,
-          }))}
-          currency={(amount) => currency(amount)}
-        />
-
-        <TimelineCard
-          year={Number(year)}
-          status={status}
-          currentStatusStage={currentStatusStage}
-          nextStatusStage={nextStatusStage}
-          RETURN_TIMELINE_STAGES={RETURN_TIMELINE_STAGES}
-          statusStageIndex={statusStageIndex}
-        />
-
-        <QuickActionsCard year={Number(year)} fileInputRef={fileInputRef} handleUpload={handleUpload} />
-      </div>
-
-      {/* Tax Year Snapshot */}
-      <SnapshotCard
-        loading={loading}
-        yearSnapshots={yearSnapshots}
-        formatRefundBalance={formatRefundBalance}
-      />
-
-      {/* Support & Help */}
-      <SupportCard year={Number(year)} scrollToMessages={scrollToMessages} />
-
-      {/* Tasks + Documents */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <TasksCard loading={loading} tasks={tasks} handleMarkDone={handleMarkDone} />
-        <DocumentsCard loading={loading} docs={docs} year={Number(year)} />
-      </div>
-
-      {/* Messages */}
-      <div className="grid grid-cols-1 gap-6" ref={messagesRef}>
-        <MessagesCard
-          loading={loading}
-          messages={messages}
-          handleSendMessage={handleSendMessage}
-          messageInputRef={messageInputRef}
-        />
-      </div>
+   <div className="mx-auto w-full max-w-6xl px-3 py-4 sm:px-4 sm:py-6 md:px-6 md:py-8 lg:px-8 space-y-4 sm:space-y-6">
+  {/* Error */}
+  {error ? (
+    <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+      {error}
     </div>
+  ) : null}
+
+  {/* Top Bar */}
+  <DashboardHeader
+    year={Number(year)}
+    years={years.map(Number)}
+    setYear={(y: number) => setYear(y.toString())}
+    status={status}
+  />
+
+  {/* Next Steps / Progress */}
+  <NextStepsCard
+    year={Number(year)}
+    progressPercent={progressPercent}
+    currentStepIndex={currentStepIndex}
+    totalSteps={totalSteps}
+    currentStepConfig={currentStepConfig}
+    isDone={isDone}
+  />
+
+  {/* Appointment + Missing Info (stack on mobile, side-by-side on md+) */}
+  <div className="grid grid-cols-1 gap-4 sm:gap-6 md:grid-cols-2">
+    <AppointmentCard year={Number(year)} nextAppt={nextAppt} loading={loading} />
+    <MissingInfoCard loading={loading} blockingTasks={blockingTasks} />
+  </div>
+
+  {/* Key Cards (handles 5 cards nicely) */}
+  <div className="grid grid-cols-1 gap-4 sm:gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+    <RefundCard refund={refund} currency={currency} fmtDate={fmtDate} />
+
+    <RefundDeliveryCard delivery={refundDelivery} updateHref="/questionnaire" />
+
+    <InvoicesCard
+      loading={loading}
+      invoices={invoices.map((inv) => ({
+        ...inv,
+        amount: typeof inv.amount === "string" ? Number(inv.amount) : inv.amount,
+      }))}
+      currency={(amount) => currency(amount)}
+    />
+
+    <TimelineCard
+      year={Number(year)}
+      status={status}
+      currentStatusStage={currentStatusStage}
+      nextStatusStage={nextStatusStage}
+      RETURN_TIMELINE_STAGES={RETURN_TIMELINE_STAGES}
+      statusStageIndex={statusStageIndex}
+    />
+
+    {/* On xl, make QuickActions span 2 columns so it doesn't look squeezed */}
+    <div className="xl:col-span-2">
+      <QuickActionsCard
+        year={Number(year)}
+        fileInputRef={fileInputRef}
+        handleUpload={handleUpload}
+      />
+    </div>
+  </div>
+
+  {/* Snapshot */}
+  <SnapshotCard
+    loading={loading}
+    yearSnapshots={yearSnapshots}
+    formatRefundBalance={formatRefundBalance}
+  />
+
+  {/* Support */}
+  <SupportCard year={Number(year)} scrollToMessages={scrollToMessages} />
+
+  {/* Tasks + Documents */}
+  <div className="grid grid-cols-1 gap-4 sm:gap-6 md:grid-cols-2">
+    <TasksCard loading={loading} tasks={tasks} handleMarkDone={handleMarkDone} />
+    <DocumentsCard loading={loading} docs={docs} year={Number(year)} />
+  </div>
+
+  {/* Messages */}
+  <div className="grid grid-cols-1 gap-4 sm:gap-6" ref={messagesRef}>
+    <MessagesCard
+      loading={loading}
+      messages={messages}
+      handleSendMessage={handleSendMessage}
+      messageInputRef={messageInputRef}
+    />
+  </div>
+</div>
+
   );
 }
