@@ -1,3 +1,4 @@
+// app/(client)/(protected)/(onboarding)/onboarding/complete/_components/CompleteButton.tsx
 "use client";
 
 import { useState } from "react";
@@ -17,6 +18,7 @@ export default function CompleteButton({ formId }: { formId: string }) {
 
       await updateUserAttributes({
         userAttributes: {
+          "custom:onboardingStep": "DONE",
           "custom:onboardingComplete": "true",
         },
       });

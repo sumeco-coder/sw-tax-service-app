@@ -1,3 +1,4 @@
+// app/(admin)/admin/(protected)/layout.tsx
 import type { ReactNode } from "react";
 import { redirect } from "next/navigation";
 import AdminShell from "./_components/AdminShell";
@@ -10,8 +11,11 @@ export default async function AdminProtectedLayout({
 }) {
   const me = await getServerRole();
 
-  if (!me) redirect("/admin/sign-in");
-  if (me.role !== "ADMIN") redirect("/not-authorized");
+  if (!me?.sub) redirect("/admin/sign-in");
+
+  const role = String(me.role ?? "").toLowerCase();
+
+  if (role !== "admin") redirect("/not-authorized");
 
   return <AdminShell>{children}</AdminShell>;
 }
