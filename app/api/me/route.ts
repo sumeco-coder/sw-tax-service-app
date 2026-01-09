@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { getServerUser } from "@/lib/auth/getServerUser";
 
 export const runtime = "nodejs";
-export const dynamic = "force-dynamic"; // optional but helpful for auth routes
+export const dynamic = "force-dynamic";
 
 function noStoreJson(body: any, status = 200) {
   return NextResponse.json(body, {
@@ -12,13 +12,26 @@ function noStoreJson(body: any, status = 200) {
   });
 }
 
+function isAdminRole(role: unknown) {
+  const r = String(role ?? "").toUpperCase();
+  return r === "ADMIN" || r === "SUPERADMIN";
+}
+
 export async function GET() {
   const me = await getServerUser();
   if (!me) return noStoreJson({ error: "Unauthorized" }, 401);
-  return noStoreJson({ user: me }, 200);
+
+  return noStoreJson(
+    {
+      user: me,
+      // helpful flags for UI gating
+      isAdmin: isAdminRole(me.role),
+    },
+    200
+  );
 }
 
-// ✅ Allow your existing client POST to keep working
+// ✅ keep your existing client POST working
 export async function POST() {
   return GET();
 }
