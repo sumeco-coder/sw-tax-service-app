@@ -19,6 +19,7 @@ import {
 
 // --- Enums ---
 export const returnStatus = pgEnum("return_status", [
+  "PENDING",
   "DRAFT",
   "IN_REVIEW",
   "FILED",

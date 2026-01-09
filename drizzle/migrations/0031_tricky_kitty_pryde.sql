@@ -1,0 +1,1 @@
+ALTER TYPE "public"."return_status" ADD VALUE 'PENDING' BEFORE 'DRAFT';
