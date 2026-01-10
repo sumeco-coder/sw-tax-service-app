@@ -1,3 +1,4 @@
+// app/(client)/(protected)/(app)/questionnaire/_components/DependentQuestionnaire.tsx
 "use client";
 
 import * as React from "react";
@@ -63,11 +64,24 @@ function digitsOnly(v: string, maxLen: number) {
 }
 
 const REL_OPTIONS = [
-  "Child",
-  "Stepchild",
+  "Son",
+  "Daughter",
   "Foster child",
-  "Sibling",
+  "Grandchild",
+  "Stepchild",
+  "Grandparent",
   "Parent",
+  "Brother",
+  "Half-brother",
+  "Stepbrother",
+  "Sister",
+  "Half-sister",
+  "Stepsister",
+  "Aunt",
+  "Uncle",
+  "Nephew",
+  "Niece",
+  "Sibling",
   "Other",
 ] as const;
 const YESNO = ["yes", "no"] as const;

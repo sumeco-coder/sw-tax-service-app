@@ -1,11 +1,13 @@
 // app/api/dependents/[id]/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { and, eq } from "drizzle-orm";
-import { randomBytes, createCipheriv } from "crypto";
+import crypto from "crypto";
 
 import { db } from "@/drizzle/db";
 import { users, dependents } from "@/drizzle/schema";
 import { getServerRole } from "@/lib/auth/roleServer";
+
+export const runtime = "nodejs";
 
 // ---------- helpers ----------
 function clean(v: unknown, max = 255) {
@@ -22,20 +24,29 @@ function isIsoDate(v: string) {
   return /^\d{4}-\d{2}-\d{2}$/.test(v);
 }
 
+function readAes256Key(envName: string): Buffer {
+  const raw = (process.env[envName] ?? "").trim();
+  if (!raw) throw new Error(`Missing ${envName} env var.`);
+
+  const isHex = /^[0-9a-fA-F]+$/.test(raw) && raw.length >= 64;
+  const key = isHex
+    ? Buffer.from(raw, "hex")
+    : Buffer.from(raw, (raw.includes("-") || raw.includes("_")) ? ("base64url" as any) : "base64");
+
+  if (key.length !== 32) {
+    throw new Error(`${envName} must decode to 32 bytes (AES-256).`);
+  }
+  return key;
+}
+
 /**
  * AES-256-GCM encryption for SSN-at-rest.
- * Env var must be 32 bytes base64: SSN_ENCRYPTION_KEY
  * Output format: v1.<iv>.<tag>.<ciphertext> (base64url)
  */
 function encryptSsn(ssn9: string) {
-  const keyB64 = process.env.SSN_ENCRYPTION_KEY ?? "";
-  if (!keyB64) throw new Error("Missing SSN_ENCRYPTION_KEY on server.");
-
-  const key = Buffer.from(keyB64, "base64");
-  if (key.length !== 32) throw new Error("SSN_ENCRYPTION_KEY must be 32 bytes base64.");
-
-  const iv = randomBytes(12);
-  const cipher = createCipheriv("aes-256-gcm", key, iv);
+  const key = readAes256Key("SSN_ENCRYPTION_KEY");
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
 
   const ciphertext = Buffer.concat([cipher.update(ssn9, "utf8"), cipher.final()]);
   const tag = cipher.getAuthTag();
@@ -85,10 +96,10 @@ async function getOrCreateUserBySub(cognitoSub: string, email?: string) {
 // PATCH /api/dependents/[id]
 export async function PATCH(
   request: NextRequest,
-  context: { params: Promise<{ id: string }> }
+  { params }: { params: { id: string } }
 ) {
   try {
-    const { id } = await context.params;
+    const { id } = params;
 
     const auth = await requireAuth();
     if (!auth) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -100,7 +111,6 @@ export async function PATCH(
 
     if (typeof b.firstName === "string") set.firstName = clean(b.firstName, 80);
     if (typeof b.middleName === "string") set.middleName = clean(b.middleName, 80);
-
     if (typeof b.lastName === "string") set.lastName = clean(b.lastName, 80);
 
     if (typeof b.dob === "string") {
@@ -113,7 +123,6 @@ export async function PATCH(
 
     if (typeof b.relationship === "string") set.relationship = clean(b.relationship, 80);
 
-    // accept either monthsInHome (DB) or monthsLived (UI)
     const monthsCandidate = b.monthsInHome ?? b.monthsLived;
     if (monthsCandidate != null) {
       const n = Number(monthsCandidate);
@@ -128,7 +137,6 @@ export async function PATCH(
 
     const ssnIncoming = typeof b.ssn === "string" ? digitsOnly(b.ssn, 9) : "";
 
-    // conflict guard
     if (appliedIncoming === true && ssnIncoming) {
       return NextResponse.json(
         { error: "Do not send SSN when marked applied-but-not-received." },
@@ -136,15 +144,11 @@ export async function PATCH(
       );
     }
 
-    // applied-but-not-received toggles + clearing SSN-at-rest
     if (appliedIncoming != null) {
       set.appliedButNotReceived = appliedIncoming;
-      if (appliedIncoming === true) {
-        set.ssnEncrypted = null;
-      }
+      if (appliedIncoming === true) set.ssnEncrypted = null;
     }
 
-    // SSN update => encrypt + store (and force applied=false)
     if (ssnIncoming) {
       if (ssnIncoming.length !== 9) {
         return NextResponse.json({ error: "SSN must be 9 digits" }, { status: 400 });
@@ -153,7 +157,6 @@ export async function PATCH(
       set.appliedButNotReceived = false;
     }
 
-    // only updatedAt means "no changes"
     if (Object.keys(set).length === 1) {
       return NextResponse.json({ error: "No valid fields" }, { status: 400 });
     }
@@ -162,14 +165,9 @@ export async function PATCH(
       .update(dependents)
       .set(set)
       .where(and(eq(dependents.id, id), eq(dependents.userId, u.id)))
-      .returning({
-        id: dependents.id,
-        updatedAt: dependents.updatedAt,
-      });
+      .returning({ id: dependents.id, updatedAt: dependents.updatedAt });
 
-    if (!updated?.length) {
-      return NextResponse.json({ error: "Not found" }, { status: 404 });
-    }
+    if (!updated?.length) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
     return NextResponse.json({ success: true });
   } catch (e: any) {
@@ -181,10 +179,10 @@ export async function PATCH(
 // DELETE /api/dependents/[id]
 export async function DELETE(
   _request: NextRequest,
-  context: { params: Promise<{ id: string }> }
+  { params }: { params: { id: string } }
 ) {
   try {
-    const { id } = await context.params;
+    const { id } = params;
 
     const auth = await requireAuth();
     if (!auth) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -196,9 +194,7 @@ export async function DELETE(
       .where(and(eq(dependents.id, id), eq(dependents.userId, u.id)))
       .returning({ id: dependents.id });
 
-    if (!deleted?.length) {
-      return NextResponse.json({ error: "Not found" }, { status: 404 });
-    }
+    if (!deleted?.length) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
     return NextResponse.json({ success: true });
   } catch (e: any) {

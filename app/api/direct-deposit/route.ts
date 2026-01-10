@@ -2,8 +2,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import crypto from "crypto";
 import { z } from "zod";
-import { sql } from "drizzle-orm";
-import { eq } from "drizzle-orm";
+import { sql, eq } from "drizzle-orm";
 
 import { db } from "@/drizzle/db";
 import { users } from "@/drizzle/schema";
@@ -28,19 +27,13 @@ function clean(v: unknown, max = 255) {
   const s = String(v ?? "").trim();
   return s ? s.slice(0, max) : "";
 }
-
 function normalizeEmail(v: unknown) {
   return clean(v, 255).toLowerCase();
 }
-
 function digitsOnly(v: unknown, maxLen: number) {
   return String(v ?? "").replace(/\D/g, "").slice(0, maxLen);
 }
 
-/**
- * ABA routing number checksum:
- * (3*(d1+d4+d7) + 7*(d2+d5+d8) + (d3+d6+d9)) % 10 === 0
- */
 function isValidAbaRouting(routing: string) {
   if (!/^\d{9}$/.test(routing)) return false;
   const d = routing.split("").map((x) => Number(x));
@@ -51,17 +44,28 @@ function isValidAbaRouting(routing: string) {
   return sum % 10 === 0;
 }
 
-function getEncryptionKey(): Buffer | null {
-  const b64 = process.env.DIRECT_DEPOSIT_ENCRYPTION_KEY;
-  if (!b64) return null;
-  const key = Buffer.from(b64, "base64");
-  if (key.length !== 32) return null; // AES-256 key must be 32 bytes
+/**
+ * Accepts DIRECT_DEPOSIT_ENCRYPTION_KEY as:
+ * - hex (64+ chars)
+ * - base64
+ * - base64url (what you generated)
+ */
+function getDirectDepositKey(): Buffer {
+  const raw = (process.env.DIRECT_DEPOSIT_ENCRYPTION_KEY ?? "").trim();
+  if (!raw) throw new Error("Missing DIRECT_DEPOSIT_ENCRYPTION_KEY env var.");
+
+  const isHex = /^[0-9a-fA-F]+$/.test(raw) && raw.length >= 64;
+  const key = isHex
+    ? Buffer.from(raw, "hex")
+    : Buffer.from(raw, (raw.includes("-") || raw.includes("_")) ? ("base64url" as any) : "base64");
+
+  if (key.length !== 32) {
+    throw new Error("DIRECT_DEPOSIT_ENCRYPTION_KEY must decode to 32 bytes (AES-256).");
+  }
   return key;
 }
 
-/**
- * AES-256-GCM encrypt -> base64(iv|tag|ciphertext)
- */
+/** AES-256-GCM encrypt -> base64(iv|tag|ciphertext) */
 function encryptGcm(plain: string, key: Buffer) {
   const iv = crypto.randomBytes(12);
   const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
@@ -72,7 +76,6 @@ function encryptGcm(plain: string, key: Buffer) {
   return Buffer.concat([iv, tag, ciphertext]).toString("base64");
 }
 
-/** ✅ secure auth: cookie/JWT only */
 async function requireAuthUser() {
   const auth = await getServerRole();
   const sub = auth?.sub ? String(auth.sub) : "";
@@ -81,7 +84,6 @@ async function requireAuthUser() {
   return { sub, email };
 }
 
-/** ✅ map cognitoSub -> users.id (UUID). creates shell row if missing */
 async function getOrCreateUserBySub(cognitoSub: string, email?: string) {
   const [existing] = await db
     .select({ id: users.id, email: users.email })
@@ -105,11 +107,7 @@ async function getOrCreateUserBySub(cognitoSub: string, email?: string) {
 
   const [created] = await db
     .insert(users)
-    .values({
-      cognitoSub,
-      email,
-      updatedAt: new Date(),
-    } as any)
+    .values({ cognitoSub, email, updatedAt: new Date() } as any)
     .returning({ id: users.id, email: users.email });
 
   return created;
@@ -188,35 +186,13 @@ export async function POST(req: NextRequest) {
     const account = digitsOnly(raw.accountNumber, 17);
     const confirm = digitsOnly(raw.confirmAccountNumber, 17);
 
-    // if turned off, scrub everything
     if (!raw.useDirectDeposit) {
       await db.execute(sql`
         INSERT INTO direct_deposit (
-          user_id,
-          use_direct_deposit,
-          account_holder_name,
-          bank_name,
-          account_type,
-          routing_last4,
-          account_last4,
-          routing_encrypted,
-          account_encrypted,
-          created_at,
-          updated_at
+          user_id, use_direct_deposit, account_holder_name, bank_name, account_type,
+          routing_last4, account_last4, routing_encrypted, account_encrypted, created_at, updated_at
         )
-        VALUES (
-          ${u.id},
-          false,
-          '',
-          '',
-          'checking',
-          '',
-          '',
-          '',
-          '',
-          NOW(),
-          NOW()
-        )
+        VALUES (${u.id}, false, '', '', 'checking', '', '', '', '', NOW(), NOW())
         ON CONFLICT (user_id) DO UPDATE SET
           use_direct_deposit = EXCLUDED.use_direct_deposit,
           account_holder_name = EXCLUDED.account_holder_name,
@@ -232,7 +208,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true });
     }
 
-    // validations when enabled
     if (!raw.accountHolderName.trim()) {
       return NextResponse.json({ error: "Account holder name is required" }, { status: 400 });
     }
@@ -252,16 +227,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Account numbers do not match" }, { status: 400 });
     }
 
-    const key = getEncryptionKey();
-    if (!key) {
-      return NextResponse.json(
-        {
-          error:
-            "Server misconfigured: DIRECT_DEPOSIT_ENCRYPTION_KEY must be base64 and 32 bytes (AES-256).",
-        },
-        { status: 500 }
-      );
-    }
+    // ✅ now supports your base64url key
+    const key = getDirectDepositKey();
 
     const routingLast4 = routing.slice(-4);
     const accountLast4 = account.slice(-4);
@@ -271,17 +238,8 @@ export async function POST(req: NextRequest) {
 
     await db.execute(sql`
       INSERT INTO direct_deposit (
-        user_id,
-        use_direct_deposit,
-        account_holder_name,
-        bank_name,
-        account_type,
-        routing_last4,
-        account_last4,
-        routing_encrypted,
-        account_encrypted,
-        created_at,
-        updated_at
+        user_id, use_direct_deposit, account_holder_name, bank_name, account_type,
+        routing_last4, account_last4, routing_encrypted, account_encrypted, created_at, updated_at
       )
       VALUES (
         ${u.id},
