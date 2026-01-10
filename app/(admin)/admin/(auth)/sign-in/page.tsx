@@ -1,4 +1,4 @@
-// app/(admin)/admin/sign-in/page.tsx
+// app/(admin)/admin/(auth)/sign-in/page.tsx
 import type { Metadata } from "next";
 import { Suspense } from "react";
 import SignInAdmin from "../_components/SignInAdmin";

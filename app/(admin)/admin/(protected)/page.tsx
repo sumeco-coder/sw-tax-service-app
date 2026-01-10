@@ -1,11 +1,17 @@
 // app/(admin)/admin/(protected)/page.tsx
 import Link from "next/link";
-
 import { db } from "@/drizzle/db";
 import { waitlist } from "@/drizzle/schema";
 import { desc, eq, sql } from "drizzle-orm";
-
 import AnalyticsPanel from "./_components/AnalyticsPanel";
+import {
+  Table,
+  TableHeader,
+  TableBody,
+  TableHead,
+  TableRow,
+  TableCell,
+} from "@/components/ui/table";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -89,54 +95,85 @@ export default async function AdminDashboardPage() {
 
       {/* Recent */}
       <section className="overflow-hidden rounded-3xl border bg-black/[0.02] shadow-sm">
-        <div className="flex items-center justify-between gap-3 px-5 py-4">
-          <div>
-            <h2 className="text-lg font-semibold text-[#202030]">Recent waitlist</h2>
-            <p className="text-sm text-[#202030]/70">
-              Latest entries pulled from the database.
-            </p>
-          </div>
-
-          <Link
-            href="/admin/waitlist"
-            className="text-sm font-semibold transition hover:underline"
-            style={{ color: BRAND.primary }}
-          >
-            View all →
-          </Link>
-        </div>
-
         <div className="border-t bg-white">
-          <div className="grid grid-cols-12 bg-black/[0.02] px-5 py-3 text-xs font-semibold uppercase tracking-wide text-[#202030]/60">
-            <div className="col-span-4">Name</div>
-            <div className="col-span-4">Email</div>
-            <div className="col-span-2">Status</div>
-            <div className="col-span-2">Created</div>
-          </div>
+  <div className="w-full overflow-x-auto">
+    <Table className="w-full table-fixed">
+      {/* Optional: helps control column sizing */}
+      <colgroup>
+        <col className="w-[45%]" />
+        <col className="w-[35%]" />
+        <col className="w-[10%]" />
+        <col className="w-[10%]" />
+      </colgroup>
 
-          <div className="divide-y">
-            {recent.map((r) => {
-              const created = formatShortDate(r.createdAt);
+      <TableHeader>
+        <TableRow className="bg-black/[0.02]">
+          <TableHead className="px-5 py-3 text-xs font-semibold uppercase tracking-wide text-[#202030]/60">
+            Name
+          </TableHead>
 
-              return (
-                <div key={r.id} className="grid grid-cols-12 items-center px-5 py-3 text-sm">
-                  <div className="col-span-4 font-medium text-[#202030]">{r.fullName}</div>
-                  <div className="col-span-4 text-[#202030]/80">{r.email}</div>
-                  <div className="col-span-2">
-                    <StatusPill status={r.status} />
-                  </div>
-                  <div className="col-span-2 text-xs text-[#202030]/60">{created}</div>
+          {/* Hide Email column on mobile */}
+          <TableHead className="hidden px-5 py-3 text-xs font-semibold uppercase tracking-wide text-[#202030]/60 sm:table-cell">
+            Email
+          </TableHead>
+
+          <TableHead className="px-5 py-3 text-xs font-semibold uppercase tracking-wide text-[#202030]/60">
+            Status
+          </TableHead>
+
+          <TableHead className="px-5 py-3 text-xs font-semibold uppercase tracking-wide text-[#202030]/60">
+            Created
+          </TableHead>
+        </TableRow>
+      </TableHeader>
+
+      <TableBody>
+        {recent.map((r) => {
+          const created = formatShortDate(r.createdAt);
+
+          return (
+            <TableRow key={r.id} className="border-b last:border-0">
+              <TableCell className="px-5 py-3 align-middle">
+                <div className="font-medium text-[#202030]">{r.fullName}</div>
+
+                {/* Mobile: show email under name */}
+                <div className="mt-0.5 truncate text-xs text-[#202030]/70 sm:hidden">
+                  {r.email}
                 </div>
-              );
-            })}
+              </TableCell>
 
-            {recent.length === 0 ? (
-              <div className="px-5 py-10 text-center text-sm text-[#202030]/60">
-                No waitlist entries yet.
-              </div>
-            ) : null}
-          </div>
-        </div>
+              {/* Desktop email */}
+              <TableCell className="hidden px-5 py-3 align-middle text-[#202030]/80 sm:table-cell">
+                <div className="truncate">{r.email}</div>
+              </TableCell>
+
+              <TableCell className="px-5 py-3 align-middle">
+                <div className="inline-flex whitespace-nowrap">
+                  <StatusPill status={r.status} />
+                </div>
+              </TableCell>
+
+              <TableCell className="px-5 py-3 align-middle text-xs text-[#202030]/60 whitespace-nowrap">
+                {created}
+              </TableCell>
+            </TableRow>
+          );
+        })}
+
+        {recent.length === 0 ? (
+          <TableRow>
+            <TableCell
+              colSpan={4}
+              className="px-5 py-10 text-center text-sm text-[#202030]/60"
+            >
+              No waitlist entries yet.
+            </TableCell>
+          </TableRow>
+        ) : null}
+      </TableBody>
+    </Table>
+  </div>
+</div>
       </section>
     </div>
   );

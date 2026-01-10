@@ -25,6 +25,7 @@ export default function AdminShell({
   description = "Manage waitlist, email, templates, and social.",
   actions,
 }: AdminShellProps) {
+
   return (
     <div className="min-h-screen bg-[#0b0b10]">
       <div className="mx-auto flex min-h-screen max-w-7xl">

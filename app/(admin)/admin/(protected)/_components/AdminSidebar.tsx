@@ -132,10 +132,12 @@ export default function AdminSidebar() {
           />
 
           {/* drawer */}
-          <div
-            id="admin-mobile-drawer"
-            className="absolute left-0 top-0 flex h-full w-[82%] max-w-sm flex-col border-r border-white/10 bg-[#0b0b10] px-4 py-6"
-          >
+         <div
+  id="admin-mobile-drawer"
+  className="absolute left-0 top-0 flex h-full w-[82%] max-w-sm flex-col overflow-y-auto overscroll-contain border-r border-white/10 bg-[#0b0b10] px-4 py-6"
+
+>
+
             <div className="flex items-center justify-between">
               <BrandHeader />
               <button
