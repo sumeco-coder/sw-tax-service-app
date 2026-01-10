@@ -1,13 +1,51 @@
-// app/(client)/onboarding/profile/page.tsx
+// app/(client)/(protected)/(onboarding)/onboarding/profile/page.tsx
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { getCurrentUser, fetchAuthSession } from "aws-amplify/auth";
 import { configureAmplify } from "@/lib/amplifyClient";
 import { saveProfile } from "./actions";
-import { Eye, EyeOff } from "lucide-react";
+import { Eye, EyeOff, Loader2 } from "lucide-react";
 
-configureAmplify();
+// shadcn/ui
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+
+function cn(...classes: Array<string | false | null | undefined>) {
+  return classes.filter(Boolean).join(" ");
+}
+
+/**
+ * ✅ MUST: sync Amplify session -> server cookies
+ * so server actions (saveProfile) can read tokens reliably.
+ */
+async function syncServerCookiesFromSession() {
+  const session = await fetchAuthSession();
+  const accessToken = session.tokens?.accessToken?.toString() ?? "";
+  const idToken = session.tokens?.idToken?.toString() ?? "";
+
+  if (!accessToken || !idToken) return null;
+
+  await fetch("/api/auth/session", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ accessToken, idToken }),
+    cache: "no-store",
+    credentials: "include",
+  });
+
+  return session;
+}
 
 function formatUSPhone(value: string) {
   const digits = value.replace(/\D/g, "").slice(0, 10);
@@ -94,34 +132,56 @@ const US_STATES = [
 ];
 
 export default function OnboardingProfilePage() {
-  const [ssn, setSsn] = React.useState("");
-  const [showSsn, setShowSsn] = React.useState(false);
+  const router = useRouter();
+
+  // ✅ configure Amplify once (prevents weird reconfigure bugs)
+  const configuredRef = useRef(false);
+  useEffect(() => {
+    if (!configuredRef.current) {
+      configureAmplify();
+      configuredRef.current = true;
+    }
+  }, []);
+
+  const formRef = useRef<HTMLFormElement | null>(null);
+
   const [user, setUser] = useState<UserIdentity | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const [ssn, setSsn] = useState("");
+  const [showSsn, setShowSsn] = useState(false);
+
+  // shadcn Select needs state + hidden inputs for form submit
+  const [stateValue, setStateValue] = useState("");
+  const [suffixValue, setSuffixValue] = useState("");
+
+  const [submitting, setSubmitting] = useState(false);
+
   useEffect(() => {
+    let cancelled = false;
+
     (async () => {
       try {
         const u = await getCurrentUser();
-        const session = await fetchAuthSession();
 
-        const idTokenPayload = session.tokens?.idToken?.payload ?? {};
+        // ✅ IMPORTANT: sync cookies immediately on page load
+        const session = await syncServerCookiesFromSession();
 
-        const tokenEmail =
-          (idTokenPayload["email"] as string | undefined) ?? "";
-        const givenName =
-          (idTokenPayload["given_name"] as string | undefined) ?? "";
-        const familyName =
-          (idTokenPayload["family_name"] as string | undefined) ?? "";
-        const phoneNumber =
-          (idTokenPayload["phone_number"] as string | undefined) ?? "";
+        const payload = session?.tokens?.idToken?.payload ?? {};
+        const tokenEmail = String(payload["email"] ?? "").trim();
+        const givenName = String(payload["given_name"] ?? "").trim();
+        const familyName = String(payload["family_name"] ?? "").trim();
+        const phoneNumber = String(payload["phone_number"] ?? "").trim();
 
-        const email =
-          tokenEmail || (u.signInDetails?.loginId as string | undefined) || "";
+        const loginId = (u as any)?.signInDetails?.loginId as string | undefined;
+        const email = (tokenEmail || loginId || (u as any)?.username || "").trim();
+        if (!email) throw new Error("Missing email in session");
+
+        if (cancelled) return;
 
         setUser({
-          sub: u.userId,
+          sub: (u as any).userId,
           email,
           firstName: givenName || undefined,
           lastName: familyName || undefined,
@@ -129,17 +189,43 @@ export default function OnboardingProfilePage() {
         });
       } catch (err) {
         console.error(err);
+        if (cancelled) return;
         setError("You must be signed in to access onboarding.");
+        router.replace("/sign-in?next=/onboarding/profile");
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     })();
-  }, []);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [router]);
+
+  async function handleContinue() {
+    if (submitting) return;
+    setSubmitting(true);
+    try {
+      // ✅ re-sync right before submit (prevents “stale admin cookie” + 500 digest)
+      await syncServerCookiesFromSession();
+      formRef.current?.requestSubmit();
+    } finally {
+      setSubmitting(false);
+    }
+  }
 
   if (loading) {
     return (
-      <main className="min-h-screen flex items-center justify-center bg-background">
-        <p className="text-sm text-muted-foreground">Loading your profile…</p>
+      <main className="min-h-screen flex items-center justify-center bg-background px-4">
+        <Card className="w-full max-w-md">
+          <CardHeader>
+            <CardTitle>Loading…</CardTitle>
+            <CardDescription>Loading your profile.</CardDescription>
+          </CardHeader>
+          <CardContent className="text-sm text-muted-foreground">
+            Please wait.
+          </CardContent>
+        </Card>
       </main>
     );
   }
@@ -147,285 +233,246 @@ export default function OnboardingProfilePage() {
   if (error || !user) {
     return (
       <main className="min-h-screen flex items-center justify-center bg-background px-4">
-        <div className="max-w-md w-full rounded-2xl bg-card p-6 shadow-sm ring-1 ring-border">
-          <h1 className="text-lg font-semibold text-foreground">
-            Sign in required
-          </h1>
-          <p className="mt-2 text-sm text-muted-foreground">
-            {error ??
-              "We couldn’t find your session. Please sign in again to continue onboarding."}
-          </p>
-          <a
-            href="/sign-in"
-            className="mt-4 inline-flex w-full justify-center rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:opacity-90"
-          >
-            Go to sign-in
-          </a>
-        </div>
+        <Card className="w-full max-w-md">
+          <CardHeader>
+            <CardTitle>Sign in required</CardTitle>
+            <CardDescription>
+              {error ??
+                "We couldn’t find your session. Please sign in again to continue onboarding."}
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button asChild className="w-full">
+              <a href="/sign-in?next=/onboarding/profile">Go to sign-in</a>
+            </Button>
+          </CardContent>
+        </Card>
       </main>
     );
   }
 
-  const inputBase =
-    "w-full rounded-xl border border-input bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:ring-2 focus:ring-ring";
-  const labelBase = "mb-1 block text-sm font-medium text-foreground";
-  const helpBase = "mt-1 text-xs text-muted-foreground";
-
   return (
-    <main className="min-h-screen bg-gradient-to-b from-secondary to-background px-4 py-10">
-      <div className="mx-auto max-w-2xl rounded-2xl bg-card p-6 shadow-sm ring-1 ring-border">
-        <header className="mb-6">
+    <main className="min-h-screen bg-gradient-to-b from-secondary/60 to-background px-4 py-10">
+      <Card className="mx-auto w-full max-w-3xl">
+        <CardHeader>
           <p className="text-xs font-semibold uppercase tracking-wide text-primary">
             Step 1 of 5
           </p>
-          <h1 className="mt-1 text-2xl font-bold text-foreground">
-            Confirm your details
-          </h1>
-          <p className="mt-2 text-sm text-muted-foreground">
-            We’ll use this information on your tax return and to keep you
-            updated about your file.
-          </p>
-        </header>
+          <CardTitle className="text-2xl">Confirm your details</CardTitle>
+          <CardDescription>
+            We’ll use this information on your tax return and to keep you updated about your file.
+          </CardDescription>
+        </CardHeader>
 
-        <form action={saveProfile} className="space-y-6">
-
-          {/* Email (locked) */}
-          <div>
-            <label className={labelBase}>Email</label>
-            <input
-              type="email"
-              value={user.email}
-              disabled
-              className="w-full rounded-xl border border-input bg-muted px-3 py-2 text-sm text-foreground/80"
-            />
-            <p className={helpBase}>Email is locked to the account you used.</p>
-          </div>
-
-          {/* Legal name */}
-          <div className="space-y-3">
-            <div>
-              <h2 className="text-sm font-semibold text-foreground">
-                Legal name
-              </h2>
-              <p className={helpBase}>
-                Enter your name exactly as it appears on your Social Security
-                card.
+        <CardContent>
+          {/* ✅ Server action reads tokens from cookies (synced above) */}
+          <form ref={formRef} action={saveProfile} className="space-y-6">
+            {/* Email (locked) */}
+            <div className="space-y-2">
+              <Label>Email</Label>
+              <Input value={user.email} disabled />
+              <p className="text-xs text-muted-foreground">
+                Email is locked to the account you used.
               </p>
             </div>
 
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
-              <div className="sm:col-span-1">
-                <label className="mb-1 block text-xs font-medium text-foreground">
-                  First name <span className="text-destructive">*</span>
-                </label>
-                <input
-                  name="firstName"
-                  required
-                  defaultValue={user.firstName ?? ""}
-                  className={inputBase}
-                />
-              </div>
-
-              <div className="sm:col-span-1">
-                <label className="mb-1 block text-xs font-medium text-foreground">
-                  Middle name
-                </label>
-                <input
-                  name="middleName"
-                  defaultValue=""
-                  className={inputBase}
-                  placeholder="Optional"
-                />
-              </div>
-
-              <div className="sm:col-span-1">
-                <label className="mb-1 block text-xs font-medium text-foreground">
-                  Last name <span className="text-destructive">*</span>
-                </label>
-                <input
-                  name="lastName"
-                  required
-                  defaultValue={user.lastName ?? ""}
-                  className={inputBase}
-                />
-              </div>
-
-              <div className="sm:col-span-1">
-                <label className="mb-1 block text-xs font-medium text-foreground">
-                  Suffix
-                </label>
-                <select name="suffix" defaultValue="" className={inputBase}>
-                  <option value="">None</option>
-                  <option value="Jr">Jr</option>
-                  <option value="Sr">Sr</option>
-                  <option value="II">II</option>
-                  <option value="III">III</option>
-                  <option value="IV">IV</option>
-                </select>
-              </div>
-            </div>
-          </div>
-
-          {/* Contact & address */}
-          <div className="space-y-3">
-            <div>
-              <h2 className="text-sm font-semibold text-foreground">
-                Contact & address
-              </h2>
-              <p className={helpBase}>
-                This should be your current mailing address for IRS/state
-                notices.
-              </p>
-            </div>
-
-            <div>
-              <label className={labelBase}>
-                Mobile phone <span className="text-destructive">*</span>
-              </label>
-              <input
-                name="phone"
-                type="tel"
-                required
-                defaultValue={user.phone ?? ""}
-                placeholder="(555) 555-5555"
-                className={inputBase}
-                inputMode="numeric"
-                autoComplete="tel"
-                onInput={(e) => {
-                  const el = e.currentTarget;
-                  const formatted = formatUSPhone(el.value);
-                  el.value = formatted;
-                }}
-              />
-
-              <p className={helpBase}>
-                Used for appointment reminders and important updates.
-              </p>
-            </div>
-
-            <div>
-              <label className={labelBase}>
-                Address line 1 <span className="text-destructive">*</span>
-              </label>
-              <input
-                name="address1"
-                type="text"
-                required
-                placeholder="Street address"
-                className={inputBase}
-              />
-            </div>
-
-            <div>
-              <label className={labelBase}>Address line 2</label>
-              <input
-                name="address2"
-                type="text"
-                placeholder="Apt, suite, unit, etc. (optional)"
-                className={inputBase}
-              />
-            </div>
-
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            {/* Legal name */}
+            <div className="space-y-3">
               <div>
-                <label className={labelBase}>
-                  City <span className="text-destructive">*</span>
-                </label>
-                <input name="city" type="text" required className={inputBase} />
+                <h3 className="text-sm font-semibold">Legal name</h3>
+                <p className="text-xs text-muted-foreground">
+                  Enter your name exactly as it appears on your Social Security card.
+                </p>
               </div>
 
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
+                <div className="space-y-2">
+                  <Label>
+                    First name <span className="text-destructive">*</span>
+                  </Label>
+                  <Input name="firstName" required defaultValue={user.firstName ?? ""} />
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Middle name</Label>
+                  <Input name="middleName" defaultValue="" placeholder="Optional" />
+                </div>
+
+                <div className="space-y-2">
+                  <Label>
+                    Last name <span className="text-destructive">*</span>
+                  </Label>
+                  <Input name="lastName" required defaultValue={user.lastName ?? ""} />
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Suffix</Label>
+                  {/* shadcn Select + hidden input */}
+                  <input type="hidden" name="suffix" value={suffixValue} />
+                  <Select value={suffixValue} onValueChange={setSuffixValue}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="None" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="">None</SelectItem>
+                      <SelectItem value="Jr">Jr</SelectItem>
+                      <SelectItem value="Sr">Sr</SelectItem>
+                      <SelectItem value="II">II</SelectItem>
+                      <SelectItem value="III">III</SelectItem>
+                      <SelectItem value="IV">IV</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            </div>
+
+            {/* Contact & address */}
+            <div className="space-y-3">
               <div>
-                <label className={labelBase}>
-                  State <span className="text-destructive">*</span>
-                </label>
-                <select
-                  name="state"
-                  required
-                  defaultValue=""
-                  className={inputBase}
-                >
-                  <option value="" disabled>
-                    Select state
-                  </option>
-                  {US_STATES.map((s) => (
-                    <option key={s.value} value={s.value}>
-                      {s.value} – {s.label}
-                    </option>
-                  ))}
-                </select>
+                <h3 className="text-sm font-semibold">Contact & address</h3>
+                <p className="text-xs text-muted-foreground">
+                  This should be your current mailing address for IRS/state notices.
+                </p>
               </div>
 
-              <div>
-                <label className={labelBase}>
-                  ZIP code <span className="text-destructive">*</span>
-                </label>
-                <input
-                  name="zip"
-                  type="text"
-                  inputMode="numeric"
+              <div className="space-y-2">
+                <Label>
+                  Mobile phone <span className="text-destructive">*</span>
+                </Label>
+                <Input
+                  name="phone"
+                  type="tel"
                   required
-                  placeholder="12345"
-                  className={inputBase}
+                  defaultValue={user.phone ?? ""}
+                  placeholder="(555) 555-5555"
+                  autoComplete="tel"
+                  onInput={(e) => {
+                    const el = e.currentTarget;
+                    el.value = formatUSPhone(el.value);
+                  }}
                 />
+                <p className="text-xs text-muted-foreground">
+                  Used for appointment reminders and important updates.
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label>
+                  Address line 1 <span className="text-destructive">*</span>
+                </Label>
+                <Input name="address1" required placeholder="Street address" />
+              </div>
+
+              <div className="space-y-2">
+                <Label>Address line 2</Label>
+                <Input name="address2" placeholder="Apt, suite, unit, etc. (optional)" />
+              </div>
+
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                <div className="space-y-2">
+                  <Label>
+                    City <span className="text-destructive">*</span>
+                  </Label>
+                  <Input name="city" required />
+                </div>
+
+                <div className="space-y-2">
+                  <Label>
+                    State <span className="text-destructive">*</span>
+                  </Label>
+                  {/* shadcn Select + hidden input */}
+                  <input type="hidden" name="state" value={stateValue} />
+                  <Select value={stateValue} onValueChange={setStateValue}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select state" />
+                    </SelectTrigger>
+                    <SelectContent className="max-h-[260px]">
+                      {US_STATES.map((s) => (
+                        <SelectItem key={s.value} value={s.value}>
+                          {s.value} – {s.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>
+                    ZIP code <span className="text-destructive">*</span>
+                  </Label>
+                  <Input name="zip" required inputMode="numeric" placeholder="12345" />
+                </div>
               </div>
             </div>
-          </div>
 
-          {/* DOB + SSN */}
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <div>
-              <label className="mb-1 block text-xs font-medium text-foreground">
-                Date of birth <span className="text-destructive">*</span>
-              </label>
-              <input type="date" name="dob" required className={inputBase} />
+            {/* DOB + SSN */}
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label>
+                  Date of birth <span className="text-destructive">*</span>
+                </Label>
+                <Input type="date" name="dob" required />
+              </div>
+
+              <div className="space-y-2">
+                <Label>Social Security Number</Label>
+
+                <div className="relative">
+                  <Input
+                    type={showSsn ? "text" : "password"}
+                    name="ssn"
+                    inputMode="numeric"
+                    maxLength={11}
+                    placeholder="XXX-XX-XXXX"
+                    className="pr-10"
+                    value={ssn}
+                    onChange={(e) => setSsn(formatSSN(e.target.value))}
+                    autoComplete="off"
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="absolute right-1 top-1/2 -translate-y-1/2"
+                    onClick={() => setShowSsn((v) => !v)}
+                    aria-label={showSsn ? "Hide SSN" : "Show SSN"}
+                  >
+                    {showSsn ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </Button>
+                </div>
+
+                <p className="text-xs text-muted-foreground">
+                  Optional — you can provide this over the phone if you prefer.
+                </p>
+              </div>
             </div>
 
-            <div>
-              <label className="mb-1 block text-xs font-medium text-foreground">
-                Social Security Number
-              </label>
-              <div className="relative">
-  <input
-    type={showSsn ? "text" : "password"}
-    name="ssn"
-    inputMode="numeric"
-    maxLength={11}
-    placeholder="XXX-XX-XXXX"
-    className={`${inputBase} pr-11`}
-    value={ssn}
-    onChange={(e) => setSsn(formatSSN(e.target.value))}
-    autoComplete="off"
-  />
-
-  <button
-    type="button"
-    onClick={() => setShowSsn((v) => !v)}
-    className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md p-2 text-gray-600 hover:bg-gray-100 hover:text-gray-900"
-    aria-label={showSsn ? "Hide SSN" : "Show SSN"}
-  >
-    {showSsn ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
-  </button>
-</div>
-
-              <p className="mt-1 text-[11px] text-muted-foreground">
-                Optional — you can provide this over the phone if you prefer.
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between pt-2">
+              <p className="text-xs text-muted-foreground">
+                You can update this information later if something changes.
               </p>
-            </div>
-          </div>
 
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between pt-2">
-            <p className="text-[11px] text-muted-foreground">
-              You can update this information later if something changes.
+              {/* ✅ button does cookie sync then submits form */}
+              <Button type="button" onClick={handleContinue} disabled={submitting}>
+                {submitting ? (
+                  <span className="inline-flex items-center gap-2">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Saving…
+                  </span>
+                ) : (
+                  "Save and continue to documents"
+                )}
+              </Button>
+            </div>
+
+            {/* IMPORTANT: require state selection */}
+            {/* If you want state to be required, enforce it client-side: */}
+            <p className={cn("text-xs text-muted-foreground", stateValue ? "hidden" : "")}>
+              Note: Please select a state before continuing.
             </p>
-            <button
-              type="submit"
-              className="inline-flex items-center justify-center rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground shadow-sm hover:opacity-90"
-            >
-              Save and continue to documents
-            </button>
-          </div>
-        </form>
-      </div>
+          </form>
+        </CardContent>
+      </Card>
     </main>
   );
 }
