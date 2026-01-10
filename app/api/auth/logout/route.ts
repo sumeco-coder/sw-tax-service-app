@@ -2,20 +2,18 @@
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 export async function POST() {
   const res = NextResponse.json(
     { ok: true },
-    { headers: { "Cache-Control": "no-store" } }
+    { headers: { "Cache-Control": "no-store", Vary: "Cookie, Authorization" } }
   );
 
   const names = ["accessToken", "idToken", "refreshToken"];
 
   for (const name of names) {
-    // delete (Next helper)
     res.cookies.delete(name);
-
-    // overwrite expired on common paths
     res.cookies.set(name, "", { path: "/", maxAge: 0 });
     res.cookies.set(name, "", { path: "/admin", maxAge: 0 });
   }

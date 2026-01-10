@@ -1,45 +1,58 @@
+// app/(admin)/admin/(protected)/messages/components/AdminMessageInput.tsx
 "use client";
 
+import * as React from "react";
 import { useState, useTransition } from "react";
 import { staffSendMessage } from "../actions";
 
-export function AdminMessageInput({ conversationId }: { conversationId: string }) {
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { cn } from "@/lib/utils";
+import { Send } from "lucide-react";
+
+export function AdminMessageInput({
+  conversationId,
+  onSent,
+  className,
+}: {
+  conversationId: string;
+  onSent?: (created: any | null) => void;
+  className?: string;
+}) {
   const [text, setText] = useState("");
   const [pending, startTransition] = useTransition();
+
+  const trimmed = text.trim();
 
   return (
     <form
       onSubmit={(e) => {
         e.preventDefault();
-        const trimmed = text.trim();
         if (!trimmed) return;
 
         startTransition(async () => {
-          // Adjust the payload to match your existing sendMessage() signature
-          await staffSendMessage({
-            conversationId,
-            text: trimmed,
-          } as any);
-
+          const created = await staffSendMessage({ conversationId, text: trimmed });
           setText("");
+          onSent?.(created ?? null);
         });
       }}
-      className="flex gap-2"
+      className={cn(
+        "flex items-end gap-2 rounded-2xl border bg-background/60 p-2 backdrop-blur supports-[backdrop-filter]:bg-background/40",
+        className
+      )}
     >
-      <input
+      <Input
         value={text}
         onChange={(e) => setText(e.target.value)}
         placeholder="Type a message…"
-        className="flex-1 rounded-md border px-3 py-2"
         disabled={pending}
+        className="h-11 rounded-xl"
       />
-      <button
-        type="submit"
-        disabled={pending || !text.trim()}
-        className="rounded-md border px-3 py-2"
-      >
+
+      <Button type="submit" disabled={pending || !trimmed} className="h-11 rounded-xl">
+        <Send className="mr-2 h-4 w-4" />
         Send
-      </button>
+      </Button>
     </form>
   );
 }

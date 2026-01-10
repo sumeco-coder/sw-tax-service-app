@@ -5,7 +5,15 @@ import { useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { signOut } from "aws-amplify/auth";
 
-export default function IdleSignOut({ minutes = 20 }: { minutes?: number }) {
+type Props = {
+  minutes?: number;
+  redirectTo?: string; // ✅ allows admin redirect
+};
+
+export default function IdleSignOut({
+  minutes = 20,
+  redirectTo = "/sign-in?reason=timeout",
+}: Props) {
   const router = useRouter();
   const timerRef = useRef<number | null>(null);
 
@@ -14,15 +22,22 @@ export default function IdleSignOut({ minutes = 20 }: { minutes?: number }) {
 
     const doLogout = async () => {
       try {
-        // ✅ logs out across all devices
+        // ✅ clear server auth cookies (SSR reads these)
+        await fetch("/api/auth/logout", {
+          method: "POST",
+          cache: "no-store",
+        }).catch(() => {});
+
+        // ✅ logs out across all devices (Amplify/Cognito)
         await signOut({ global: true });
       } catch {
-        // even if global signout fails (offline), still redirect
+        // fallback local signout
         try {
-          await signOut(); // fallback local
+          await signOut();
         } catch {}
       } finally {
-        router.replace("/sign-in?reason=timeout");
+        router.replace(redirectTo);
+        router.refresh(); // ✅ ensure server layouts re-read cookies
       }
     };
 
@@ -32,7 +47,9 @@ export default function IdleSignOut({ minutes = 20 }: { minutes?: number }) {
     };
 
     const events = ["mousemove", "mousedown", "keydown", "touchstart", "scroll"];
-    events.forEach((e) => window.addEventListener(e, reset, { passive: true }));
+    events.forEach((e) =>
+      window.addEventListener(e, reset, { passive: true } as any)
+    );
 
     const onVis = () => {
       if (document.visibilityState === "visible") reset();
@@ -43,10 +60,12 @@ export default function IdleSignOut({ minutes = 20 }: { minutes?: number }) {
 
     return () => {
       if (timerRef.current) window.clearTimeout(timerRef.current);
-      events.forEach((e) => window.removeEventListener(e, reset as any));
+      events.forEach((e) =>
+        window.removeEventListener(e, reset as any)
+      );
       document.removeEventListener("visibilitychange", onVis);
     };
-  }, [minutes, router]);
+  }, [minutes, redirectTo, router]);
 
   return null;
 }

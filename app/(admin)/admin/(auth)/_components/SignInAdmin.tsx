@@ -38,10 +38,26 @@ function emailDomain(email: string) {
 }
 
 function isAdminFromPayload(payload: any) {
-  const role = payload?.["custom:role"];
+  const role = String(payload?.["custom:role"] ?? "")
+    .trim()
+    .toUpperCase()
+    .replace(/-/g, "_");
+
   const groups: string[] = payload?.["cognito:groups"] ?? [];
-  return role === "admin" || groups.includes("admin");
+  const g = groups.map((x) =>
+    String(x).trim().toUpperCase().replace(/-/g, "_")
+  );
+
+  return (
+    role === "ADMIN" ||
+    role === "SUPERADMIN" ||
+    role === "SUPPORT_AGENT" ||
+    g.includes("ADMIN") ||
+    g.includes("SUPERADMIN") ||
+    g.includes("SUPPORT_AGENT")
+  );
 }
+
 
 function friendlyError(err: any) {
   const msg = String(err?.message ?? "Sign-in failed.");

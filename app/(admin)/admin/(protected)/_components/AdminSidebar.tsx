@@ -15,7 +15,16 @@ const BRAND = {
 };
 
 async function hardSignOut() {
-  // 1) Clear Amplify/Cognito session
+  // 1) Clear server cookies FIRST (so SSR/layout immediately stops seeing a session)
+  try {
+    await fetch("/api/auth/logout", {
+      method: "POST",
+      cache: "no-store",
+      credentials: "include",
+    });
+  } catch {}
+
+  // 2) Clear Amplify/Cognito session (global + local fallback)
   try {
     await signOut({ global: true });
   } catch {
@@ -24,18 +33,10 @@ async function hardSignOut() {
     } catch {}
   }
 
-  // 2) Clear your server cookies
-  try {
-    await fetch("/api/auth/logout", {
-      method: "POST",
-      credentials: "include",
-      cache: "no-store",
-    });
-  } catch {}
-
   // 3) small delay to avoid race conditions
-  await new Promise((r) => setTimeout(r, 200));
+  await new Promise((r) => setTimeout(r, 150));
 }
+
 
 export default function AdminSidebar() {
   const [open, setOpen] = useState(false);
@@ -76,6 +77,10 @@ export default function AdminSidebar() {
     setLoggingOut(true);
     try {
       await hardSignOut();
+      await fetch("/api/auth/logout", {
+        method: "POST",
+        cache: "no-store",
+      }).catch(() => {});
       setOpen(false);
       router.replace("/admin/sign-in");
       router.refresh();
@@ -122,7 +127,11 @@ export default function AdminSidebar() {
 
       {/* Mobile drawer */}
       {open ? (
-        <div className="fixed inset-0 z-40 md:hidden" role="dialog" aria-modal="true">
+        <div
+          className="fixed inset-0 z-40 md:hidden"
+          role="dialog"
+          aria-modal="true"
+        >
           {/* overlay */}
           <button
             type="button"
@@ -132,12 +141,10 @@ export default function AdminSidebar() {
           />
 
           {/* drawer */}
-         <div
-  id="admin-mobile-drawer"
-  className="absolute left-0 top-0 flex h-full w-[82%] max-w-sm flex-col overflow-y-auto overscroll-contain border-r border-white/10 bg-[#0b0b10] px-4 py-6"
-
->
-
+          <div
+            id="admin-mobile-drawer"
+            className="absolute left-0 top-0 flex h-full w-[82%] max-w-sm flex-col overflow-y-auto overscroll-contain border-r border-white/10 bg-[#0b0b10] px-4 py-6"
+          >
             <div className="flex items-center justify-between">
               <BrandHeader />
               <button
@@ -171,7 +178,9 @@ export default function AdminSidebar() {
                 {loggingOut ? "Logging out…" : "Logout"}
               </button>
 
-              <p className="mt-4 text-xs text-white/50">SW Tax Service • Admin</p>
+              <p className="mt-4 text-xs text-white/50">
+                SW Tax Service • Admin
+              </p>
             </div>
           </div>
         </div>
@@ -180,7 +189,8 @@ export default function AdminSidebar() {
       {/* Tiny brand glow */}
       <style jsx global>{`
         .sw-brand-glow {
-          background: radial-gradient(
+          background:
+            radial-gradient(
               900px 260px at 30% 0%,
               ${BRAND.primary}33 0%,
               transparent 60%
@@ -208,7 +218,9 @@ function BrandHeader() {
           <p className="text-xs font-semibold uppercase tracking-wide text-white/60">
             Admin Panel
           </p>
-          <h2 className="truncate text-base font-semibold text-white">SW Tax Service</h2>
+          <h2 className="truncate text-base font-semibold text-white">
+            SW Tax Service
+          </h2>
         </div>
       </div>
     </div>

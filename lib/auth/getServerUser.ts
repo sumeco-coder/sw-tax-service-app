@@ -15,7 +15,8 @@ function normalizeEmail(v: unknown) {
 function normalizeRole(role: unknown): AppRole {
   return String(role ?? "")
     .trim()
-    .toUpperCase() as AppRole; // ✅ ONE controlled cast
+    .toUpperCase()
+    .replace(/-/g, "_") as AppRole;
 }
 
 /* ─────────────────────────────────────────────

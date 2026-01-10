@@ -107,7 +107,9 @@ function NavLink({
           background: `linear-gradient(180deg, ${BRAND.pink}, ${BRAND.copper})`,
         }}
       />
-      <Icon className={cx("h-4.5 w-4.5", active ? "opacity-100" : "opacity-85")} />
+      <Icon
+        className={cx("h-4.5 w-4.5", active ? "opacity-100" : "opacity-85")}
+      />
       <span className="flex-1">{item.name}</span>
       <ChevronRight
         className={cx(
@@ -136,7 +138,10 @@ export default function ClientShell({
   // ✅ Build nav: prepend Admin Hub only for admin view
   const nav = useMemo<NavItem[]>(() => {
     if (!isAdmin) return baseNavItems;
-    return [{ name: "Admin Hub", href: "/admin", Icon: Shield }, ...baseNavItems];
+    return [
+      { name: "Admin Hub", href: "/admin", Icon: Shield },
+      ...baseNavItems,
+    ];
   }, [isAdmin]);
 
   const activeItems = useMemo(
@@ -164,7 +169,10 @@ export default function ClientShell({
           (attrs as any).preferred_username;
 
         const loginId = user.signInDetails?.loginId;
-        const fallback = nameAttr || loginId || user.username || "Client";
+
+        const fallback = nameAttr
+          ? `${nameAttr} (${loginId || user.username})`
+          : loginId || user.username || "Client";
 
         setDisplayName(fallback);
       } catch {
@@ -219,15 +227,21 @@ export default function ClientShell({
     };
   }, [authLoading, heartbeat]);
 
-  async function handleLogout() {
-    try {
-      await signOut();
-    } catch (err) {
-      console.error("Sign-out error:", err);
-    } finally {
-      router.replace("/sign-in");
-    }
+ async function handleLogout() {
+  try {
+    await fetch("/api/auth/logout", {
+      method: "POST",
+      cache: "no-store",
+    }).catch(() => {});
+    await signOut();
+  } catch (err) {
+    console.error("Sign-out error:", err);
+  } finally {
+    router.replace("/sign-in");
+    router.refresh();
   }
+}
+
 
   return (
     <div
@@ -263,7 +277,9 @@ export default function ClientShell({
               SW
             </div>
             <div className="flex flex-col leading-tight">
-              <span className="text-sm font-semibold tracking-tight">SW Tax Service</span>
+              <span className="text-sm font-semibold tracking-tight">
+                SW Tax Service
+              </span>
               <span className="text-[11px]" style={{ color: BRAND.gray }}>
                 Client Portal{isAdmin ? " (Admin View)" : ""}
               </span>
@@ -320,7 +336,10 @@ export default function ClientShell({
 
         {/* Mobile menu */}
         {mobileOpen && (
-          <div className="md:hidden border-t" style={{ borderColor: "rgba(255,255,255,0.08)" }}>
+          <div
+            className="md:hidden border-t"
+            style={{ borderColor: "rgba(255,255,255,0.08)" }}
+          >
             <div className="mx-auto max-w-6xl px-4 py-3 space-y-3">
               <div
                 className="rounded-2xl border p-3"

@@ -5,17 +5,28 @@ import { getServerUser } from "@/lib/auth/getServerUser";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-function noStoreJson(body: any, status = 200) {
+function noStoreJson(body: unknown, status = 200) {
   return NextResponse.json(body, {
     status,
-    headers: { "Cache-Control": "no-store" },
+    headers: {
+      "Cache-Control": "no-store, max-age=0",
+      Vary: "Cookie, Authorization",
+    },
   });
 }
 
-function isAdminRole(role: unknown) {
-  const r = String(role ?? "").toUpperCase();
-  return r === "ADMIN" || r === "SUPERADMIN";
+function normalizeRole(role: unknown) {
+  return String(role ?? "")
+    .trim()
+    .toUpperCase()
+    .replace(/-/g, "_"); // LMS-ADMIN -> LMS_ADMIN
 }
+
+function isAdminRole(role: unknown) {
+  const r = String(role ?? "").trim().toUpperCase().replace(/-/g, "_");
+  return r === "ADMIN" || r === "SUPERADMIN" || r === "SUPPORT_AGENT";
+}
+
 
 export async function GET() {
   const me = await getServerUser();
@@ -23,15 +34,14 @@ export async function GET() {
 
   return noStoreJson(
     {
-      user: me,
-      // helpful flags for UI gating
+      user: me, // ✅ already safe & typed from getServerUser()
+      role: normalizeRole(me.role),
       isAdmin: isAdminRole(me.role),
     },
     200
   );
 }
 
-// ✅ keep your existing client POST working
 export async function POST() {
   return GET();
 }

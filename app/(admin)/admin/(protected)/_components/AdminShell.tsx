@@ -5,6 +5,7 @@ import * as React from "react";
 import Link from "next/link";
 import AdminSidebar from "./AdminSidebar";
 import { ChevronDown } from "lucide-react";
+import IdleSignOut from "../../../../(client)/(protected)/_components/IdleSignOut";
 
 const portalLinks = [
   { label: "Client Portal", href: "/dashboard" },
@@ -100,6 +101,7 @@ export default function AdminShell({
               {children}
             </div>
           </main>
+           <IdleSignOut minutes={20} redirectTo="/admin/sign-in?reason=timeout" />
         </div>
       </div>
     </div>

@@ -6,6 +6,8 @@ import { messages, conversations } from "@/drizzle/schema";
 import { eq, sql } from "drizzle-orm";
 import Pusher from "pusher";
 
+import { encryptMessage } from "@/lib/crypto/messageCrypto";
+
 function getPusher() {
   const appId = process.env.PUSHER_APP_ID;
   const key = process.env.NEXT_PUBLIC_PUSHER_KEY;
@@ -30,22 +32,31 @@ export async function sendSystemMessage(conversationId: string, body: string) {
   if (!cid) throw new Error("sendSystemMessage: missing conversationId");
   if (!text) return;
 
-  // ✅ If you have real encryption, replace this with that helper.
-  const encryptedBody = text;
+  const keyVersion = "v2" as const;
+  const encryptedBody = encryptMessage(text, keyVersion);
+  const now = new Date();
 
-  await db.insert(messages).values({
-    conversationId: cid,
-    body: text,
-    encryptedBody,          // ✅ required by your schema
-    isSystem: true,
-    senderUserId: null,
-    senderRole: "SYSTEM",   // ✅ now in enum
-  });
+  const [created] = await db
+    .insert(messages)
+    .values({
+      conversationId: cid,
+      body: text,
+      encryptedBody, // ✅ required by schema
+      keyVersion,    // ✅ store which key was used
+      isSystem: true,
+      senderUserId: null,
+      senderRole: "SYSTEM",
+      createdAt: now,
+    })
+    .returning({
+      id: messages.id,
+      createdAt: messages.createdAt,
+    });
 
   await db
     .update(conversations)
     .set({
-      lastMessageAt: new Date(),
+      lastMessageAt: now,
       lastSenderRole: "SYSTEM",
       clientUnread: sql`${conversations.clientUnread} + 1`,
     })
@@ -56,8 +67,10 @@ export async function sendSystemMessage(conversationId: string, body: string) {
   if (pusher) {
     await pusher.trigger(`conversation-${cid}`, "new-message", {
       conversationId: cid,
+      messageId: created?.id,
       senderRole: "SYSTEM",
       isSystem: true,
+      createdAt: created?.createdAt ?? now,
     });
   }
 }

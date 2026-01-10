@@ -1,3 +1,4 @@
+// lib/crypto/messageCrypto.ts
 import crypto from "crypto";
 
 /* ─────────────────────────────────────────────
