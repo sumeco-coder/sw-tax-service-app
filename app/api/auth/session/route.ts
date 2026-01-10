@@ -2,6 +2,7 @@
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 function looksLikeJwt(t: string) {
   return t.split(".").length === 3;
@@ -16,20 +17,35 @@ export async function POST(req: Request) {
   if (!accessToken || !idToken || !looksLikeJwt(accessToken) || !looksLikeJwt(idToken)) {
     return NextResponse.json(
       { ok: false, message: "Missing/invalid tokens" },
-      { status: 400, headers: { "Cache-Control": "no-store" } }
+      {
+        status: 400,
+        headers: {
+          "Cache-Control": "no-store",
+          "Vary": "Cookie, Authorization",
+        },
+      }
     );
   }
 
   const secure = process.env.NODE_ENV === "production";
+
   const cookieOptions = {
     httpOnly: true,
     secure,
     sameSite: "lax" as const,
     path: "/",
-    maxAge: 60 * 60 * 24 * 7,
+    maxAge: 60 * 60 * 24 * 7, // 7 days
   };
 
-  const res = NextResponse.json({ ok: true }, { headers: { "Cache-Control": "no-store" } });
+  const res = NextResponse.json(
+    { ok: true },
+    {
+      headers: {
+        "Cache-Control": "no-store",
+        "Vary": "Cookie, Authorization",
+      },
+    }
+  );
 
   res.cookies.set("accessToken", accessToken, cookieOptions);
   res.cookies.set("idToken", idToken, cookieOptions);
