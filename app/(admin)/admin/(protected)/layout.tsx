@@ -4,6 +4,10 @@ import { redirect } from "next/navigation";
 import AdminShell from "./_components/AdminShell";
 import { getServerRole } from "@/lib/auth/roleServer";
 
+function isAdminLike(roleRaw: unknown) {
+  const role = String(roleRaw ?? "").toLowerCase();
+  return role === "admin" || role === "superadmin" || role === "support_agent";
+}
 export default async function AdminProtectedLayout({
   children,
 }: {
@@ -13,9 +17,7 @@ export default async function AdminProtectedLayout({
 
   if (!me?.sub) redirect("/admin/sign-in");
 
-  const role = String(me.role ?? "").toLowerCase();
-
-  if (role !== "admin") redirect("/not-authorized");
+  if (!isAdminLike(me.role)) redirect("/not-authorized");
 
   return <AdminShell>{children}</AdminShell>;
 }

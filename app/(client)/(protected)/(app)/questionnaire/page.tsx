@@ -1,4 +1,4 @@
-// app/(client)/questionnaire/page.tsx
+// app/(client)/(protected)/(app)/questionnaire/page.tsx
 "use client";
 
 import React, { useMemo, useState } from "react";

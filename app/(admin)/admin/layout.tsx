@@ -1,17 +1,8 @@
-import { redirect } from "next/navigation";
-import { getServerRole } from "@/lib/auth/roleServer";
+// app/(admin)/admin/layout.tsx
 
-export default async function AdminLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
-  const me = await getServerRole();
+// app/(admin)/admin/layout.tsx
+import type { ReactNode } from "react";
 
-  if (!me?.sub) redirect("/admin/sign-in");
-
-  const role = String(me.role ?? "").toLowerCase();
-  if (role !== "admin") redirect("/not-authorized");
-
+export default function AdminLayout({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }

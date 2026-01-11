@@ -19,7 +19,9 @@ function normalizeEmail(v: unknown) {
   return clean(v, 255).toLowerCase();
 }
 function digitsOnly(v: unknown, maxLen: number) {
-  return String(v ?? "").replace(/\D/g, "").slice(0, maxLen);
+  return String(v ?? "")
+    .replace(/\D/g, "")
+    .slice(0, maxLen);
 }
 
 /**
@@ -36,7 +38,10 @@ function readAes256Key(envName: string): Buffer {
   const isHex = /^[0-9a-fA-F]+$/.test(raw) && raw.length >= 64;
   const key = isHex
     ? Buffer.from(raw, "hex")
-    : Buffer.from(raw, (raw.includes("-") || raw.includes("_")) ? ("base64url" as any) : "base64");
+    : Buffer.from(
+        raw,
+        raw.includes("-") || raw.includes("_") ? ("base64url" as any) : "base64"
+      );
 
   if (key.length !== 32) {
     throw new Error(`${envName} must decode to 32 bytes (AES-256).`);
@@ -53,7 +58,10 @@ function encryptSsn(ssn9: string) {
   const iv = crypto.randomBytes(12);
   const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
 
-  const ciphertext = Buffer.concat([cipher.update(ssn9, "utf8"), cipher.final()]);
+  const ciphertext = Buffer.concat([
+    cipher.update(ssn9, "utf8"),
+    cipher.final(),
+  ]);
   const tag = cipher.getAuthTag();
 
   return `v1.${iv.toString("base64url")}.${tag.toString("base64url")}.${ciphertext.toString("base64url")}`;
@@ -69,7 +77,11 @@ async function requireAuth() {
 
 /** map cognitoSub -> users.id (UUID). creates shell row if missing */
 async function getOrCreateUserBySub(cognitoSub: string, email?: string) {
-  const userCols = { id: users.id, cognitoSub: users.cognitoSub, email: users.email };
+  const userCols = {
+    id: users.id,
+    cognitoSub: users.cognitoSub,
+    email: users.email,
+  };
 
   const [existing] = await db
     .select(userCols)
@@ -120,7 +132,8 @@ const depCols = {
 export async function GET() {
   try {
     const auth = await requireAuth();
-    if (!auth) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (!auth)
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const u = await getOrCreateUserBySub(auth.sub, auth.email);
 
@@ -144,7 +157,10 @@ export async function GET() {
     return NextResponse.json(normalized);
   } catch (e: any) {
     console.error(e);
-    return NextResponse.json({ error: e?.message ?? "Server error" }, { status: 500 });
+    return NextResponse.json(
+      { error: e?.message ?? "Server error" },
+      { status: 500 }
+    );
   }
 }
 
@@ -152,7 +168,8 @@ export async function GET() {
 export async function POST(req: Request) {
   try {
     const auth = await requireAuth();
-    if (!auth) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (!auth)
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const u = await getOrCreateUserBySub(auth.sub, auth.email);
     const b = await req.json().catch(() => ({}));
@@ -173,16 +190,29 @@ export async function POST(req: Request) {
     const isDisabled = !!b.isDisabled;
 
     if (!firstName || !lastName || !dobStr || !relationship) {
-      return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
+      return NextResponse.json(
+        { error: "Missing required fields" },
+        { status: 400 }
+      );
     }
 
     // If they DIDN'T mark applied, require full ssn9
     if (!applied && ssn9.length !== 9) {
       return NextResponse.json(
-        { error: "Full 9-digit SSN is required unless marked applied-but-not-received." },
+        {
+          error:
+            "Full 9-digit SSN is required unless marked applied-but-not-received.",
+        },
         { status: 400 }
       );
     }
+
+    console.log(
+      "SSN_ENCRYPTION_KEY loaded?",
+      !!process.env.SSN_ENCRYPTION_KEY,
+      "len",
+      process.env.SSN_ENCRYPTION_KEY?.length
+    );
 
     // If applied=true, do NOT store SSN
     const ssnEncrypted = ssn9.length === 9 ? encryptSsn(ssn9) : null;
@@ -203,7 +233,10 @@ export async function POST(req: Request) {
       updatedAt: new Date(),
     };
 
-    const [created] = await db.insert(dependents).values(row).returning(depCols as any);
+    const [created] = await db
+      .insert(dependents)
+      .values(row)
+      .returning(depCols as any);
 
     const safe = {
       ...created,
@@ -216,6 +249,9 @@ export async function POST(req: Request) {
     return NextResponse.json(safe, { status: 201 });
   } catch (e: any) {
     console.error(e);
-    return NextResponse.json({ error: e?.message ?? "Server error" }, { status: 500 });
+    return NextResponse.json(
+      { error: e?.message ?? "Server error" },
+      { status: 500 }
+    );
   }
 }
