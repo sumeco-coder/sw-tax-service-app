@@ -144,7 +144,7 @@ export default function DependentsPage() {
 
   useEffect(() => {
     loadDependents();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, []);
 
   const editingRow = useMemo(
