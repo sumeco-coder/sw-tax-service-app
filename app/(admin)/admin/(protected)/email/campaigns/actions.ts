@@ -50,9 +50,7 @@ async function requireQueuedRecipients(campaignId: string) {
 
   const queued = row?.queued ?? 0;
   if (queued <= 0) {
-    throw new Error(
-      "No queued recipients for this campaign. Build recipients first."
-    );
+    throw new Error("No queued recipients for this campaign. Build recipients first.");
   }
 }
 
@@ -91,6 +89,11 @@ export async function createCampaign(formData: FormData): Promise<void> {
       scheduledAt: null,
       schedulerName: null,
       sentAt: null,
+
+      // optional audience fields (safe defaults)
+      apptSegment: null,
+      manualRecipientsRaw: null,
+      listId: null,
     } as any)
     .returning({ id: emailCampaigns.id });
 
@@ -160,6 +163,7 @@ export async function setCampaignStatus(formData: FormData): Promise<void> {
   }
 
   if (status === "sending") {
+    // runner sends; keep sentAt null until complete
     patch.sentAt = null;
   }
 
@@ -169,10 +173,7 @@ export async function setCampaignStatus(formData: FormData): Promise<void> {
     patch.schedulerName = null;
   }
 
-  await db
-    .update(emailCampaigns)
-    .set(patch)
-    .where(eq(emailCampaigns.id, campaignId));
+  await db.update(emailCampaigns).set(patch).where(eq(emailCampaigns.id, campaignId));
 
   revalidatePath("/admin/email/campaigns");
   revalidatePath(`/admin/email/campaigns/${campaignId}`);
@@ -213,7 +214,7 @@ export async function duplicateCampaign(formData: FormData): Promise<void> {
       schedulerName: null,
       sentAt: null,
 
-      // carry optional fields if you have them
+      // carry optional audience fields
       apptSegment: (existing as any).apptSegment ?? null,
       manualRecipientsRaw: (existing as any).manualRecipientsRaw ?? null,
       listId: (existing as any).listId ?? null,
@@ -236,9 +237,7 @@ export async function deleteCampaign(formData: FormData): Promise<void> {
   const { campaignId } = parsed.data;
 
   // cleanup recipients first (avoid FK/orphans)
-  await db
-    .delete(emailRecipients)
-    .where(eq(emailRecipients.campaignId, campaignId));
+  await db.delete(emailRecipients).where(eq(emailRecipients.campaignId, campaignId));
   await db.delete(emailCampaigns).where(eq(emailCampaigns.id, campaignId));
 
   revalidatePath("/admin/email/campaigns");
@@ -282,10 +281,7 @@ export async function applyTemplateToCampaign(formData: FormData): Promise<void>
   const textTpl = String((t as any).text ?? "");
 
   const subject = fillKnownDefaultsKeepUnknown(subjectTpl, knownDefaults);
-  const filledSource = fillKnownDefaultsKeepUnknown(
-    String(htmlSource),
-    knownDefaults
-  );
+  const filledSource = fillKnownDefaultsKeepUnknown(String(htmlSource), knownDefaults);
 
   const compiledHtml = await compileToHtml(filledSource);
   const textBody = fillKnownDefaultsKeepUnknown(textTpl, knownDefaults);
@@ -309,6 +305,12 @@ export async function applyTemplateToCampaign(formData: FormData): Promise<void>
    RECIPIENTS (QUEUE)
    ========================= */
 
+/**
+ * ✅ Rebuilds recipients from the campaign's saved audience fields.
+ * - Uses ONE source of truth: buildRecipientsFromAudience()
+ * - Uses mode="replace" so you don't keep stale rows
+ * - Unique(campaign_id, email) still protects duplicates
+ */
 export async function buildRecipientsForCampaign(campaignId: string, limit = 5000) {
   const id = String(campaignId ?? "").trim();
   if (!id) throw new Error("campaignId is required.");
@@ -328,9 +330,12 @@ export async function buildRecipientsForCampaign(campaignId: string, limit = 500
     return {
       ok: true,
       message: "Campaign already sent; recipients not rebuilt.",
-      total: 0,
+      inserted: 0,
+      totalUnique: 0,
       queued: 0,
       unsubscribed: 0,
+      insertedQueued: 0,
+      insertedUnsubscribed: 0,
     };
   }
   if (status === "sending") {
@@ -343,11 +348,8 @@ export async function buildRecipientsForCampaign(campaignId: string, limit = 500
     listId: ((c as any).listId ?? null) as any,
     apptSegment: ((c as any).apptSegment ?? null) as any,
     manualRecipientsRaw: ((c as any).manualRecipientsRaw ?? null) as any,
-
-    waitlistLimit: limit,
-    listLimit: limit,
-    apptLimit: limit,
-    manualLimit: limit,
+    limit,
+    mode: "replace",
   });
 
   revalidatePath("/admin/email");

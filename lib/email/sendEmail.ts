@@ -1,7 +1,7 @@
 // lib/email/sendEmail.ts
 import "server-only";
 
-import { sendResendEmail, type ResendAttachment } from "./resend";
+import { sendResendEmail, type ResendAttachment } from "./resend.server";
 
 export type EmailAttachment = {
   filename: string;
@@ -39,9 +39,9 @@ export async function sendEmail(args: SendEmailArgs): Promise<void> {
   if (hasAttachments || isScheduled) {
     const attachments: ResendAttachment[] = (args.attachments ?? []).map((a) => ({
       filename: a.filename,
-      content: a.content,
-      path: a.path,
-      contentId: a.contentId,
+      ...(a.content ? { content: a.content } : {}),
+      ...(a.path ? { path: a.path } : {}),
+      ...(a.contentId ? { contentId: a.contentId } : {}),
     }));
 
     await sendResendEmail({

@@ -8,7 +8,7 @@ import { and, eq, sql, desc } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
-import { sendResendEmail } from "@/lib/email/resend";
+import { sendResendEmail } from "@/lib/email/resend.server";
 import { renderTemplate, hasUnrenderedTokens } from "@/lib/helpers/render-template";
 import { htmlToText } from "html-to-text";
 import { buildEmailFooterHTML, buildEmailFooterText } from "@/lib/email/footer";

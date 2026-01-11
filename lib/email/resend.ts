@@ -1,4 +1,5 @@
 // lib/email/resend.ts
+import "server-only";
 import { Resend } from "resend";
 
 const defaultFrom =
@@ -60,15 +61,12 @@ export async function sendResendEmail(input: ResendEmailInput) {
     throw new Error("sendResendEmail requires htmlBody or textBody.");
   }
 
-  // Build payload (keep keys Resend expects: html/text/replyTo/scheduledAt)
   const payload = {
     from: input.from ?? defaultFrom,
     to: input.to,
     subject: input.subject,
-
     ...(html ? { html } : {}),
     ...(text ? { text } : {}),
-
     ...(input.replyTo ? { replyTo: input.replyTo } : {}),
     ...(input.headers ? { headers: input.headers } : {}),
     ...(input.scheduledAt ? { scheduledAt: input.scheduledAt } : {}),
@@ -76,14 +74,12 @@ export async function sendResendEmail(input: ResendEmailInput) {
       ? { attachments: mapAttachments(input.attachments) }
       : {}),
   };
-  
- const { data, error } = await resend.emails.send(payload as any);
-  if (error) {
-    // Keep it readable
-    throw new Error(`Resend send failed: ${error.message}`);
+
+  const result = await resend.emails.send(payload as any);
+
+  if ((result as any)?.error) {
+    throw new Error(`Resend send failed: ${(result as any).error.message}`);
   }
 
-
-  // ✅ Cast once to avoid Resend SDK union-type headaches in TS
-  return await resend.emails.send(payload as any);
+  return result;
 }

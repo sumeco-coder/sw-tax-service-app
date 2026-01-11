@@ -9,7 +9,7 @@ import {
   emailSubscribers,
   emailUnsubscribes,
 } from "@/drizzle/schema";
-import { and, eq, inArray, or, sql } from "drizzle-orm";
+import { eq, inArray, or, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
@@ -18,6 +18,10 @@ import {
   scheduleCampaignExact,
   cancelScheduledCampaign,
 } from "@/lib/server/email-scheduler";
+
+/* =========================
+   Helpers
+   ========================= */
 
 function makeToken() {
   return crypto.randomBytes(24).toString("base64url");
@@ -30,6 +34,31 @@ function normalizeEmail(e: unknown) {
 function readString(fd: FormData, key: string) {
   const v = fd.get(key);
   return typeof v === "string" ? v.trim() : "";
+}
+
+async function getCampaignState(campaignId: string) {
+  const [c] = await db
+    .select({
+      id: emailCampaigns.id,
+      status: emailCampaigns.status,
+      segment: emailCampaigns.segment,
+      listId: emailCampaigns.listId,
+      apptSegment: emailCampaigns.apptSegment,
+      manualRecipientsRaw: emailCampaigns.manualRecipientsRaw,
+      schedulerName: emailCampaigns.schedulerName,
+    })
+    .from(emailCampaigns)
+    .where(eq(emailCampaigns.id, campaignId))
+    .limit(1);
+
+  if (!c) throw new Error("Campaign not found.");
+  return c as any;
+}
+
+function assertEditable(status: string) {
+  const s = String(status || "draft");
+  if (s === "sending") throw new Error("Campaign is currently sending.");
+  if (s === "sent") throw new Error("Campaign already sent.");
 }
 
 async function getQueuedCount(campaignId: string) {
@@ -53,16 +82,20 @@ function getScheduleMode() {
   return mode === "aws" ? "aws" : "db";
 }
 
-/** ✅ used by RecipientPicker (client component) */
+/* =========================
+   RecipientPicker (manual add)
+   ========================= */
+
 export async function addSelectedToCampaign(opts: {
   campaignId: string;
   subscriberIds: string[];
 }) {
-  const { campaignId, subscriberIds } = opts;
-
-  const id = String(campaignId ?? "").trim();
+  const id = String(opts.campaignId ?? "").trim();
   if (!id) throw new Error("Missing campaignId");
-  if (!subscriberIds?.length) return;
+  if (!opts.subscriberIds?.length) return;
+
+  const campaign = await getCampaignState(id);
+  assertEditable(String(campaign.status));
 
   const subs = await db
     .select({
@@ -71,7 +104,7 @@ export async function addSelectedToCampaign(opts: {
       status: (emailSubscribers as any).status,
     })
     .from(emailSubscribers)
-    .where(inArray(emailSubscribers.id, subscriberIds));
+    .where(inArray(emailSubscribers.id, opts.subscriberIds));
 
   const emails = Array.from(
     new Set(
@@ -84,7 +117,7 @@ export async function addSelectedToCampaign(opts: {
 
   if (!emails.length) return;
 
-  // ✅ unsub lookup (best-effort case-insensitive)
+  // best-effort case-insensitive unsub lookup
   const unsub = await db
     .select({ email: emailUnsubscribes.email })
     .from(emailUnsubscribes)
@@ -95,9 +128,7 @@ export async function addSelectedToCampaign(opts: {
       )
     );
 
-  const unsubSet = new Set(
-    unsub.map((u) => normalizeEmail(u.email)).filter(Boolean)
-  );
+  const unsubSet = new Set(unsub.map((u) => normalizeEmail(u.email)).filter(Boolean));
 
   const now = new Date();
   const rows = emails.map((email) => ({
@@ -113,23 +144,23 @@ export async function addSelectedToCampaign(opts: {
     .insert(emailRecipients)
     .values(rows as any)
     .onConflictDoNothing({
-      // ✅ requires unique(campaign_id, email)
-      target: [
-        (emailRecipients as any).campaignId,
-        (emailRecipients as any).email,
-      ],
+      // requires unique(campaign_id, email)
+      target: [(emailRecipients as any).campaignId, (emailRecipients as any).email],
     } as any);
 
   revalidatePath(`/admin/email/campaigns/${id}`);
 }
 
-/** ✅ audience save + optional build (one form, two buttons) */
-export async function saveAudienceOrBuild(
-  campaignId: string,
-  formData: FormData
-) {
+/* =========================
+   Audience save + optional build
+   ========================= */
+
+export async function saveAudienceOrBuild(campaignId: string, formData: FormData) {
   const id = String(campaignId ?? "").trim();
   if (!id) throw new Error("Missing campaignId");
+
+  const campaign = await getCampaignState(id);
+  assertEditable(String(campaign.status));
 
   const intent = readString(formData, "intent") || "save";
 
@@ -141,9 +172,9 @@ export async function saveAudienceOrBuild(
   const apptSegmentRaw = readString(formData, "apptSegment");
   const manualRaw = readString(formData, "manualRecipientsRaw");
 
-  const listId = listIdRaw ? listIdRaw : null;
-  const apptSegment = apptSegmentRaw ? apptSegmentRaw : null;
-  const manualRecipientsRaw = manualRaw ? manualRaw : null;
+  const listId = listIdRaw || null;
+  const apptSegment = apptSegmentRaw || null;
+  const manualRecipientsRaw = manualRaw || null;
 
   await db
     .update(emailCampaigns)
@@ -163,6 +194,8 @@ export async function saveAudienceOrBuild(
       listId,
       apptSegment,
       manualRecipientsRaw,
+      // optional knobs if your builder supports them:
+      // limit: 5000,
     });
   }
 
@@ -170,28 +203,26 @@ export async function saveAudienceOrBuild(
   redirect(`/admin/email/campaigns/${id}`);
 }
 
-/**
- * Schedule send for a campaign.
- * - Auto-builds recipients if none queued yet (based on saved audience).
- * - DB-only schedule by default (EMAIL_SCHEDULE_MODE=db)
- * - Optional AWS Scheduler mode (EMAIL_SCHEDULE_MODE=aws)
- */
+/* =========================
+   Schedule send (auto-build if empty)
+   ========================= */
+
 export async function scheduleSend(campaignId: string, formData: FormData) {
   const id = String(campaignId ?? "").trim();
   if (!id) throw new Error("Missing campaignId");
 
+  const campaign = await getCampaignState(id);
+  assertEditable(String(campaign.status));
+
   // Accept either field name to prevent form mismatch bugs
-  const sendAtIso =
-    readString(formData, "sendAt") || readString(formData, "scheduledAtIso");
-  const sendAtLocal = readString(formData, "sendAtLocal"); // optional debug
+  const sendAtIso = readString(formData, "sendAt") || readString(formData, "scheduledAtIso");
+  const sendAtLocal = readString(formData, "sendAtLocal"); // debug only
 
   if (!sendAtIso) throw new Error("Pick a date/time.");
 
   const sendAt = new Date(sendAtIso);
   if (Number.isNaN(sendAt.getTime())) {
-    throw new Error(
-      `Invalid date/time. (local="${sendAtLocal}", iso="${sendAtIso}")`
-    );
+    throw new Error(`Invalid date/time. (local="${sendAtLocal}", iso="${sendAtIso}")`);
   }
 
   if (sendAt.getTime() < Date.now() + 60_000) {
@@ -202,24 +233,13 @@ export async function scheduleSend(campaignId: string, formData: FormData) {
   let queued = await getQueuedCount(id);
 
   if (queued <= 0) {
-    const [c] = await db
-      .select({
-        segment: emailCampaigns.segment,
-        listId: emailCampaigns.listId,
-        apptSegment: emailCampaigns.apptSegment,
-        manualRecipientsRaw: emailCampaigns.manualRecipientsRaw,
-      })
-      .from(emailCampaigns)
-      .where(eq(emailCampaigns.id, id))
-      .limit(1);
-
     await buildRecipientsFromAudience({
       campaignId: id,
-      segment: String(c?.segment ?? "waitlist_pending"),
-      listId: c?.listId ? String(c.listId) : null,
-      apptSegment: c?.apptSegment ? String(c.apptSegment) : null,
-      manualRecipientsRaw: c?.manualRecipientsRaw
-        ? String(c.manualRecipientsRaw)
+      segment: String((campaign as any).segment ?? "waitlist_pending"),
+      listId: (campaign as any).listId ? String((campaign as any).listId) : null,
+      apptSegment: (campaign as any).apptSegment ? String((campaign as any).apptSegment) : null,
+      manualRecipientsRaw: (campaign as any).manualRecipientsRaw
+        ? String((campaign as any).manualRecipientsRaw)
         : null,
     });
 
@@ -235,10 +255,7 @@ export async function scheduleSend(campaignId: string, formData: FormData) {
   const mode = getScheduleMode();
 
   if (mode === "aws") {
-    const scheduleName = await scheduleCampaignExact({
-      campaignId: id,
-      sendAt,
-    });
+    const scheduleName = await scheduleCampaignExact({ campaignId: id, sendAt });
 
     await db
       .update(emailCampaigns)
@@ -250,7 +267,6 @@ export async function scheduleSend(campaignId: string, formData: FormData) {
       } as any)
       .where(eq(emailCampaigns.id, id));
   } else {
-    // ✅ DB-only schedule (runner will pick up within its interval)
     await db
       .update(emailCampaigns)
       .set({
@@ -266,19 +282,19 @@ export async function scheduleSend(campaignId: string, formData: FormData) {
   redirect(`/admin/email/campaigns/${id}`);
 }
 
+/* =========================
+   Cancel schedule
+   ========================= */
+
 export async function cancelSchedule(campaignId: string) {
   const id = String(campaignId ?? "").trim();
   if (!id) throw new Error("Missing campaignId");
 
-  // If AWS mode (or if you previously stored a schedulerName), cancel remote schedule too
-  const [c] = await db
-    .select({ schedulerName: emailCampaigns.schedulerName })
-    .from(emailCampaigns)
-    .where(eq(emailCampaigns.id, id))
-    .limit(1);
+  const campaign = await getCampaignState(id);
+  assertEditable(String(campaign.status));
 
   const mode = getScheduleMode();
-  const hadAwsSchedule = Boolean((c as any)?.schedulerName);
+  const hadAwsSchedule = Boolean((campaign as any)?.schedulerName);
 
   if (mode === "aws" || hadAwsSchedule) {
     try {
