@@ -10,7 +10,17 @@ function CheckoutInner() {
   const started = useRef(false);
 
   const product = sp.get("product") ?? "";
-  const email = sp.get("email") ?? "";
+
+  // decode email since it may come in URL-encoded
+  const emailRaw = sp.get("email") ?? "";
+  const email = (() => {
+    try {
+      return decodeURIComponent(emailRaw).trim();
+    } catch {
+      return emailRaw.trim();
+    }
+  })();
+
   const cognitoSub = sp.get("cognitoSub") ?? "";
 
   useEffect(() => {
@@ -45,9 +55,11 @@ function CheckoutInner() {
 
       setMsg("Redirecting to Stripe…");
       window.location.assign(data.url);
-    })().catch((e: any) => {
+    })().catch((e: unknown) => {
       console.error("Checkout error:", e);
-      setMsg(e?.message || "Something went wrong starting checkout.");
+      const message =
+        e instanceof Error ? e.message : "Something went wrong starting checkout.";
+      setMsg(message);
     });
   }, [product, email, cognitoSub]);
 

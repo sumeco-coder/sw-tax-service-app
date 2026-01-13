@@ -1,3 +1,4 @@
+// app/(site)/appointment/actions.ts
 "use server";
 
 import { z } from "zod";
@@ -14,10 +15,6 @@ export type AppointmentState = { ok: boolean; message: string };
 function clean(v: unknown, max = 300) {
   const s = String(v ?? "").trim();
   return s ? s.slice(0, max) : "";
-}
-
-function normalizeEmail(v: unknown) {
-  return clean(v, 255).toLowerCase();
 }
 
 function digitsOnly(v: unknown, maxLen = 20) {
@@ -210,11 +207,21 @@ export async function requestAppointment(
   // SMS (only if valid E.164)
   const phoneE164 = normalizePhoneE164(b.phone ?? null);
   if (phoneE164) {
+    const prettyPT = new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/Los_Angeles",
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    }).format(scheduledAt);
+
     await sendSms(
       phoneE164,
-      `SW Tax Service: We received your appointment request for ${scheduledAt.toLocaleString()}. We’ll confirm shortly.`
+      `SW Tax Service: We received your appointment request for ${prettyPT} PT. We’ll confirm shortly.`
     );
   }
+
 
   return {
     ok: true,

@@ -1,15 +1,15 @@
-// app/api/public/appointments/slots/route.ts
 import { NextResponse } from "next/server";
-import { and, eq, gte, lt, inArray } from "drizzle-orm";
+import { and, asc, eq, gte, lt, inArray } from "drizzle-orm";
+
 import { db } from "@/drizzle/db";
-import { appointments, appointmentRequests } from "@/drizzle/schema";
+import { appointmentSlots, appointments, appointmentRequests } from "@/drizzle/schema";
 
 export const runtime = "nodejs";
 
-function parseIso(v: string | null) {
-  if (!v) return null;
-  const d = new Date(v);
-  return Number.isNaN(d.getTime()) ? null : d;
+function normalizeToMinute(d: Date) {
+  const x = new Date(d);
+  x.setSeconds(0, 0);
+  return x;
 }
 
 function clampInt(v: string | null, def: number, min: number, max: number) {
@@ -18,94 +18,52 @@ function clampInt(v: string | null, def: number, min: number, max: number) {
   return Math.max(min, Math.min(max, Math.trunc(n)));
 }
 
-// normalize a date to slot boundary (minute precision)
-function normalizeToMinute(d: Date) {
-  const x = new Date(d);
-  x.setSeconds(0, 0);
-  return x;
-}
-
 export async function GET(req: Request) {
   try {
     const url = new URL(req.url);
+    const days = clampInt(url.searchParams.get("days"), 14, 1, 31);
 
-    const slotMinutes = clampInt(url.searchParams.get("slotMinutes"), 30, 10, 120);
+    const now = new Date();
+    const from = normalizeToMinute(new Date(now.getTime() + 5 * 60 * 1000));
+    const to = normalizeToMinute(new Date(from.getTime() + days * 24 * 60 * 60 * 1000));
 
-    // You can call like:
-    // /api/public/appointments/slots?from=2026-01-05T00:00:00.000Z&to=2026-01-06T00:00:00.000Z
-    const from = parseIso(url.searchParams.get("from"));
-    const to = parseIso(url.searchParams.get("to"));
+    // 1) pull OPEN slot inventory
+    const open = await db
+      .select({ startsAt: appointmentSlots.startsAt })
+      .from(appointmentSlots)
+      .where(and(eq(appointmentSlots.status, "open"), gte(appointmentSlots.startsAt, from), lt(appointmentSlots.startsAt, to)))
+      .orderBy(asc(appointmentSlots.startsAt))
+      .limit(2000);
 
-    if (!from || !to || to <= from) {
-      return NextResponse.json(
-        { error: "Provide valid ?from=ISO&to=ISO with to > from" },
-        { status: 400 }
-      );
-    }
+    if (!open.length) return NextResponse.json({ slots: [] as string[] }, { status: 200 });
 
-    // cap range for safety (31 days)
-    const maxRangeMs = 31 * 24 * 60 * 60 * 1000;
-    if (to.getTime() - from.getTime() > maxRangeMs) {
-      return NextResponse.json(
-        { error: "Range too large (max 31 days)." },
-        { status: 400 }
-      );
-    }
-
-    const fromN = normalizeToMinute(from);
-    const toN = normalizeToMinute(to);
-
-    // pull blocks
+    // 2) block already-held/scheduled times
     const appts = await db
       .select({ scheduledAt: appointments.scheduledAt })
       .from(appointments)
-      .where(
-        and(
-          gte(appointments.scheduledAt, fromN),
-          lt(appointments.scheduledAt, toN),
-          eq(appointments.status, "scheduled")
-        )
-      );
+      .where(and(gte(appointments.scheduledAt, from), lt(appointments.scheduledAt, to), eq(appointments.status, "scheduled")));
 
     const reqs = await db
-      .select({ scheduledAt: appointmentRequests.scheduledAt, status: appointmentRequests.status })
+      .select({ scheduledAt: appointmentRequests.scheduledAt })
       .from(appointmentRequests)
       .where(
         and(
-          gte(appointmentRequests.scheduledAt, fromN),
-          lt(appointmentRequests.scheduledAt, toN),
+          gte(appointmentRequests.scheduledAt, from),
+          lt(appointmentRequests.scheduledAt, to),
           inArray(appointmentRequests.status, ["requested", "confirmed"])
         )
       );
 
     const blocked = new Set<number>();
-
     for (const r of appts) blocked.add(normalizeToMinute(r.scheduledAt).getTime());
     for (const r of reqs) blocked.add(normalizeToMinute(r.scheduledAt).getTime());
 
-    // generate slots
-    const stepMs = slotMinutes * 60 * 1000;
-    const slots: { startsAt: string; available: boolean }[] = [];
+    const slots = open
+      .map((s) => normalizeToMinute(s.startsAt))
+      .filter((d) => !blocked.has(d.getTime()))
+      .map((d) => d.toISOString());
 
-    // start aligned to slot boundary
-    let t = fromN.getTime();
-    const remainder = t % stepMs;
-    if (remainder !== 0) t += stepMs - remainder;
-
-    for (; t < toN.getTime(); t += stepMs) {
-      const available = !blocked.has(t);
-      slots.push({ startsAt: new Date(t).toISOString(), available });
-    }
-
-    return NextResponse.json(
-      {
-        from: fromN.toISOString(),
-        to: toN.toISOString(),
-        slotMinutes,
-        slots,
-      },
-      { status: 200 }
-    );
+    return NextResponse.json({ slots }, { status: 200 });
   } catch (e: any) {
     console.error("GET /api/public/appointments/slots error:", e);
     return NextResponse.json({ error: e?.message ?? "Server error" }, { status: 500 });

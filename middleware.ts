@@ -23,7 +23,14 @@ const PUBLIC_UI_PATHS = new Set([
 /* ─────────────────────────────────────────────
    Public API routes (auth/webhooks/public)
 ───────────────────────────────────────────── */
-const PUBLIC_API_PREFIXES = ["/api/auth", "/api/stripe/webhook", "/api/public"];
+const PUBLIC_API_PREFIXES = [
+  "/api/auth",
+  "/api/stripe/webhook",
+  "/api/stripe/checkout",
+  "/api/stripe/create-checkout-session",
+  "/api/stripe/confirm",
+  "/api/public",
+];
 
 /* ─────────────────────────────────────────────
    Client protected UI routes
@@ -76,11 +83,16 @@ function isAppRole(v: unknown): v is AppRole {
 
 function resolveRole(customRoleRaw: unknown, groups: string[]): AppRole {
   // prefer custom role if it matches enum
-  const role = String(customRoleRaw ?? "").trim().toUpperCase().replace(/-/g, "_");
+  const role = String(customRoleRaw ?? "")
+    .trim()
+    .toUpperCase()
+    .replace(/-/g, "_");
   if (isAppRole(role)) return role;
 
   // groups → role
-  const g = groups.map((x) => String(x).trim().toUpperCase().replace(/-/g, "_"));
+  const g = groups.map((x) =>
+    String(x).trim().toUpperCase().replace(/-/g, "_")
+  );
   if (g.includes("SUPERADMIN")) return "SUPERADMIN";
   if (g.includes("ADMIN")) return "ADMIN";
   if (g.includes("SUPPORT_AGENT")) return "SUPPORT_AGENT";
@@ -134,6 +146,11 @@ export function middleware(req: NextRequest) {
   const url = req.nextUrl;
   const pathname = url.pathname;
 
+  // ✅ NEVER run middleware on Next.js internals/static assets
+  if (pathname.startsWith("/_next")) {
+    return NextResponse.next();
+  }
+
   // ✅ IMPORTANT: middleware must do NOTHING for onboarding
   if (pathname.startsWith("/onboarding")) {
     return NextResponse.next();
@@ -171,14 +188,17 @@ export function middleware(req: NextRequest) {
 
   // ✅ Admin routes require admin
   if (pathname.startsWith("/admin")) {
-    if (!payload) return NextResponse.redirect(new URL("/admin/sign-in", req.url));
-    if (!isAdmin) return NextResponse.redirect(new URL("/not-authorized", req.url));
+    if (!payload)
+      return NextResponse.redirect(new URL("/admin/sign-in", req.url));
+    if (!isAdmin)
+      return NextResponse.redirect(new URL("/not-authorized", req.url));
     return NextResponse.next();
   }
 
   // ✅ Private APIs require auth; /api/admin requires admin
   if (isApi && !isPublicApi) {
-    if (!payload) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (!payload)
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     if (pathname.startsWith("/api/admin") && !isAdmin) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
@@ -225,6 +245,6 @@ export const config = {
     "/admin/:path*",
     "/api/:path*",
     // ✅ Catch-all but EXCLUDE onboarding so middleware does not run there
-    "/((?!onboarding|_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml).*)",
+    "/((?!onboarding|_next|favicon.ico|robots.txt|sitemap.xml).*)",
   ],
 };
