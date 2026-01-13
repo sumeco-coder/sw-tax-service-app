@@ -15,6 +15,9 @@ const PUBLIC_UI_PATHS = new Set([
   "/not-authorized",
   "/sign-in",
   "/sign-up",
+  "/invite",
+  "/invite/consume",
+  "/taxpayer/onboarding-sign-up",
 ]);
 
 /* ─────────────────────────────────────────────

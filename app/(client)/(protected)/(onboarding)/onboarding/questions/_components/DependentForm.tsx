@@ -1,7 +1,18 @@
 // app/(client)/(protected)/onboarding/questions/_components/DependentForm.tsx
 "use client";
 
-import type { ReactNode } from "react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 export type DependentInput = {
   clientId: string; // stable key for React
@@ -15,7 +26,6 @@ export type DependentInput = {
 
 function makeClientId() {
   // crypto.randomUUID exists in modern browsers; fallback just in case
-  // (this is a client component so it's safe)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const c: any = globalThis.crypto;
   return typeof c?.randomUUID === "function"
@@ -50,7 +60,6 @@ function formatSSN(input: string) {
 }
 
 const RELATIONSHIP_OPTIONS = [
-  { value: "", label: "Select…" },
   { value: "son", label: "Son" },
   { value: "daughter", label: "Daughter" },
   { value: "stepchild", label: "Stepchild" },
@@ -60,7 +69,7 @@ const RELATIONSHIP_OPTIONS = [
   { value: "parent", label: "Parent" },
   { value: "otherRelative", label: "Other relative" },
   { value: "other", label: "Other" },
-];
+] as const;
 
 export function DependentForm(props: {
   enabled: boolean;
@@ -72,7 +81,7 @@ export function DependentForm(props: {
   onChange: (clientId: string, patch: Partial<DependentInput>) => void;
 }) {
   return (
-    <div className="pt-1">
+    <div className="pt-1 space-y-3">
       <div className="flex items-start justify-between gap-3">
         <div>
           <h3 className="text-sm font-semibold text-foreground">
@@ -85,31 +94,30 @@ export function DependentForm(props: {
           </p>
         </div>
 
-        <button
+        <Button
           type="button"
           onClick={props.onAdd}
           disabled={!props.enabled}
-          className={[
-            "shrink-0 inline-flex items-center rounded-xl px-3 py-2 text-xs font-semibold",
-            "border border-border bg-background text-foreground hover:bg-muted",
-            !props.enabled ? "opacity-60 cursor-not-allowed" : "",
-          ].join(" ")}
+          variant="outline"
+          size="sm"
+          className="rounded-xl"
         >
           + Add dependent
-        </button>
+        </Button>
       </div>
 
-      {/* keep mounted; no jump */}
-      <div className="mt-3">
-        {!props.enabled ? (
-          <div className="rounded-xl border border-border bg-background/60 p-4">
+      {!props.enabled ? (
+        <Card className="rounded-xl">
+          <CardContent className="p-4">
             <p className="text-sm text-muted-foreground">
               Select <span className="font-semibold text-foreground">Yes</span>{" "}
               above to add dependents.
             </p>
-          </div>
-        ) : props.dependents.length === 0 ? (
-          <div className="rounded-xl border border-border bg-background/60 p-4">
+          </CardContent>
+        </Card>
+      ) : props.dependents.length === 0 ? (
+        <Card className="rounded-xl">
+          <CardContent className="p-4">
             <p className="text-sm text-muted-foreground">
               Click{" "}
               <span className="font-semibold text-foreground">
@@ -117,36 +125,36 @@ export function DependentForm(props: {
               </span>{" "}
               to enter dependent details.
             </p>
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {props.dependents.map((dep, idx) => (
-              <DependentCard
-                key={dep.clientId}
-                index={idx}
-                value={dep}
-                canRemove={props.dependents.length > 1}
-                onRemove={() => props.onRemove(dep.clientId)}
-                onChange={(patch) => props.onChange(dep.clientId, patch)}
-              />
-            ))}
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="space-y-3">
+          {props.dependents.map((dep, idx) => (
+            <DependentCard
+              key={dep.clientId}
+              index={idx}
+              value={dep}
+              canRemove={props.dependents.length > 1}
+              onRemove={() => props.onRemove(dep.clientId)}
+              onChange={(patch) => props.onChange(dep.clientId, patch)}
+            />
+          ))}
 
-            {props.dependentsCount && Number(props.dependentsCount) > 0 ? (
-              <p className="text-xs text-muted-foreground">
-                You entered{" "}
-                <span className="font-semibold text-foreground">
-                  {props.dependentsCount}
-                </span>{" "}
-                dependents. You currently added{" "}
-                <span className="font-semibold text-foreground">
-                  {props.dependents.length}
-                </span>
-                .
-              </p>
-            ) : null}
-          </div>
-        )}
-      </div>
+          {props.dependentsCount && Number(props.dependentsCount) > 0 ? (
+            <p className="text-xs text-muted-foreground">
+              You entered{" "}
+              <span className="font-semibold text-foreground">
+                {props.dependentsCount}
+              </span>{" "}
+              dependents. You currently added{" "}
+              <span className="font-semibold text-foreground">
+                {props.dependents.length}
+              </span>
+              .
+            </p>
+          ) : null}
+        </div>
+      )}
     </div>
   );
 }
@@ -162,120 +170,114 @@ function DependentCard(props: {
   const v = props.value;
 
   return (
-    <div className="rounded-2xl border border-border bg-background/60 p-4">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-sm font-semibold text-foreground">
-            Dependent #{i}
-          </p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            SSN is required for dependents you plan to claim.
-          </p>
-        </div>
+    <Card className="rounded-2xl">
+      <CardHeader className="space-y-1">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <CardTitle className="text-sm">Dependent #{i}</CardTitle>
+            <p className="text-xs text-muted-foreground">
+              SSN is required for dependents you plan to claim.
+            </p>
+          </div>
 
-        <button
-          type="button"
-          onClick={props.onRemove}
-          disabled={!props.canRemove}
-          className={[
-            "inline-flex items-center rounded-xl px-3 py-2 text-xs font-semibold",
-            "border border-border bg-background text-foreground hover:bg-muted",
-            !props.canRemove ? "opacity-60 cursor-not-allowed" : "",
-          ].join(" ")}
-        >
-          Remove
-        </button>
-      </div>
-
-      <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <div>
-          <label className="mb-1 block text-xs font-medium text-foreground">
-            First name *
-          </label>
-          <input
-            value={v.firstName}
-            onChange={(e) => props.onChange({ firstName: e.target.value })}
-            className="w-full rounded-xl border border-input bg-background px-3 py-2 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:ring-2 focus:ring-ring"
-            placeholder="First"
-            required
-          />
-        </div>
-
-        <div>
-          <label className="mb-1 block text-xs font-medium text-foreground">
-            Middle name
-          </label>
-          <input
-            value={v.middleName}
-            onChange={(e) => props.onChange({ middleName: e.target.value })}
-            className="w-full rounded-xl border border-input bg-background px-3 py-2 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:ring-2 focus:ring-ring"
-            placeholder="Middle (optional)"
-          />
-        </div>
-
-        <div>
-          <label className="mb-1 block text-xs font-medium text-foreground">
-            Last name *
-          </label>
-          <input
-            value={v.lastName}
-            onChange={(e) => props.onChange({ lastName: e.target.value })}
-            className="w-full rounded-xl border border-input bg-background px-3 py-2 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:ring-2 focus:ring-ring"
-            placeholder="Last"
-            required
-          />
-        </div>
-      </div>
-
-      <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <div>
-          <label className="mb-1 block text-xs font-medium text-foreground">
-            Date of birth *
-          </label>
-          <input
-            type="date"
-            value={v.dob}
-            onChange={(e) => props.onChange({ dob: e.target.value })}
-            className="w-full rounded-xl border border-input bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring"
-            required
-          />
-        </div>
-
-        <div>
-          <label className="mb-1 block text-xs font-medium text-foreground">
-            Relationship *
-          </label>
-          <select
-            value={v.relationship}
-            onChange={(e) => props.onChange({ relationship: e.target.value })}
-            className={[
-              "w-full rounded-xl border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring",
-              v.relationship ? "text-foreground" : "text-muted-foreground",
-            ].join(" ")}
-            required
+          <Button
+            type="button"
+            onClick={props.onRemove}
+            disabled={!props.canRemove}
+            variant="outline"
+            size="sm"
+            className="rounded-xl"
           >
-            {RELATIONSHIP_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value} disabled={o.value === ""}>
-                {o.label}
-              </option>
-            ))}
-          </select>
+            Remove
+          </Button>
+        </div>
+      </CardHeader>
+
+      <CardContent className="space-y-4">
+        {/* Names */}
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <div className="space-y-1">
+            <Label className="text-xs">First name *</Label>
+            <Input
+              value={v.firstName}
+              onChange={(e) => props.onChange({ firstName: e.target.value })}
+              placeholder="First"
+              required
+              className="rounded-xl"
+              autoComplete="off"
+            />
+          </div>
+
+          <div className="space-y-1">
+            <Label className="text-xs">Middle name</Label>
+            <Input
+              value={v.middleName}
+              onChange={(e) => props.onChange({ middleName: e.target.value })}
+              placeholder="Middle (optional)"
+              className="rounded-xl"
+              autoComplete="off"
+            />
+          </div>
+
+          <div className="space-y-1">
+            <Label className="text-xs">Last name *</Label>
+            <Input
+              value={v.lastName}
+              onChange={(e) => props.onChange({ lastName: e.target.value })}
+              placeholder="Last"
+              required
+              className="rounded-xl"
+              autoComplete="off"
+            />
+          </div>
         </div>
 
-        <div>
-          <label className="mb-1 block text-xs font-medium text-foreground">
-            Dependent SSN *
-          </label>
-          <input
-            value={v.ssn}
-            onChange={(e) => props.onChange({ ssn: formatSSN(e.target.value) })}
-            inputMode="numeric"
-            placeholder="123-45-6789"
-            className="w-full rounded-xl border border-input bg-background px-3 py-2 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:ring-2 focus:ring-ring"
-            required
-          />
+        {/* DOB / Relationship / SSN */}
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <div className="space-y-1">
+            <Label className="text-xs">Date of birth *</Label>
+            <Input
+              type="date"
+              value={v.dob}
+              onChange={(e) => props.onChange({ dob: e.target.value })}
+              required
+              className="rounded-xl"
+            />
+          </div>
+
+          <div className="space-y-1">
+            <Label className="text-xs">Relationship *</Label>
+            <Select
+              value={v.relationship || undefined}
+              onValueChange={(val) => props.onChange({ relationship: val })}
+            >
+              <SelectTrigger className="rounded-xl">
+                <SelectValue placeholder="Select…" />
+              </SelectTrigger>
+              <SelectContent>
+                {RELATIONSHIP_OPTIONS.map((o) => (
+                  <SelectItem key={o.value} value={o.value}>
+                    {o.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-1">
+            <Label className="text-xs">Dependent SSN *</Label>
+            <Input
+              value={v.ssn}
+              onChange={(e) => props.onChange({ ssn: formatSSN(e.target.value) })}
+              inputMode="numeric"
+              placeholder="123-45-6789"
+              required
+              className="rounded-xl"
+              autoComplete="off"
+            />
+          </div>
         </div>
-      </div>
-    </div>
+      </CardContent>
+    </Card>
   );
 }

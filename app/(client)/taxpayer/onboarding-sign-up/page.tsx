@@ -119,6 +119,14 @@ function Shell({
   );
 }
 
+function safeInternalPath(input: unknown, fallback: string) {
+  const raw = String(input ?? "").trim();
+  if (!raw) return fallback;
+  if (!raw.startsWith("/")) return fallback;
+  if (raw.startsWith("//")) return fallback;
+  return raw;
+}
+
 export default async function TaxpayerOnboardingSignUpPage({ searchParams }: PageProps) {
   const sp = (await Promise.resolve(searchParams)) as {
     [key: string]: string | string[] | undefined;
@@ -126,6 +134,8 @@ export default async function TaxpayerOnboardingSignUpPage({ searchParams }: Pag
 
   // ✅ accept either token or invite
   const token = (oneParam(sp.token) || oneParam(sp.invite) || "").trim();
+
+  const next = safeInternalPath(oneParam(sp.next), "/dashboard");
 
   // ✅ FIX: await the async origin helper
   const origin = await getOriginFromRequest();
@@ -213,7 +223,7 @@ export default async function TaxpayerOnboardingSignUpPage({ searchParams }: Pag
       subtitle={subtitle}
       badge={plan ? `Plan: ${plan}` : null}
     >
-      <OnboardingSignUpForm email={invite.email} token={invite.token} plan={plan} />
+      <OnboardingSignUpForm email={invite.email} token={invite.token} plan={plan} nextPath={next} />
 
       <div className="mt-4 rounded-2xl border bg-slate-50 p-4">
         <p className="text-xs text-slate-600">

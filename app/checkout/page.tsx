@@ -1,29 +1,60 @@
 // app/checkout/page.tsx
 "use client";
 
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 
 function CheckoutInner() {
   const sp = useSearchParams();
   const [msg, setMsg] = useState("Redirecting to checkout…");
+  const started = useRef(false);
+
+  const product = sp.get("product") ?? "";
+  const email = sp.get("email") ?? "";
+  const cognitoSub = sp.get("cognitoSub") ?? "";
 
   useEffect(() => {
-    // whatever you do today with search params
-    const plan = sp.get("plan");
-    const resume = sp.get("resume");
-    // example: call your API to create a Stripe session
-    // setMsg(...) etc
+    // Prevent double-run in dev/StrictMode
+    if (started.current) return;
+    started.current = true;
 
-    // keep your existing logic here
-  }, [sp]);
+    if (!product || !email) {
+      setMsg("Missing product or email in the checkout link.");
+      return;
+    }
+
+    (async () => {
+      setMsg("Creating secure checkout session…");
+
+      const res = await fetch("/api/stripe/checkout", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        cache: "no-store",
+        body: JSON.stringify({ product, email, cognitoSub }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(data?.error || `Checkout failed (${res.status})`);
+      }
+
+      if (!data?.url) {
+        throw new Error("No Stripe checkout URL returned.");
+      }
+
+      setMsg("Redirecting to Stripe…");
+      window.location.assign(data.url);
+    })().catch((e: any) => {
+      console.error("Checkout error:", e);
+      setMsg(e?.message || "Something went wrong starting checkout.");
+    });
+  }, [product, email, cognitoSub]);
 
   return (
     <main className="mx-auto max-w-lg p-8">
       <h1 className="text-xl font-semibold">{msg}</h1>
-      <p className="mt-2 text-sm text-muted-foreground">
-        Please wait…
-      </p>
+      <p className="mt-2 text-sm text-muted-foreground">Please wait…</p>
     </main>
   );
 }

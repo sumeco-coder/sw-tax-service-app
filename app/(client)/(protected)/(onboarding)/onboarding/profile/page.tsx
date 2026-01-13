@@ -1,11 +1,27 @@
-// app/(lient)/(protected)/(onboarding)/onboarding/profile/page.tsx
+// app/(client)/(protected)/(onboarding)/onboarding/profile/page.tsx
 "use client";
 
-import React, { useEffect, useRef,  useState } from "react";
-import { getCurrentUser, fetchAuthSession } from "aws-amplify/auth";
+import React, { useEffect, useMemo, useState } from "react";
+import { fetchAuthSession, getCurrentUser } from "aws-amplify/auth";
+import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { configureAmplify } from "@/lib/amplifyClient";
 import { saveProfile } from "./actions";
 import { Eye, EyeOff } from "lucide-react";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Separator } from "@/components/ui/separator";
+import { Badge } from "@/components/ui/badge";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+
 
 configureAmplify();
 
@@ -29,6 +45,35 @@ function formatSSN(value: string) {
   if (digits.length <= 3) return a;
   if (digits.length <= 5) return `${a}-${b}`;
   return `${a}-${b}-${c}`;
+}
+
+/** Only allow internal app paths to avoid open-redirect attacks */
+function safeInternalPath(input: string | null, fallback: string) {
+  const raw = (input ?? "").trim();
+  if (!raw) return fallback;
+  if (!raw.startsWith("/")) return fallback;
+  if (raw.startsWith("//")) return fallback;
+  return raw;
+}
+
+/** Keep server cookies in sync (so server actions / API routes can trust session) */
+async function ensureServerSession() {
+  const session = await fetchAuthSession();
+  const idToken = session.tokens?.idToken?.toString();
+  const accessToken = session.tokens?.accessToken?.toString();
+
+  if (!idToken || !accessToken) return null;
+
+  const res = await fetch("/api/auth/session", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    cache: "no-store",
+    body: JSON.stringify({ idToken, accessToken }),
+  });
+
+  if (!res.ok) return null;
+  return session;
 }
 
 type UserIdentity = {
@@ -94,17 +139,42 @@ const US_STATES = [
 ];
 
 export default function OnboardingProfilePage() {
+  const sp = useSearchParams();
+
   const [ssn, setSsn] = React.useState("");
   const [showSsn, setShowSsn] = React.useState(false);
+
   const [user, setUser] = useState<UserIdentity | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // preserve context if they got here from invite flow
+  const invite = useMemo(() => (sp.get("invite") ?? "").trim(), [sp]);
+  const nextParam = useMemo(() => sp.get("next"), [sp]);
+
+  const safeNext = useMemo(
+    () => safeInternalPath(nextParam, "/onboarding/profile"),
+    [nextParam]
+  );
+
+  const signInHref = useMemo(() => {
+    const qs = new URLSearchParams();
+    if (invite) qs.set("invite", invite);
+    if (safeNext) qs.set("next", safeNext);
+    const s = qs.toString();
+    return `/sign-in${s ? `?${s}` : ""}`;
+  }, [invite, safeNext]);
+
   useEffect(() => {
+    let cancelled = false;
+
     (async () => {
       try {
         const u = await getCurrentUser();
-        const session = await fetchAuthSession();
+
+        // sync server cookies (important for server actions / api routes)
+        const session =
+          (await ensureServerSession()) ?? (await fetchAuthSession());
 
         const idTokenPayload = session.tokens?.idToken?.payload ?? {};
 
@@ -120,6 +190,13 @@ export default function OnboardingProfilePage() {
         const email =
           tokenEmail || (u.signInDetails?.loginId as string | undefined) || "";
 
+        if (cancelled) return;
+
+        if (!u || !u.userId || !email) {
+          setError("You must be signed in to access onboarding.");
+          return;
+        }
+
         setUser({
           sub: u.userId,
           email,
@@ -129,11 +206,18 @@ export default function OnboardingProfilePage() {
         });
       } catch (err) {
         console.error(err);
-        setError("You must be signed in to access onboarding.");
+        if (!cancelled) {
+          setError("You must be signed in to access onboarding.");
+          setUser(null);
+        }
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     })();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   if (loading) {
@@ -146,21 +230,22 @@ export default function OnboardingProfilePage() {
 
   if (error || !user) {
     return (
-      <main className="min-h-screen flex items-center justify-center bg-background px-4">
-        <div className="max-w-md w-full rounded-2xl bg-card p-6 shadow-sm ring-1 ring-border">
-          <h1 className="text-lg font-semibold text-foreground">
-            Sign in required
-          </h1>
-          <p className="mt-2 text-sm text-muted-foreground">
-            {error ??
-              "We couldn’t find your session. Please sign in again to continue onboarding."}
-          </p>
-          <a
-            href="/sign-in"
-            className="mt-4 inline-flex w-full justify-center rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:opacity-90"
-          >
-            Go to sign-in
-          </a>
+      <main className="min-h-screen bg-gradient-to-b from-secondary to-background px-4 py-10">
+        <div className="mx-auto max-w-md">
+          <Card className="rounded-2xl">
+            <CardHeader>
+              <CardTitle>Sign in required</CardTitle>
+              <CardDescription>
+                {error ??
+                  "We couldn’t find your session. Please sign in again to continue onboarding."}
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Button asChild className="w-full rounded-xl">
+                <a href={signInHref}>Go to sign-in</a>
+              </Button>
+            </CardContent>
+          </Card>
         </div>
       </main>
     );
@@ -173,261 +258,271 @@ export default function OnboardingProfilePage() {
 
   return (
     <main className="min-h-screen bg-gradient-to-b from-secondary to-background px-4 py-10">
-      <div className="mx-auto max-w-2xl rounded-2xl bg-card p-6 shadow-sm ring-1 ring-border">
-        <header className="mb-6">
-          <p className="text-xs font-semibold uppercase tracking-wide text-primary">
-            Step 1 of 5
-          </p>
-          <h1 className="mt-1 text-2xl font-bold text-foreground">
-            Confirm your details
-          </h1>
-          <p className="mt-2 text-sm text-muted-foreground">
-            We’ll use this information on your tax return and to keep you
-            updated about your file.
-          </p>
-        </header>
-
-        <form action={saveProfile} className="space-y-6">
-          {/* Email (locked) */}
+      <div className="mx-auto max-w-3xl space-y-6">
+        <div className="flex items-start justify-between gap-3">
           <div>
-            <label className={labelBase}>Email</label>
-            <input
-              type="email"
-              value={user.email}
-              disabled
-              className="w-full rounded-xl border border-input bg-muted px-3 py-2 text-sm text-foreground/80"
-            />
-            <p className={helpBase}>Email is locked to the account you used.</p>
-          </div>
-
-          {/* Legal name */}
-          <div className="space-y-3">
-            <div>
-              <h2 className="text-sm font-semibold text-foreground">
-                Legal name
-              </h2>
-              <p className={helpBase}>
-                Enter your name exactly as it appears on your Social Security
-                card.
-              </p>
+            <div className="flex items-center gap-2">
+              <Badge variant="secondary">Step 1 of 6</Badge>
+              <Badge className="bg-primary text-primary-foreground">Profile</Badge>
             </div>
-
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
-              <div className="sm:col-span-1">
-                <label className="mb-1 block text-xs font-medium text-foreground">
-                  First name <span className="text-destructive">*</span>
-                </label>
-                <input
-                  name="firstName"
-                  required
-                  defaultValue={user.firstName ?? ""}
-                  className={inputBase}
-                />
-              </div>
-
-              <div className="sm:col-span-1">
-                <label className="mb-1 block text-xs font-medium text-foreground">
-                  Middle name
-                </label>
-                <input
-                  name="middleName"
-                  defaultValue=""
-                  className={inputBase}
-                  placeholder="Optional"
-                />
-              </div>
-
-              <div className="sm:col-span-1">
-                <label className="mb-1 block text-xs font-medium text-foreground">
-                  Last name <span className="text-destructive">*</span>
-                </label>
-                <input
-                  name="lastName"
-                  required
-                  defaultValue={user.lastName ?? ""}
-                  className={inputBase}
-                />
-              </div>
-
-              <div className="sm:col-span-1">
-                <label className="mb-1 block text-xs font-medium text-foreground">
-                  Suffix
-                </label>
-                <select name="suffix" defaultValue="" className={inputBase}>
-                  <option value="">None</option>
-                  <option value="Jr">Jr</option>
-                  <option value="Sr">Sr</option>
-                  <option value="II">II</option>
-                  <option value="III">III</option>
-                  <option value="IV">IV</option>
-                </select>
-              </div>
-            </div>
-          </div>
-
-          {/* Contact & address */}
-          <div className="space-y-3">
-            <div>
-              <h2 className="text-sm font-semibold text-foreground">
-                Contact & address
-              </h2>
-              <p className={helpBase}>
-                This should be your current mailing address for IRS/state
-                notices.
-              </p>
-            </div>
-
-            <div>
-              <label className={labelBase}>
-                Mobile phone <span className="text-destructive">*</span>
-              </label>
-              <input
-                name="phone"
-                type="tel"
-                required
-                defaultValue={user.phone ?? ""}
-                placeholder="(555) 555-5555"
-                className={inputBase}
-                inputMode="numeric"
-                autoComplete="tel"
-                onInput={(e) => {
-                  const el = e.currentTarget;
-                  const formatted = formatUSPhone(el.value);
-                  el.value = formatted;
-                }}
-              />
-
-              <p className={helpBase}>
-                Used for appointment reminders and important updates.
-              </p>
-            </div>
-
-            <div>
-              <label className={labelBase}>
-                Address line 1 <span className="text-destructive">*</span>
-              </label>
-              <input
-                name="address1"
-                type="text"
-                required
-                placeholder="Street address"
-                className={inputBase}
-              />
-            </div>
-
-            <div>
-              <label className={labelBase}>Address line 2</label>
-              <input
-                name="address2"
-                type="text"
-                placeholder="Apt, suite, unit, etc. (optional)"
-                className={inputBase}
-              />
-            </div>
-
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-              <div>
-                <label className={labelBase}>
-                  City <span className="text-destructive">*</span>
-                </label>
-                <input name="city" type="text" required className={inputBase} />
-              </div>
-
-              <div>
-                <label className={labelBase}>
-                  State <span className="text-destructive">*</span>
-                </label>
-                <select
-                  name="state"
-                  required
-                  defaultValue=""
-                  className={inputBase}
-                >
-                  <option value="" disabled>
-                    Select state
-                  </option>
-                  {US_STATES.map((s) => (
-                    <option key={s.value} value={s.value}>
-                      {s.value} – {s.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className={labelBase}>
-                  ZIP code <span className="text-destructive">*</span>
-                </label>
-                <input
-                  name="zip"
-                  type="text"
-                  inputMode="numeric"
-                  required
-                  placeholder="12345"
-                  className={inputBase}
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* DOB + SSN */}
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <div>
-              <label className="mb-1 block text-xs font-medium text-foreground">
-                Date of birth <span className="text-destructive">*</span>
-              </label>
-              <input type="date" name="dob" required className={inputBase} />
-            </div>
-
-            <div>
-              <label className="mb-1 block text-xs font-medium text-foreground">
-                Social Security Number
-              </label>
-              <div className="relative">
-                <input
-                  type={showSsn ? "text" : "password"}
-                  name="ssn"
-                  inputMode="numeric"
-                  maxLength={11}
-                  placeholder="XXX-XX-XXXX"
-                  className={`${inputBase} pr-11`}
-                  value={ssn}
-                  onChange={(e) => setSsn(formatSSN(e.target.value))}
-                  autoComplete="off"
-                />
-
-                <button
-                  type="button"
-                  onClick={() => setShowSsn((v) => !v)}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md p-2 text-gray-600 hover:bg-gray-100 hover:text-gray-900"
-                  aria-label={showSsn ? "Hide SSN" : "Show SSN"}
-                >
-                  {showSsn ? (
-                    <EyeOff className="h-5 w-5" />
-                  ) : (
-                    <Eye className="h-5 w-5" />
-                  )}
-                </button>
-              </div>
-
-              <p className="mt-1 text-[11px] text-muted-foreground">
-                Optional — you can provide this over the phone if you prefer.
-              </p>
-            </div>
-          </div>
-
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between pt-2">
-            <p className="text-[11px] text-muted-foreground">
-              You can update this information later if something changes.
+            <h1 className="mt-2 text-2xl font-bold tracking-tight text-foreground sm:text-3xl">
+              Confirm your details
+            </h1>
+            <p className="mt-1 text-sm text-muted-foreground">
+              We’ll use this information on your tax return and to keep you updated about your file.
             </p>
-            <button
-              type="submit"
-              className="inline-flex items-center justify-center rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground shadow-sm hover:opacity-90"
-            >
-              Save and continue to documents
-            </button>
           </div>
-        </form>
+
+          <Button asChild variant="outline" className="rounded-xl">
+            <Link href="/onboarding">Back to onboarding</Link>
+          </Button>
+        </div>
+
+        <Card className="rounded-2xl">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">Your information</CardTitle>
+            <CardDescription>
+              Enter your legal details exactly as shown on your Social Security card.
+            </CardDescription>
+          </CardHeader>
+
+          <CardContent className="space-y-6">
+            <form action={saveProfile} className="space-y-6">
+              {/* Email */}
+              <div className="space-y-2">
+                <Label>Email</Label>
+                <Input value={user.email} disabled className="rounded-xl" />
+                <p className="text-xs text-muted-foreground">
+                  Email is locked to the account you used.
+                </p>
+              </div>
+
+              <Separator />
+
+              {/* Legal name */}
+              <div className="space-y-3">
+                <div>
+                  <p className="text-sm font-semibold text-foreground">Legal name</p>
+                  <p className="text-xs text-muted-foreground">
+                    Enter your name exactly as it appears on your Social Security card.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
+                  <div className="space-y-2">
+                    <Label>
+                      First name <span className="text-destructive">*</span>
+                    </Label>
+                    <Input
+                      name="firstName"
+                      required
+                      defaultValue={user.firstName ?? ""}
+                      autoComplete="given-name"
+                      className="rounded-xl"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>Middle name</Label>
+                    <Input
+                      name="middleName"
+                      defaultValue=""
+                      autoComplete="additional-name"
+                      placeholder="Optional"
+                      className="rounded-xl"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>
+                      Last name <span className="text-destructive">*</span>
+                    </Label>
+                    <Input
+                      name="lastName"
+                      required
+                      defaultValue={user.lastName ?? ""}
+                      autoComplete="family-name"
+                      className="rounded-xl"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>Suffix</Label>
+                    <select
+                      name="suffix"
+                      defaultValue=""
+                      className="h-10 w-full rounded-xl border border-input bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring"
+                    >
+                      <option value="">None</option>
+                      <option value="Jr">Jr</option>
+                      <option value="Sr">Sr</option>
+                      <option value="II">II</option>
+                      <option value="III">III</option>
+                      <option value="IV">IV</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              <Separator />
+
+              {/* Contact & address */}
+              <div className="space-y-4">
+                <div>
+                  <p className="text-sm font-semibold text-foreground">Contact & address</p>
+                  <p className="text-xs text-muted-foreground">
+                    This should be your current mailing address for IRS/state notices.
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>
+                    Mobile phone <span className="text-destructive">*</span>
+                  </Label>
+                  <Input
+                    name="phone"
+                    type="tel"
+                    required
+                    defaultValue={user.phone ?? ""}
+                    placeholder="(555) 555-5555"
+                    className="rounded-xl"
+                    inputMode="numeric"
+                    autoComplete="tel"
+                    onInput={(e) => {
+                      const el = e.currentTarget;
+                      el.value = formatUSPhone(el.value);
+                    }}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Used for appointment reminders and important updates.
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>
+                    Address line 1 <span className="text-destructive">*</span>
+                  </Label>
+                  <Input
+                    name="address1"
+                    required
+                    placeholder="Street address"
+                    autoComplete="address-line1"
+                    className="rounded-xl"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Address line 2</Label>
+                  <Input
+                    name="address2"
+                    placeholder="Apt, suite, unit, etc. (optional)"
+                    autoComplete="address-line2"
+                    className="rounded-xl"
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                  <div className="space-y-2">
+                    <Label>
+                      City <span className="text-destructive">*</span>
+                    </Label>
+                    <Input name="city" required autoComplete="address-level2" className="rounded-xl" />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>
+                      State <span className="text-destructive">*</span>
+                    </Label>
+                    <select
+                      name="state"
+                      required
+                      defaultValue=""
+                      autoComplete="address-level1"
+                      className="h-10 w-full rounded-xl border border-input bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring"
+                    >
+                      <option value="" disabled>
+                        Select state
+                      </option>
+                      {US_STATES.map((s) => (
+                        <option key={s.value} value={s.value}>
+                          {s.value} – {s.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>
+                      ZIP code <span className="text-destructive">*</span>
+                    </Label>
+                    <Input
+                      name="zip"
+                      required
+                      inputMode="numeric"
+                      placeholder="12345"
+                      autoComplete="postal-code"
+                      className="rounded-xl"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <Separator />
+
+              {/* DOB + SSN */}
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label>
+                    Date of birth <span className="text-destructive">*</span>
+                  </Label>
+                  <Input type="date" name="dob" required className="rounded-xl" />
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Social Security Number</Label>
+                  <div className="relative">
+                    <Input
+                      type={showSsn ? "text" : "password"}
+                      name="ssn"
+                      inputMode="numeric"
+                      maxLength={11}
+                      placeholder="XXX-XX-XXXX"
+                      className="rounded-xl pr-11"
+                      value={ssn}
+                      onChange={(e) => setSsn(formatSSN(e.target.value))}
+                      autoComplete="off"
+                    />
+
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="absolute right-1 top-1/2 -translate-y-1/2 rounded-xl"
+                      onClick={() => setShowSsn((v) => !v)}
+                      aria-label={showSsn ? "Hide SSN" : "Show SSN"}
+                    >
+                      {showSsn ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+                    </Button>
+                  </div>
+
+                  <p className="text-[11px] text-muted-foreground">
+                    Optional — you can provide this over the phone if you prefer.
+                  </p>
+                </div>
+              </div>
+
+              <Alert className="rounded-xl">
+                <AlertDescription className="text-sm">
+                  You can update this information later if something changes.
+                </AlertDescription>
+              </Alert>
+
+              <Button type="submit" className="w-full rounded-xl">
+                Save and continue to documents
+              </Button>
+            </form>
+          </CardContent>
+        </Card>
       </div>
     </main>
   );

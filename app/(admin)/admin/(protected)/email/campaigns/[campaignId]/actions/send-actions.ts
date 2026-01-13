@@ -65,10 +65,11 @@ function fmtInviteExpires(expiresAt: unknown) {
 
 function templateNeedsInviteTokens(subject: string, htmlTpl: string, textTpl: string) {
   const blob = `${subject}\n${htmlTpl}\n${textTpl}`;
-  return /{{\s*(invite_link|sign_in_link|portal_link|invite_token|invite_expires_at|expires_text)\s*}}/i.test(
+  return /{{\s*(invite_link|sign_in_link|portal_link|invite_token|invite_expires_at|expires_text|sign_in_url|sign_up_url|onboarding_sign_up_url)\s*}}/i.test(
     blob
   );
 }
+
 
 /**
  * ✅ Prevent duplicate INVITES (concurrency safe):
@@ -191,16 +192,33 @@ async function buildVarsForRecipient(opts: {
   footerHtml: string;
   footerText: string;
 }) {
-  const { campaignId, email, inviteRequired, unsubPageUrl, oneClickUrl, footerHtml, footerText } =
-    opts;
+  const {
+    campaignId,
+    email,
+    inviteRequired,
+    unsubPageUrl,
+    oneClickUrl,
+    footerHtml,
+    footerText,
+  } = opts;
 
   const base = getSiteUrl();
+
+  const AFTER_ONBOARDING_NEXT = "/dashboard";
 
   // defaults (non-invite templates)
   let invite_token = "";
   let invite_expires_at = "";
-  let invite_link = `${base}/sign-up`;
-  let sign_in_link = `${base}/sign-in`;
+
+  // ✅ canonical URLs you want templates to use
+  let onboarding_sign_up_url = `${base}/sign-up`;
+  let sign_in_url = `${base}/sign-in`;
+
+  // ✅ legacy placeholders (keep templates backward compatible)
+  let invite_link = onboarding_sign_up_url; // older templates
+  let sign_up_url = onboarding_sign_up_url; // older templates
+  let sign_in_link = sign_in_url;           // older templates
+  let portal_link = sign_in_url;            // generic CTA used by some templates
 
   if (inviteRequired) {
     const invite = await ensureTaxpayerInvite(email, {
@@ -211,10 +229,21 @@ async function buildVarsForRecipient(opts: {
     invite_token = invite.token;
     invite_expires_at = fmtInviteExpires(invite.expiresAt);
 
-    invite_link = `${base}/taxpayer/onboarding-sign-up?invite=${encodeURIComponent(invite_token)}`;
-    sign_in_link = `${base}/sign-in?invite=${encodeURIComponent(
+    // ✅ "Create account" should go directly to onboarding-sign-up (your invite signup page)
+    onboarding_sign_up_url = `${base}/taxpayer/onboarding-sign-up?invite=${encodeURIComponent(
       invite_token
-    )}&next=${encodeURIComponent("/onboarding/profile")}`;
+    )}&next=${encodeURIComponent(AFTER_ONBOARDING_NEXT)}`;
+
+    // ✅ "Sign in" should route through consume so revoked/expired is blocked cleanly
+    sign_in_url = `${base}/invite/consume?token=${encodeURIComponent(
+      invite_token
+    )}&next=${encodeURIComponent(AFTER_ONBOARDING_NEXT)}`;
+
+    // ✅ keep old naming working
+    invite_link = onboarding_sign_up_url;
+    sign_up_url = onboarding_sign_up_url;
+    sign_in_link = sign_in_url;
+    portal_link = sign_in_url;
   }
 
   return {
@@ -225,13 +254,18 @@ async function buildVarsForRecipient(opts: {
     first_name: "there",
     signature_name: "SW Tax Service Team",
 
-    sign_in_url: `${base}/sign-in`,
-    sign_up_url: `${base}/sign-up`,
+    // ✅ important: use the computed values (not hard-coded /sign-in and /sign-up)
+    sign_in_url,
+    sign_up_url,
+    onboarding_sign_up_url,
 
     invite_token,
+    invite_code: invite_token,
+
     invite_link,
     sign_in_link,
-    portal_link: sign_in_link,
+    portal_link,
+
     invite_expires_at,
     expires_text: invite_expires_at ? `Link expires: ${invite_expires_at}` : "",
 
@@ -247,6 +281,7 @@ async function buildVarsForRecipient(opts: {
     logo_width: 72,
   } as Record<string, any>;
 }
+
 
 async function markCampaignStatus(campaignId: string, patch: any) {
   await db.update(emailCampaigns).set(patch).where(eq(emailCampaigns.id, campaignId));

@@ -29,12 +29,16 @@ export async function POST(req: Request) {
 
   const secure = process.env.NODE_ENV === "production";
 
+  const domain =
+  secure ? (process.env.COOKIE_DOMAIN ?? ".swtaxservice.com") : undefined;
+
   const cookieOptions = {
     httpOnly: true,
     secure,
     sameSite: "lax" as const,
     path: "/",
-    maxAge: 60 * 60 * 24 * 7, // 7 days
+    maxAge: 60 * 60 * 24 * 7, 
+    ...(domain ? { domain } : {}),
   };
 
   const res = NextResponse.json(

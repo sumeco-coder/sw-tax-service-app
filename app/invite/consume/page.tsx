@@ -69,6 +69,7 @@ export default async function InviteConsumePage({
   }
 
   // Decide default next based on invite type (adjust if you want)
+   // Decide default next based on invite type
   const defaultNext =
     row.type === "taxpayer" ? "/onboarding/profile" : "/dashboard";
 
@@ -79,6 +80,18 @@ export default async function InviteConsumePage({
     redirect(buildUrl("/sign-in", { next }));
   }
 
-  // Otherwise send them into sign-in with invite + next
+  // ✅ KEY CHANGE:
+  // If taxpayer + pending -> go to onboarding sign-up page (NOT /sign-in)
+  if (row.type === "taxpayer" && row.status === "pending") {
+    redirect(
+      buildUrl("/taxpayer/onboarding-sign-up", {
+        invite: token,
+        next,
+      })
+    );
+  }
+
+  // Otherwise keep your existing behavior
   redirect(buildUrl("/sign-in", { invite: token, next }));
+
 }

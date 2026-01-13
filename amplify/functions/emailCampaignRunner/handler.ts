@@ -115,7 +115,7 @@ function renderTpl(source: string, vars: Record<string, any>) {
   out = out.replace(
     /{{#if\s+([\w.]+)\s*}}([\s\S]*?)(?:{{else}}([\s\S]*?))?{{\/if}}/g,
     (_m, key, truthyBlock, falsyBlock) =>
-      getVar(vars, key) ? truthyBlock : falsyBlock ?? ""
+      getVar(vars, key) ? truthyBlock : (falsyBlock ?? "")
   );
 
   // raw triple-stash
@@ -167,7 +167,7 @@ ${DEFAULTS.website}
  */
 function needsInvite(source: string) {
   const s = String(source ?? "");
-  return /{{\s*(invite_link|sign_in_link|portal_link|invite_token|invite_code|sign_in_url|sign_up_url)\s*}}/i.test(
+  return /{{\s*(invite_link|sign_in_link|portal_link|invite_token|invite_code|sign_in_url|sign_up_url|onboarding_sign_up_url)\s*}}/i.test(
     s
   );
 }
@@ -212,7 +212,9 @@ async function ensureTaxpayerInvite(
   if (existing.rows?.[0]?.token) {
     return {
       token: String(existing.rows[0].token),
-      expiresAt: existing.rows[0].expiresAt ? new Date(existing.rows[0].expiresAt) : null,
+      expiresAt: existing.rows[0].expiresAt
+        ? new Date(existing.rows[0].expiresAt)
+        : null,
     };
   }
 
@@ -320,7 +322,9 @@ export const handler = async () => {
   const pool = poolFromDatabaseUrl(dbUrl);
 
   const LOCK_KEY = 987654321;
-  const lock = await pool.query("select pg_try_advisory_lock($1) as ok", [LOCK_KEY]);
+  const lock = await pool.query("select pg_try_advisory_lock($1) as ok", [
+    LOCK_KEY,
+  ]);
   if (!lock.rows?.[0]?.ok) {
     await pool.end();
     return { ok: true, message: "Runner already active (lock held)" };
@@ -380,7 +384,9 @@ export const handler = async () => {
     const campaignSubject = String(campaign.subject ?? "");
 
     const inviteRequired =
-      needsInvite(campaignHtml) || needsInvite(campaignText) || needsInvite(campaignSubject);
+      needsInvite(campaignHtml) ||
+      needsInvite(campaignText) ||
+      needsInvite(campaignSubject);
 
     let sent = 0;
 
@@ -423,15 +429,27 @@ export const handler = async () => {
         inviteExpiresAt = ensured.expiresAt;
       }
 
-      // ✅ canonical invite links
-      const inviteSignUpLink = inviteToken
-        ? `${base}/taxpayer/onboarding-sign-up?invite=${encodeURIComponent(inviteToken)}`
+      // ✅ where user should land AFTER onboarding is complete
+      const AFTER_ONBOARDING_NEXT = "/dashboard";
+
+      // ✅ Create-account (invite signup) link
+      const onboardingSignUpUrl = inviteToken
+        ? `${base}/taxpayer/onboarding-sign-up?invite=${encodeURIComponent(
+            inviteToken
+          )}&next=${encodeURIComponent(AFTER_ONBOARDING_NEXT)}`
         : `${base}/sign-up`;
 
-      // ✅ route through consume so expired/revoked are blocked cleanly
-      const inviteSignInLink = inviteToken
-        ? `${base}/invite/consume?invite=${encodeURIComponent(inviteToken)}&next=${encodeURIComponent(
-            "/onboarding/profile"
+      // ✅ Smart invite validator (optional “prefer link” / safety link)
+      const inviteConsumeUrl = inviteToken
+        ? `${base}/invite/consume?token=${encodeURIComponent(inviteToken)}&next=${encodeURIComponent(
+            AFTER_ONBOARDING_NEXT
+          )}`
+        : `${base}/sign-in`;
+
+      // ✅ Sign-in link (keeps invite context)
+      const signInUrl = inviteToken
+        ? `${base}/sign-in?invite=${encodeURIComponent(inviteToken)}&next=${encodeURIComponent(
+            AFTER_ONBOARDING_NEXT
           )}`
         : `${base}/sign-in`;
 
@@ -439,35 +457,33 @@ export const handler = async () => {
 
       const vars: Record<string, any> = {
         ...DEFAULTS,
-
         email,
         first_name,
 
-        // waitlist template needs this
         waitlist_link: `${base}/waitlist`,
 
-        // invite tokens
+        // ✅ legacy tokens (keep for backwards compatibility)
         invite_token: inviteToken,
-        invite_code: inviteToken, // if any legacy template uses invite_code (optional)
+        invite_code: inviteToken,
 
-        // ✅ both naming styles supported
-        invite_link: inviteSignUpLink,
-        sign_in_link: inviteSignInLink,
-        sign_up_url: inviteSignUpLink,
-        sign_in_url: inviteSignInLink,
+        // ✅ create account
+        invite_link: onboardingSignUpUrl,
+        sign_up_url: onboardingSignUpUrl,
+        onboarding_sign_up_url: onboardingSignUpUrl,
 
-        // “portal_link” used as a generic CTA in some templates
-        portal_link: inviteToken ? inviteSignUpLink : `${base}/sign-in`,
+        // ✅ sign in
+        sign_in_url: signInUrl,
+        sign_in_link: signInUrl,
 
-        // expiry placeholders (old + new)
+        // ✅ “smart/validated” link
+        portal_link: inviteConsumeUrl,
+
         ...expiryVars,
 
-        // footer + unsub
         unsubscribe_link: unsubUrl,
         footer_html: buildFooterHtml(),
         footer_text: buildFooterText(),
 
-        // logo vars used by your newer waitlist templates
         logo_url: `${base}/swtax-favicon-pack/android-chrome-512x512.png`,
         logo_alt: DEFAULTS.company_name,
         logo_link: base,

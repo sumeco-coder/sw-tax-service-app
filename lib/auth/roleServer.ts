@@ -1,6 +1,8 @@
 // lib/auth/roleServer.ts
 import { cookies } from "next/headers";
 import type { AppRole } from "./roleClient";
+import { CognitoJwtVerifier } from "aws-jwt-verify";
+
 
 export type ServerRoleInfo = {
   role: AppRole;
@@ -9,6 +11,37 @@ export type ServerRoleInfo = {
   payload: Record<string, any>;
   sub: string | null;
 };
+
+interface CognitoJwtPayload {
+  sub?: string;
+  email?: string;
+  username?: string;
+  "cognito:username"?: string;
+  "cognito:groups"?: string[];
+  "custom:role"?: string;
+  "custom:agencyId"?: string;
+  exp?: number;
+  [k: string]: any;
+}
+
+const verifier =
+  process.env.COGNITO_USER_POOL_ID && process.env.COGNITO_CLIENT_ID
+    ? CognitoJwtVerifier.create({
+        userPoolId: process.env.COGNITO_USER_POOL_ID,
+        tokenUse: "id",
+        clientId: process.env.COGNITO_CLIENT_ID,
+      })
+    : null;
+
+async function verifyAndDecode(token: string): Promise<CognitoJwtPayload | null> {
+  try {
+    if (!verifier) return null;
+    const payload = await verifier.verify(token);
+    return payload as CognitoJwtPayload;
+  } catch {
+    return null;
+  }
+}
 
 function decodeJwtPayload(token: string): Record<string, any> | null {
   const part = token.split(".")[1];
@@ -76,11 +109,13 @@ export async function getServerRole(): Promise<ServerRoleInfo | null> {
   const accessToken = cookieStore.get("accessToken")?.value;
   const idToken = cookieStore.get("idToken")?.value;
 
-  const payload =
+   const payload =
+    (idToken && (await verifyAndDecode(idToken))) ||
     (idToken && decodeJwtPayload(idToken)) ||
     (accessToken && decodeJwtPayload(accessToken));
 
   if (!payload) return null;
+
 
   const groups: string[] =
     (payload["cognito:groups"] as string[] | undefined) ?? [];

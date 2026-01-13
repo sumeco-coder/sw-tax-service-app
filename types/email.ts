@@ -10,6 +10,7 @@ export const EMAIL_PLACEHOLDERS = [
   "sign_in_url",
   "sign_up_url",
   "invite_link",
+  "onboarding_sign_up_url",
   "sign_in_link",
   "invite_expires_at",
   "portal_link",

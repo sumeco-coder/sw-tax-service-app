@@ -1,8 +1,8 @@
-// app/(admin)/admin/(protected)/email/templates/templates/waitlist/03-invite-approved.mjml.ts
+// app/(admin)/admin/(protected)/email/templates/templates/waitlist/00-invite-approved.mjml.ts
 import type { EmailTemplate } from "@/types/email";
 
 export const template: EmailTemplate = {
-  id: "waitlist/03-invite-approved",
+  id: "waitlist/00-invite-approved",
   name: "Invite Approved (Onboarding Access)",
   category: "waitlist",
   subject: "You’re approved — finish your onboarding ✅",
@@ -16,7 +16,7 @@ export const template: EmailTemplate = {
     <meta name="x-apple-disable-message-reformatting" />
     <meta name="color-scheme" content="dark" />
     <meta name="supported-color-schemes" content="dark" />
-    <title>{{company_name}} Invite</title>
+    <title>{{company_name}} Onboarding</title>
 
     <style>
       @media (max-width: 600px) {
@@ -32,7 +32,7 @@ export const template: EmailTemplate = {
   <body style="margin:0; padding:0; background:#0B0F1A;">
     <!-- Preheader -->
     <div style="display:none; font-size:1px; line-height:1px; max-height:0; max-width:0; opacity:0; overflow:hidden; mso-hide:all;">
-      You’re approved — sign in (or create your account) to finish onboarding.
+      You’re approved — continue onboarding to get started.
     </div>
 
     <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#0B0F1A;">
@@ -59,7 +59,7 @@ export const template: EmailTemplate = {
               <td class="px" style="padding:0 16px;">
                 <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#0B1220; border-radius:20px;" class="card">
                   <tr>
-                    <td style="padding:22px; font-family:Inter, -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Helvetica, Arial, sans-serif; color:#E5E7EB; font-size:16px; line-height:26px;">
+                    <td style="padding:22px; font-family:Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color:#E5E7EB; font-size:16px; line-height:26px;">
                       <p style="margin:0 0 10px 0;">Hi {{first_name}},</p>
 
                       <p style="margin:0 0 12px 0; font-size:22px; line-height:30px; font-weight:900; color:#F9FAFB;">
@@ -67,7 +67,7 @@ export const template: EmailTemplate = {
                       </p>
 
                       <p style="margin:0 0 14px 0;">
-                        Your {{company_name}} access is ready. Next step is to sign in (or create your account) and finish onboarding.
+                        Your {{company_name}} access is ready. Next step is to continue onboarding.
                       </p>
 
                       <p style="margin:0 0 10px 0; font-weight:800; color:#F9FAFB;">
@@ -81,28 +81,15 @@ export const template: EmailTemplate = {
                         • (Optional) Schedule a review call
                       </p>
 
-                      <!-- Buttons -->
-                      <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin:8px 0 0 0; width:100%;">
+                      <!-- Single CTA -->
+                      <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin:10px 0 0 0; width:100%;">
                         <tr>
                           <td class="btn" style="background:#E00040; border-radius:14px;">
                             <a
-                              href="{{sign_in_url}}"
+                              href="{{onboarding_sign_up_url}}"
                               style="display:inline-block; padding:12px 18px; font-size:14px; font-weight:900; color:#ffffff; text-decoration:none; border-radius:14px;"
                             >
-                              Sign in & continue
-                            </a>
-                          </td>
-                        </tr>
-                      </table>
-
-                      <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin:10px 0 0 0; width:100%;">
-                        <tr>
-                          <td class="btn" style="background:#111827; border:1px solid #1F2937; border-radius:14px;">
-                            <a
-                              href="{{sign_up_url}}"
-                              style="display:inline-block; padding:12px 18px; font-size:14px; font-weight:900; color:#ffffff; text-decoration:none; border-radius:14px;"
-                            >
-                              Create account
+                              Continue onboarding
                             </a>
                           </td>
                         </tr>
@@ -115,17 +102,14 @@ export const template: EmailTemplate = {
                       {{/if}}
 
                       <p style="margin:12px 0 0 0; font-size:13px; line-height:20px; color:#9CA3AF;">
-                        Prefer the link?
-                        <a href="{{sign_in_url}}" style="color:#FCA5A5; text-decoration:underline; font-weight:800;">
-                          Continue onboarding
+                        If the button doesn’t work, copy and paste this link:
+                        <br />
+                        <a href="{{onboarding_sign_up_url}}" style="color:#FCA5A5; text-decoration:underline; font-weight:800; word-break:break-all;">
+                          {{onboarding_sign_up_url}}
                         </a>
                       </p>
 
                       <hr style="border:none; border-top:1px solid #1F2937; margin:18px 0;" />
-
-                      <p style="margin:0 0 10px 0;">
-                        <strong>P.S.</strong> If you already have an account, use “Sign in & continue” — it will take you to the right place.
-                      </p>
 
                       <p style="margin:0 0 2px 0;">{{signature_name}}</p>
 
@@ -170,7 +154,7 @@ Hi {{first_name}},
 
 You’re approved 🎉
 
-Your {{company_name}} access is ready. Next step is to sign in (or create your account) and finish onboarding.
+Your {{company_name}} access is ready. Next step is to continue onboarding.
 
 What you’ll do inside onboarding:
 - Confirm your details
@@ -178,21 +162,15 @@ What you’ll do inside onboarding:
 - Answer a few quick tax questions
 - (Optional) Schedule a review call
 
-Sign in & continue:
-{{sign_in_url}}
-
-Create account:
-{{sign_up_url}}
+Continue onboarding:
+{{onboarding_sign_up_url}}
 
 {{#if expires_text}}
 {{expires_text}}
 {{/if}}
 
-P.S. If you already have an account, use “Sign in & continue” — it will take you to the right place.
-
 {{signature_name}}
 
-{{company_name}}
 Support: {{support_email}}
 Website: {{website}}
 
@@ -206,8 +184,9 @@ Website: {{website}}
     "support_email",
     "website",
 
-    "sign_in_url",
-    "sign_up_url",
+    // ✅ ONLY onboarding link used by this template
+    "onboarding_sign_up_url",
+
     "expires_text",
 
     "logo_url",

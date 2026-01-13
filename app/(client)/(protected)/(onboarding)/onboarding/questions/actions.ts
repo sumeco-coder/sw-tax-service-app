@@ -68,13 +68,36 @@ function mapFilingStatus(code: string) {
   }
 }
 
-function encryptSSN(ssnDigits: string): string {
-  const keyB64 = process.env.SSN_ENCRYPTION_KEY;
-  if (!keyB64) throw new Error("SSN_ENCRYPTION_KEY is not set.");
+function decodeKey32(key: string) {
+  const k = String(key ?? "").trim();
+  if (!k) throw new Error("SSN_ENCRYPTION_KEY is not set.");
 
-  const key = Buffer.from(keyB64, "base64");
-  if (key.length !== 32)
-    throw new Error("SSN_ENCRYPTION_KEY must be 32 bytes base64.");
+  // Accept BOTH base64 and base64url (because you used base64url generator)
+  let buf: Buffer | null = null;
+
+  try {
+    buf = Buffer.from(k, "base64url");
+  } catch {
+    buf = null;
+  }
+
+  if (!buf || buf.length !== 32) {
+    try {
+      buf = Buffer.from(k, "base64");
+    } catch {
+      buf = null;
+    }
+  }
+
+  if (!buf || buf.length !== 32) {
+    throw new Error("SSN_ENCRYPTION_KEY must decode to 32 bytes (base64 or base64url).");
+  }
+
+  return buf;
+}
+
+function encryptSSN(ssnDigits: string): string {
+  const key = decodeKey32(process.env.SSN_ENCRYPTION_KEY!);
 
   const iv = crypto.randomBytes(12);
   const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
@@ -84,6 +107,7 @@ function encryptSSN(ssnDigits: string): string {
 
   return `${iv.toString("base64")}.${tag.toString("base64")}.${enc.toString("base64")}`;
 }
+
 
 type DependentInput = {
   firstName: string;

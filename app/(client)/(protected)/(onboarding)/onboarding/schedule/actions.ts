@@ -2,7 +2,7 @@
 
 import { db } from "@/drizzle/db";
 import { appointments, users } from "@/drizzle/schema";
-import { eq, and } from "drizzle-orm";
+import { eq, and, desc } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { sendAppointmentEmail } from "@/lib/email/appointments";
@@ -20,43 +20,63 @@ function normalizeEmail(v: unknown) {
 }
 
 function fmtLocal(dt: Date) {
-  // show in your timezone (matches your app context)
   return dt.toLocaleString("en-US", { timeZone: "America/Los_Angeles" });
 }
 
-async function getUserBySubOrThrow(sub: string) {
-  const [userRow] = await db
-    .select()
-    .from(users)
-    .where(eq(users.cognitoSub, sub))
-    .limit(1);
-
-  if (!userRow) throw new Error("User record not found.");
-
-  return userRow;
+function isStaff(role: unknown) {
+  // your roles are UPPERCASE from roleServer
+  return role === "ADMIN" || role === "SUPERADMIN" || role === "SUPPORT_AGENT";
 }
 
 /**
- * ✅ OPTIONAL: SKIP SCHEDULING (mark onboarding done without appointment)
- * No form fields required; uses cookie auth.
+ * ✅ Get user by cognitoSub or create them.
+ * IMPORTANT: users.email is NOT NULL, so we REQUIRE email on first insert.
+ */
+async function getOrCreateUserBySubOrThrow(sub: string, emailFromAuth?: string | null) {
+  const cognitoSub = String(sub).trim();
+
+  const [existing] = await db
+    .select()
+    .from(users)
+    .where(eq(users.cognitoSub, cognitoSub))
+    .limit(1);
+
+  if (existing) return existing;
+
+  const email = normalizeEmail(emailFromAuth ?? "");
+  if (!email) throw new Error("Missing email. Please sign in again.");
+
+  const [created] = await db
+    .insert(users)
+    .values({
+      cognitoSub,
+      email,
+      onboardingStep: "SCHEDULE" as any,
+      updatedAt: new Date(),
+    } as any)
+    .returning();
+
+  if (!created) throw new Error("User record could not be created.");
+  return created;
+}
+
+/**
+ * ✅ SKIP SCHEDULING
+ * Move them forward without an appointment.
  */
 export async function skipScheduling(): Promise<void> {
   const auth = await getServerRole();
-  if (!auth) return redirect("/sign-in");
+  if (!auth?.sub) return redirect("/sign-in");
 
-  const sub = auth.sub ? String(auth.sub) : "";
-  if (!sub) return redirect("/sign-in");
+  const userRow = await getOrCreateUserBySubOrThrow(String(auth.sub), auth.email);
 
-  const userRow = await getUserBySubOrThrow(sub);
-
-  // ✅ go to AGREEMENTS first
   await db
     .update(users)
     .set({
       onboardingStep: "SUMMARY" as any,
       updatedAt: new Date(),
     })
-    .where(eq(users.id, userRow.id));
+    .where(eq(users.id, (userRow as any).id));
 
   revalidatePath("/onboarding");
   revalidatePath("/onboarding/schedule");
@@ -65,50 +85,51 @@ export async function skipScheduling(): Promise<void> {
   redirect("/onboarding/summary");
 }
 
-
 /**
- * BOOK APPOINTMENT (still allowed, but optional now)
- * Expects form fields:
- * - scheduledAt (ISO string)
- * Optional form fields:
- * - email, phone (fallbacks)
- *
- * Security:
- * - ignores cognitoSub from the form (uses cookie sub)
+ * BOOK APPOINTMENT (optional)
+ * Expects: scheduledAt (ISO string)
  */
 export async function bookAppointment(formData: FormData): Promise<void> {
   const auth = await getServerRole();
-  const sub = auth?.sub ? String(auth.sub) : "";
-  const cookieEmail = auth?.email ? normalizeEmail(auth.email) : "";
-  if (!sub) throw new Error("Unauthorized. Please sign in again.");
+  if (!auth || !auth.sub) throw new Error("Unauthorized. Please sign in again.");
+
+  const sub = auth.sub.trim();
 
   const scheduledAtIso = clean(formData.get("scheduledAt"), 100);
-  if (!scheduledAtIso) {
-    console.error("bookAppointment: missing scheduledAt");
-    return;
-  }
+  if (!scheduledAtIso) throw new Error("Please select an appointment time.");
 
   const scheduledAt = new Date(scheduledAtIso);
   if (Number.isNaN(scheduledAt.getTime())) {
-    console.error("bookAppointment: invalid datetime", scheduledAtIso);
-    return;
+    throw new Error("Invalid appointment time. Please try again.");
   }
 
-  const userRow = await getUserBySubOrThrow(sub);
+  // prevent past bookings
+  const now = new Date();
+  if (scheduledAt.getTime() < now.getTime() - 60_000) {
+    throw new Error("That time is in the past. Please choose a new time.");
+  }
+
+  const userRow = await getOrCreateUserBySubOrThrow(sub, auth.email);
 
   const emailFromForm = normalizeEmail(formData.get("email"));
   const phoneFromForm = clean(formData.get("phone"), 40);
 
-  const email = cookieEmail || emailFromForm || (userRow as any).email || "";
+  const email = normalizeEmail(auth.email ?? "") || emailFromForm || (userRow as any).email || "";
   const phone = phoneFromForm || (userRow as any).phone || "";
 
   const DEFAULT_DURATION_MINUTES = 30;
 
-  // ✅ Prevent duplicates: if they already have a scheduled appt, update it instead of inserting another
+  // ✅ If they already have a scheduled appt, update it (don’t insert duplicates)
   const [existingAppt] = await db
     .select()
     .from(appointments)
-    .where(and(eq(appointments.userId, userRow.id), eq(appointments.status, "scheduled")))
+    .where(
+      and(
+        eq(appointments.userId, (userRow as any).id),
+        eq(appointments.status, "scheduled") // ✅ matches enum
+      )
+    )
+    .orderBy(desc(appointments.scheduledAt))
     .limit(1);
 
   let appointmentId = "";
@@ -122,7 +143,7 @@ export async function bookAppointment(formData: FormData): Promise<void> {
       .update(appointments)
       .set({
         scheduledAt,
-        status: "scheduled",
+        status: "scheduled", // ✅ matches enum
         cancelledReason: null,
         cancelledAt: null,
         updatedAt: new Date(),
@@ -134,42 +155,38 @@ export async function bookAppointment(formData: FormData): Promise<void> {
     const [appt] = await db
       .insert(appointments)
       .values({
-        userId: userRow.id,
+        userId: (userRow as any).id,
         scheduledAt,
         durationMinutes: DEFAULT_DURATION_MINUTES,
-        status: "scheduled",
+        status: "scheduled", // ✅ matches enum
         notes: null,
         cancelledReason: null,
         cancelledAt: null,
-      })
+      } as any)
       .returning({
         id: appointments.id,
         scheduledAt: appointments.scheduledAt,
         durationMinutes: appointments.durationMinutes,
       });
 
-    if (!appt?.id) {
-      console.error("Appointment insert failed (no id returned)");
-      return;
-    }
+    if (!appt?.id) throw new Error("Could not book appointment. Please try again.");
 
     appointmentId = appt.id;
-    finalStartsAt = appt.scheduledAt as any;
+    finalStartsAt = appt.scheduledAt as Date;
     durationMinutes = appt.durationMinutes ?? DEFAULT_DURATION_MINUTES;
   }
 
-  // ✅ Mark onboarding done (since they finished this step)
+  // ✅ Do NOT set DONE here (you still go to SUMMARY next)
   await db
     .update(users)
     .set({
-      onboardingStep: "DONE" as any, // ✅ make sure enum allows this
+      onboardingStep: "SUMMARY" as any,
       updatedAt: new Date(),
     })
-    .where(eq(users.id, userRow.id));
+    .where(eq(users.id, (userRow as any).id));
 
   const endsAt = new Date(finalStartsAt.getTime() + durationMinutes * 60000);
 
-  // Email
   if (email) {
     await sendAppointmentEmail({
       to: email,
@@ -180,12 +197,10 @@ export async function bookAppointment(formData: FormData): Promise<void> {
     });
   }
 
-  // SMS
   if (phone) {
-    const text =
-      existingAppt
-        ? `Your SW Tax Service appointment was rescheduled to ${fmtLocal(finalStartsAt)}.`
-        : `Your SW Tax Service appointment is booked for ${fmtLocal(finalStartsAt)}.`;
+    const text = existingAppt
+      ? `Your SW Tax Service appointment was rescheduled to ${fmtLocal(finalStartsAt)}.`
+      : `Your SW Tax Service appointment is booked for ${fmtLocal(finalStartsAt)}.`;
 
     await sendSms(phone, text);
   }
@@ -199,23 +214,18 @@ export async function bookAppointment(formData: FormData): Promise<void> {
 
 /**
  * CANCEL APPOINTMENT
- * Security:
- * - only the owner (cookie sub) can cancel their appointment (or admin)
  */
 export async function cancelAppointment(formData: FormData): Promise<void> {
   const auth = await getServerRole();
   const sub = auth?.sub ? String(auth.sub) : "";
-  const role = auth?.role ?? "unknown";
+  const role = auth?.role;
   if (!sub) throw new Error("Unauthorized. Please sign in again.");
 
   const apptId = clean(formData.get("appointmentId"), 200);
   const reason =
     clean(formData.get("reason"), 300) || "Client cancelled from onboarding portal";
 
-  if (!apptId) {
-    console.error("cancelAppointment: missing appointmentId");
-    return;
-  }
+  if (!apptId) throw new Error("Missing appointment id.");
 
   const [appt] = await db
     .select()
@@ -223,10 +233,7 @@ export async function cancelAppointment(formData: FormData): Promise<void> {
     .where(eq(appointments.id, apptId))
     .limit(1);
 
-  if (!appt) {
-    console.error("Appointment not found for cancel", { apptId });
-    return;
-  }
+  if (!appt) throw new Error("Appointment not found.");
 
   const [userRow] = await db
     .select()
@@ -234,13 +241,10 @@ export async function cancelAppointment(formData: FormData): Promise<void> {
     .where(eq(users.id, (appt as any).userId))
     .limit(1);
 
-  if (!userRow) {
-    console.error("cancelAppointment: user not found for appt", { apptId });
-    return;
-  }
+  if (!userRow) throw new Error("User not found for this appointment.");
 
-  // ✅ authorization: owner or admin
-  if (role !== "ADMIN" && (userRow as any).cognitoSub !== sub) {
+  // ✅ owner or staff
+  if (!isStaff(role) && (userRow as any).cognitoSub !== sub) {
     throw new Error("Forbidden.");
   }
 
@@ -248,7 +252,7 @@ export async function cancelAppointment(formData: FormData): Promise<void> {
   await db
     .update(appointments)
     .set({
-      status: "cancelled",
+      status: "cancelled", // ✅ matches enum
       cancelledReason: reason,
       cancelledAt: now,
       updatedAt: now,
@@ -287,28 +291,20 @@ export async function cancelAppointment(formData: FormData): Promise<void> {
 
 /**
  * RESCHEDULE APPOINTMENT
- * Security:
- * - only the owner (cookie sub) can reschedule their appointment (or admin)
  */
 export async function rescheduleAppointment(formData: FormData): Promise<void> {
   const auth = await getServerRole();
   const sub = auth?.sub ? String(auth.sub) : "";
-  const role = auth?.role ?? "unknown";
+  const role = auth?.role;
   if (!sub) throw new Error("Unauthorized. Please sign in again.");
 
   const apptId = clean(formData.get("appointmentId"), 200);
   const scheduledAtIso = clean(formData.get("scheduledAt"), 100);
 
-  if (!apptId || !scheduledAtIso) {
-    console.error("Missing reschedule data", { apptId, scheduledAtIso });
-    return;
-  }
+  if (!apptId || !scheduledAtIso) throw new Error("Missing reschedule data.");
 
   const scheduledAt = new Date(scheduledAtIso);
-  if (Number.isNaN(scheduledAt.getTime())) {
-    console.error("Invalid reschedule datetime", scheduledAtIso);
-    return;
-  }
+  if (Number.isNaN(scheduledAt.getTime())) throw new Error("Invalid date/time.");
 
   const [appt] = await db
     .select()
@@ -316,10 +312,7 @@ export async function rescheduleAppointment(formData: FormData): Promise<void> {
     .where(eq(appointments.id, apptId))
     .limit(1);
 
-  if (!appt) {
-    console.error("Appointment not found for reschedule", { apptId });
-    return;
-  }
+  if (!appt) throw new Error("Appointment not found.");
 
   const [userRow] = await db
     .select()
@@ -327,13 +320,9 @@ export async function rescheduleAppointment(formData: FormData): Promise<void> {
     .where(eq(users.id, (appt as any).userId))
     .limit(1);
 
-  if (!userRow) {
-    console.error("rescheduleAppointment: user not found for appt", { apptId });
-    return;
-  }
+  if (!userRow) throw new Error("User not found for this appointment.");
 
-  // ✅ authorization: owner or admin
-  if (role !== "ADMIN" && (userRow as any).cognitoSub !== sub) {
+  if (!isStaff(role) && (userRow as any).cognitoSub !== sub) {
     throw new Error("Forbidden.");
   }
 
@@ -342,7 +331,7 @@ export async function rescheduleAppointment(formData: FormData): Promise<void> {
     .update(appointments)
     .set({
       scheduledAt,
-      status: "scheduled",
+      status: "scheduled", // ✅ matches enum
       cancelledReason: null,
       cancelledAt: null,
       updatedAt: now,

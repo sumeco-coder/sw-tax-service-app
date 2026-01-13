@@ -6,6 +6,9 @@ import { db } from "@/drizzle/db";
 import { users, clientAgreements } from "@/drizzle/schema";
 import { getServerRole } from "@/lib/auth/roleServer";
 import AgreementsClient from "./_components/AgreementsClient";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Separator } from "@/components/ui/separator";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -139,10 +142,24 @@ export default async function AgreementsPage() {
   };
 
   return (
-    <main className="min-h-screen bg-background px-4 py-10">
+      <main className="min-h-screen bg-gradient-to-b from-secondary to-background px-4 py-10">
       <div className="mx-auto max-w-5xl">
-        <AgreementsClient initial={initial} taxYear={taxYear} />
+        <Card className="rounded-2xl">
+          <CardHeader className="space-y-3">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <Badge variant="secondary">Onboarding</Badge>
+                <CardTitle className="mt-2">Agreements</CardTitle>
+              </div>
+              <Badge variant="outline">Tax year {taxYear}</Badge>
+            </div>
+            <Separator />
+          </CardHeader>
 
+          <CardContent>
+            <AgreementsClient initial={initial} taxYear={taxYear} />
+          </CardContent>
+        </Card>
       </div>
     </main>
   );

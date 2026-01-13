@@ -1,19 +1,23 @@
 // app/(client)/taxpayer/_components/OnboardingSignUpForm.tsx
 "use client";
 
-import { useState } from "react";
-import { signUp, confirmSignUp, signIn } from "aws-amplify/auth";
+import { useEffect, useMemo, useState } from "react";
+import {
+  signUp,
+  confirmSignUp,
+  signIn,
+  fetchAuthSession,
+} from "aws-amplify/auth";
 import { configureAmplify } from "@/lib/amplifyClient";
 import Link from "next/link";
 import { completeInvite } from "../onboarding-sign-up/actions";
 import { useRouter } from "next/navigation";
 
-configureAmplify();
-
 interface Props {
   email: string;
   token: string;
   plan?: string;
+  nextPath?: string;
 }
 
 type Phase = "signup" | "confirm";
@@ -31,8 +35,39 @@ const inputFocus =
   "focus:ring-2 focus:ring-[#E72B69]/25 focus:border-[#E72B69]";
 const inputBorder = "border-slate-200";
 
-export default function OnboardingSignUpForm({ email, token, plan }: Props) {
+async function syncServerCookiesFromSession() {
+  const session = await fetchAuthSession();
+  const accessToken = session.tokens?.accessToken?.toString() ?? "";
+  const idToken = session.tokens?.idToken?.toString() ?? "";
+  if (!accessToken || !idToken) return;
+
+  await fetch("/api/auth/session", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ accessToken, idToken }),
+    cache: "no-store",
+  });
+}
+
+export default function OnboardingSignUpForm({
+  email,
+  token,
+  plan,
+  nextPath = "/dashboard",
+}: Props) {
   const router = useRouter();
+
+  useEffect(() => {
+    configureAmplify();
+  }, []);
+
+  const signInHref = useMemo(() => {
+    const qs = new URLSearchParams();
+    qs.set("invite", token);
+    qs.set("next", nextPath); // ✅ next = after onboarding
+    return `/sign-in?${qs.toString()}`;
+  }, [token, nextPath]);
+
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [password, setPassword] = useState("");
@@ -93,16 +128,15 @@ export default function OnboardingSignUpForm({ email, token, plan }: Props) {
         confirmationCode: code.trim(),
       });
 
-      // optional auto sign-in after confirm
-      if (password) {
-        try {
-          await signIn({ username: email, password });
-        } catch (err) {
-          console.error("signIn after confirm failed (but continuing):", err);
-        }
+      // auto sign-in after confirm
+      try {
+        await signIn({ username: email, password });
+        await syncServerCookiesFromSession(); // ✅ critical for SSR-protected routes
+      } catch (err) {
+        console.error("signIn after confirm failed:", err);
       }
 
-      // mark invite as used
+      // mark invite used
       try {
         await completeInvite(token);
       } catch (err) {
@@ -110,7 +144,11 @@ export default function OnboardingSignUpForm({ email, token, plan }: Props) {
       }
 
       setMsg("Account confirmed! Taking you to onboarding…");
-      router.push("/onboarding");
+
+      // ✅ go directly to your real onboarding step
+      const qs = new URLSearchParams();
+      qs.set("next", nextPath);
+      router.replace(`/onboarding/profile?${qs.toString()}`);
     } catch (err: any) {
       console.error(err);
       setMsg(err?.message ?? "Invalid code. Please try again.");
@@ -224,11 +262,7 @@ export default function OnboardingSignUpForm({ email, token, plan }: Props) {
           <p className="text-center text-xs text-slate-500">
             Already have an account?{" "}
             {/* ✅ relative path works on localhost + www + app */}
-            <Link
-              href="/sign-in"
-              className="font-semibold hover:underline"
-              style={{ color: BRAND.pink }}
-            >
+            <Link href={signInHref} className="font-semibold hover:underline">
               Sign in
             </Link>
           </p>
@@ -264,11 +298,7 @@ export default function OnboardingSignUpForm({ email, token, plan }: Props) {
 
           <p className="text-center text-xs text-slate-500">
             Already confirmed?{" "}
-            <Link
-              href="/sign-in"
-              className="font-semibold hover:underline"
-              style={{ color: BRAND.pink }}
-            >
+            <Link href={signInHref} className="font-semibold hover:underline">
               Sign in
             </Link>
           </p>

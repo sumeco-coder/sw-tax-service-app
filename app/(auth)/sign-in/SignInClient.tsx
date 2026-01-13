@@ -163,7 +163,12 @@ export default function SigninClient() {
         return;
       }
     } catch {
-      // If we can't read attrs, just continue to intended
+      if (invite) {
+      const qs = new URLSearchParams();
+      qs.set("next", intended);
+      router.push(`/onboarding/profile?${qs.toString()}`);
+      return;
+    }
     }
 
     router.push(intended);

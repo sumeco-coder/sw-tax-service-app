@@ -9,10 +9,22 @@ import {
 } from "@/lib/legal/agreements";
 import { signAgreement, submitAgreementsAndFinish } from "../actions";
 
-const BRAND = {
-  pink: "#E62A68",
-  copper: "#BB4E2B",
-};
+// shadcn
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Badge } from "@/components/ui/badge";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 type Decision = "SIGNED" | "GRANTED" | "DECLINED" | "SKIPPED";
 
@@ -25,9 +37,13 @@ type SignedRow = {
 
 type Initial = Record<AgreementKind, SignedRow | null>;
 
-const KINDS: AgreementKind[] = ["ENGAGEMENT", "CONSENT_7216_USE", "CONSENT_PAYMENT"];
+const KINDS: AgreementKind[] = [
+  "ENGAGEMENT",
+  "CONSENT_7216_USE",
+  "CONSENT_PAYMENT",
+];
 
-// ✅ deterministic formatter (prevents hydration mismatch)
+// deterministic formatter (prevents hydration mismatch)
 const dtf = new Intl.DateTimeFormat("en-US", {
   timeZone: "America/Los_Angeles",
   year: "numeric",
@@ -82,9 +98,18 @@ export default function AgreementsClient({
   const [err, setErr] = useState<string>("");
   const [signed, setSigned] = useState<Initial>(initial);
 
-  const engagementDone = useMemo(() => isRequiredDone(signed.ENGAGEMENT), [signed]);
-  const consentDone = useMemo(() => isDone(signed.CONSENT_7216_USE), [signed]);
-  const paymentDone = useMemo(() => isRequiredDone(signed.CONSENT_PAYMENT), [signed]);
+  const engagementDone = useMemo(
+    () => isRequiredDone(signed.ENGAGEMENT),
+    [signed]
+  );
+  const consentDone = useMemo(
+    () => isDone(signed.CONSENT_7216_USE),
+    [signed]
+  );
+  const paymentDone = useMemo(
+    () => isRequiredDone(signed.CONSENT_PAYMENT),
+    [signed]
+  );
 
   const consentDeclined = useMemo(
     () => (signed.CONSENT_7216_USE?.decision ?? consentChoice) === "DECLINED",
@@ -94,36 +119,13 @@ export default function AgreementsClient({
   const canOpenConsent = engagementDone;
   const canOpenPayment = engagementDone && consentDone && !consentDeclined;
 
-  // ✅ can submit only when all complete AND not declined
-  const canSubmit =
-    engagementDone &&
-    paymentDone &&
-    consentDone &&
-    !consentDeclined;
+  const canSubmit = engagementDone && paymentDone && consentDone && !consentDeclined;
 
   // keep step inside allowed range
   const effectiveStep = useMemo(() => {
     const max = engagementDone ? (consentDone ? (canOpenPayment ? 2 : 1) : 1) : 0;
     return Math.min(step, max);
   }, [step, engagementDone, consentDone, canOpenPayment]);
-
-  function Badge({ open }: { open: boolean }) {
-    return (
-      <span
-        className={[
-          "inline-flex rounded-full px-2.5 py-1 text-[11px] font-semibold ring-1",
-          open ? "text-white" : "bg-white/70 text-slate-700 ring-black/10",
-        ].join(" ")}
-        style={
-          open
-            ? { background: `linear-gradient(135deg, ${BRAND.pink}, ${BRAND.copper})` }
-            : undefined
-        }
-      >
-        {open ? "Open" : "Locked"}
-      </span>
-    );
-  }
 
   async function doSign(kind: AgreementKind, decisionOverride?: Decision) {
     setErr("");
@@ -154,7 +156,6 @@ export default function AgreementsClient({
           decision,
         });
 
-        // optimistic local update
         const nowIso = new Date().toISOString();
         setSigned((prev) => ({
           ...prev,
@@ -176,7 +177,7 @@ export default function AgreementsClient({
     });
   }
 
-  function StepHeader({
+  function StepCard({
     title,
     required,
     done,
@@ -199,30 +200,33 @@ export default function AgreementsClient({
         onClick={onClick}
         disabled={!open}
         className={[
-          "w-full text-left rounded-2xl border px-4 py-3 transition",
-          open ? "bg-white hover:bg-slate-50" : "bg-white/70",
+          "w-full text-left rounded-2xl border p-4 transition",
+          open ? "bg-background hover:bg-muted/40" : "bg-muted/30 opacity-80",
         ].join(" ")}
-        style={{
-          borderColor: open ? "rgba(0,0,0,0.10)" : "rgba(0,0,0,0.06)",
-        }}
       >
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <p className="text-sm font-semibold text-slate-900">
-              {title} {required ? <span className="text-red-600">*</span> : null}
+            <p className="text-sm font-semibold">
+              {title} {required ? <span className="text-destructive">*</span> : null}
             </p>
 
             {done ? (
-              <p className="text-xs text-slate-700">
-                Completed ✓{" "}
-                <span className="text-slate-600">({fmt(signedAt)})</span>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Completed ✓ <span className="text-muted-foreground/80">({fmt(signedAt)})</span>
               </p>
             ) : (
-              <p className="text-xs text-slate-700">{subtitle ?? "Not completed yet"}</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {subtitle ?? "Not completed yet"}
+              </p>
             )}
           </div>
 
-          <Badge open={open} />
+          <Badge
+            variant={open ? "default" : "secondary"}
+            className={open ? "bg-gradient-to-br from-[#E62A68] to-[#BB4E2B] text-white" : ""}
+          >
+            {open ? "Open" : "Locked"}
+          </Badge>
         </div>
       </button>
     );
@@ -234,39 +238,40 @@ export default function AgreementsClient({
     activeKind === "ENGAGEMENT"
       ? `1) ${AGREEMENT_TITLES.ENGAGEMENT}`
       : activeKind === "CONSENT_7216_USE"
-      ? `2) ${AGREEMENT_TITLES.CONSENT_7216_USE}`
-      : `3) ${AGREEMENT_TITLES.CONSENT_PAYMENT}`;
+        ? `2) ${AGREEMENT_TITLES.CONSENT_7216_USE}`
+        : `3) ${AGREEMENT_TITLES.CONSENT_PAYMENT}`;
 
   return (
     <div className="space-y-6">
-      <header
-        className="rounded-2xl border bg-white p-5"
-        style={{ borderColor: "rgba(0,0,0,0.10)" }}
-      >
-        <h1 className="text-2xl font-extrabold tracking-tight text-slate-900">
-          Agreements
-        </h1>
-        <p className="mt-1 text-sm text-slate-700">
-          Tax Year: <span className="font-semibold text-slate-900">{taxYear}</span>
-        </p>
+      <Card className="rounded-2xl">
+        <CardHeader>
+          <CardTitle className="text-2xl">Agreements</CardTitle>
+          <p className="text-sm text-muted-foreground">
+            Tax Year: <span className="font-semibold text-foreground">{taxYear}</span>
+          </p>
 
-        {consentDeclined ? (
-          <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-            You selected <b>“I do not consent”</b> for 7216. The portal cannot continue.
-            Please contact SW Tax Service for next steps.
-          </div>
-        ) : null}
+          {consentDeclined ? (
+            <Alert className="mt-4" variant="destructive">
+              <AlertTitle>Consent declined</AlertTitle>
+              <AlertDescription>
+                You selected <b>“I do not consent”</b> for 7216. The portal cannot
+                continue. Please contact SW Tax Service for next steps.
+              </AlertDescription>
+            </Alert>
+          ) : null}
 
-        {err ? (
-          <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-            {err}
-          </div>
-        ) : null}
-      </header>
+          {err ? (
+            <Alert className="mt-4" variant="destructive">
+              <AlertTitle>Something went wrong</AlertTitle>
+              <AlertDescription>{err}</AlertDescription>
+            </Alert>
+          ) : null}
+        </CardHeader>
+      </Card>
 
       {/* Step list */}
       <div className="grid gap-3 md:grid-cols-3">
-        <StepHeader
+        <StepCard
           title={`1) ${AGREEMENT_TITLES.ENGAGEMENT}`}
           required
           done={engagementDone}
@@ -275,7 +280,7 @@ export default function AgreementsClient({
           signedAt={signed.ENGAGEMENT?.taxpayerSignedAt ?? null}
         />
 
-        <StepHeader
+        <StepCard
           title={`2) ${AGREEMENT_TITLES.CONSENT_7216_USE}`}
           done={consentDone}
           open={canOpenConsent}
@@ -284,179 +289,178 @@ export default function AgreementsClient({
           signedAt={signed.CONSENT_7216_USE?.taxpayerSignedAt ?? null}
         />
 
-        <StepHeader
+        <StepCard
           title={`3) ${AGREEMENT_TITLES.CONSENT_PAYMENT}`}
           required
           done={paymentDone}
           open={canOpenPayment}
           onClick={() => setStep(2)}
           subtitle={
-            !consentDone ? "Complete step 2 first." : consentDeclined ? "Blocked." : "Not completed yet"
+            !consentDone
+              ? "Complete step 2 first."
+              : consentDeclined
+                ? "Blocked."
+                : "Not completed yet"
           }
           signedAt={signed.CONSENT_PAYMENT?.taxpayerSignedAt ?? null}
         />
       </div>
 
       {/* Shared identity fields */}
-      <section
-        className="rounded-2xl border bg-white p-5"
-        style={{ borderColor: "rgba(0,0,0,0.10)" }}
-      >
-        <div className="grid gap-4 md:grid-cols-2">
-          <div>
-            <label className="text-xs font-semibold text-slate-900">
-              Taxpayer full legal name <span className="text-red-600">*</span>
-            </label>
-            <input
+      <Card className="rounded-2xl">
+        <CardHeader>
+          <CardTitle className="text-base">Signer details</CardTitle>
+          <p className="text-xs text-muted-foreground">
+            Enter names exactly as they should appear for signing.
+          </p>
+        </CardHeader>
+        <CardContent className="grid gap-4 md:grid-cols-2">
+          <div className="space-y-1">
+            <Label className="text-xs">
+              Taxpayer full legal name <span className="text-destructive">*</span>
+            </Label>
+            <Input
               value={taxpayerName}
               onChange={(e) => setTaxpayerName(e.target.value)}
-              className="mt-1 w-full rounded-xl border border-black/10 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-[#E62A68]/25 focus:border-[#E62A68]/40"
               placeholder="First Last"
-              required
+              className="rounded-xl"
             />
           </div>
 
-          <div className="flex items-end">
-            <label className="inline-flex items-center gap-2 text-xs font-semibold text-slate-900">
-              <input
-                type="checkbox"
-                className="h-4 w-4 accent-[#E62A68]"
-                checked={spouseRequired}
-                onChange={(e) => setSpouseRequired(e.target.checked)}
-              />
+          <div className="flex items-center gap-2 pt-6 md:pt-0">
+            <Checkbox
+              checked={spouseRequired}
+              onCheckedChange={(v) => setSpouseRequired(Boolean(v))}
+              id="spouseRequired"
+            />
+            <Label htmlFor="spouseRequired" className="text-xs font-semibold">
               Married filing jointly (spouse signs)
-            </label>
+            </Label>
           </div>
 
-          <div>
-            <label className="text-xs font-semibold text-slate-900">
+          <div className="space-y-1">
+            <Label className="text-xs">
               Spouse full legal name{" "}
-              {spouseRequired ? <span className="text-red-600">*</span> : null}
-            </label>
-            <input
+              {spouseRequired ? <span className="text-destructive">*</span> : null}
+            </Label>
+            <Input
               value={spouseName}
               onChange={(e) => setSpouseName(e.target.value)}
               disabled={!spouseRequired}
-              className="mt-1 w-full rounded-xl border border-black/10 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-[#E62A68]/25 focus:border-[#E62A68]/40 disabled:cursor-not-allowed disabled:opacity-60"
               placeholder="First Last"
-              required={spouseRequired}
+              className="rounded-xl"
             />
           </div>
+        </CardContent>
+      </Card>
 
-          <div className="hidden md:block" />
-        </div>
-      </section>
+      {/* Active agreement viewer + actions */}
+      <Card className="rounded-2xl">
+        <CardHeader>
+          <CardTitle className="text-lg">{activeTitle}</CardTitle>
+          <p className="text-xs text-muted-foreground">
+            {activeKind === "CONSENT_7216_USE"
+              ? "Optional — choose consent/decline, or skip."
+              : "Required — sign to continue."}
+          </p>
+        </CardHeader>
 
-      {/* Active agreement viewer + action */}
-      <section
-        className="rounded-2xl border bg-white p-5"
-        style={{ borderColor: "rgba(0,0,0,0.10)" }}
-      >
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <h2 className="text-lg font-bold text-slate-900">{activeTitle}</h2>
+        <CardContent className="space-y-4">
+          {/* Consent select */}
+          {activeKind === "CONSENT_7216_USE" ? (
+            <div className="flex flex-wrap items-center gap-3">
+              <Label className="text-xs font-semibold">Your choice</Label>
+
+              <Select
+                value={consentChoice}
+                onValueChange={(v) => setConsentChoice(v as Decision)}
+                disabled={pending}
+              >
+                <SelectTrigger className="w-[220px] rounded-xl">
+                  <SelectValue placeholder="Select…" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="SKIPPED">Skip for now</SelectItem>
+                  <SelectItem value="GRANTED">I consent</SelectItem>
+                  <SelectItem value="DECLINED">I do not consent</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          ) : null}
+
+          {/* Agreement text */}
+          <ScrollArea className="h-[420px] rounded-2xl border bg-muted/30 p-4">
+            <pre className="whitespace-pre-wrap text-sm leading-6">
+              {AGREEMENT_TEXT[activeKind] ?? ""}
+            </pre>
+          </ScrollArea>
+
+          {/* Buttons */}
+          <div className="flex flex-wrap gap-2">
+            {activeKind === "ENGAGEMENT" ? (
+              <Button
+                type="button"
+                onClick={() => doSign("ENGAGEMENT", "SIGNED")}
+                disabled={pending}
+                className="rounded-xl bg-gradient-to-br from-[#E62A68] to-[#BB4E2B] text-white hover:opacity-95"
+              >
+                {pending ? "Saving..." : "Sign engagement letter"}
+              </Button>
+            ) : null}
 
             {activeKind === "CONSENT_7216_USE" ? (
-              <p className="mt-1 text-xs text-slate-700">
-                Optional — choose consent/decline, or skip.
-              </p>
+              <Button
+                type="button"
+                onClick={() => doSign("CONSENT_7216_USE", consentChoice)}
+                disabled={pending || !engagementDone}
+                className="rounded-xl bg-gradient-to-br from-[#E62A68] to-[#BB4E2B] text-white hover:opacity-95"
+              >
+                {pending ? "Saving..." : "Save consent choice"}
+              </Button>
+            ) : null}
+
+            {activeKind === "CONSENT_PAYMENT" ? (
+              <Button
+                type="button"
+                onClick={() => doSign("CONSENT_PAYMENT", "SIGNED")}
+                disabled={pending || !canOpenPayment}
+                className="rounded-xl bg-gradient-to-br from-[#E62A68] to-[#BB4E2B] text-white hover:opacity-95"
+              >
+                {pending ? "Saving..." : "Sign payment consent"}
+              </Button>
+            ) : null}
+
+            {/* Final submit */}
+            <form action={submitAgreementsAndFinish}>
+              <Button
+                type="submit"
+                variant="outline"
+                className="rounded-xl"
+                disabled={!canSubmit || pending}
+              >
+                Submit and finish
+              </Button>
+            </form>
+          </div>
+
+          {/* tiny status */}
+          <div className="text-xs text-muted-foreground">
+            {engagementDone ? "Engagement: ✓ " : "Engagement: — "}
+            ·{" "}
+            {consentDone ? (
+              <>
+                7216: ✓{" "}
+                <span className="font-semibold text-foreground">
+                  ({signed.CONSENT_7216_USE?.decision ?? consentChoice})
+                </span>
+              </>
             ) : (
-              <p className="mt-1 text-xs text-slate-700">Required — sign to continue.</p>
+              "7216: —"
             )}
+            · {paymentDone ? " Payment: ✓" : " Payment: —"}
           </div>
-        </div>
-
-        {/* Consent dropdown */}
-        {activeKind === "CONSENT_7216_USE" ? (
-          <div className="mt-4 flex flex-wrap items-center gap-3">
-            <label className="text-xs font-semibold text-slate-900">Your choice</label>
-            <select
-              value={consentChoice}
-              onChange={(e) => setConsentChoice(e.target.value as any)}
-              className="rounded-xl border border-black/10 bg-white px-3 py-2 text-xs font-semibold text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#E62A68]/25 focus:border-[#E62A68]/40"
-              disabled={pending}
-            >
-              <option value="SKIPPED">Skip for now</option>
-              <option value="GRANTED">I consent</option>
-              <option value="DECLINED">I do not consent</option>
-            </select>
-          </div>
-        ) : null}
-
-        {/* Agreement text */}
-        <div className="mt-4 max-h-[420px] overflow-auto rounded-2xl border bg-slate-50 p-4">
-          <pre className="whitespace-pre-wrap text-sm leading-6 text-slate-900">
-            {AGREEMENT_TEXT[activeKind] ?? ""}
-          </pre>
-        </div>
-
-        {/* Action buttons */}
-        <div className="mt-5 flex flex-wrap gap-2">
-          {activeKind === "ENGAGEMENT" ? (
-            <button
-              type="button"
-              onClick={() => doSign("ENGAGEMENT", "SIGNED")}
-              disabled={pending}
-              className="cursor-pointer rounded-xl px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
-              style={{ background: `linear-gradient(135deg, ${BRAND.pink}, ${BRAND.copper})` }}
-            >
-              {pending ? "Saving..." : "Sign engagement letter"}
-            </button>
-          ) : null}
-
-          {activeKind === "CONSENT_7216_USE" ? (
-            <button
-              type="button"
-              onClick={() => doSign("CONSENT_7216_USE", consentChoice)}
-              disabled={pending || !engagementDone}
-              className="cursor-pointer rounded-xl px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
-              style={{ background: `linear-gradient(135deg, ${BRAND.pink}, ${BRAND.copper})` }}
-            >
-              {pending ? "Saving..." : "Save consent choice"}
-            </button>
-          ) : null}
-
-          {activeKind === "CONSENT_PAYMENT" ? (
-            <button
-              type="button"
-              onClick={() => doSign("CONSENT_PAYMENT", "SIGNED")}
-              disabled={pending || !canOpenPayment}
-              className="cursor-pointer rounded-xl px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
-              style={{ background: `linear-gradient(135deg, ${BRAND.pink}, ${BRAND.copper})` }}
-            >
-              {pending ? "Saving..." : "Sign payment consent"}
-            </button>
-          ) : null}
-
-          {/* ✅ Final Submit → /profile */}
-          <form action={submitAgreementsAndFinish}>
-            <button
-              type="submit"
-              disabled={!canSubmit || pending}
-              className="cursor-pointer rounded-xl border border-black/10 bg-white px-4 py-2 text-sm font-semibold text-slate-900 hover:bg-black/5 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              Submit and finish
-            </button>
-          </form>
-        </div>
-
-        {/* tiny status */}
-        <div className="mt-3 text-xs text-slate-700">
-          {engagementDone ? "Engagement: ✓ " : "Engagement: — "}
-          ·{" "}
-          {consentDone ? (
-            <>
-              7216: ✓{" "}
-              <span className="font-semibold">
-                ({signed.CONSENT_7216_USE?.decision ?? consentChoice})
-              </span>
-            </>
-          ) : (
-            "7216: —"
-          )}
-          · {paymentDone ? " Payment: ✓" : " Payment: —"}
-        </div>
-      </section>
+        </CardContent>
+      </Card>
     </div>
   );
 }
