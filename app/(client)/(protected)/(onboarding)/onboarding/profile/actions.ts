@@ -37,15 +37,32 @@ function normalizeDobYYYYMMDD(v: unknown) {
 }
 
 /**
+ * Accepts BOTH base64url and base64 and returns a 32-byte key buffer (or null).
+ */
+function decodeKey(keyStr: string): Buffer | null {
+  try {
+    const a = Buffer.from(keyStr, "base64url");
+    if (a.length === 32) return a;
+  } catch {}
+
+  try {
+    const b = Buffer.from(keyStr, "base64");
+    if (b.length === 32) return b;
+  } catch {}
+
+  return null;
+}
+
+/**
  * Encrypt SSN if SSN_ENCRYPTION_KEY is provided (base64 32 bytes).
  * Stores as: iv.tag.data (base64 segments)
  */
 function encryptSSN(ssnDigits: string): string | null {
-  const keyB64 = process.env.SSN_ENCRYPTION_KEY;
-  if (!keyB64) return null;
+  const keyStr = process.env.SSN_ENCRYPTION_KEY;
+  if (!keyStr) return null;
 
-  const key = Buffer.from(keyB64, "base64");
-  if (key.length !== 32) return null;
+  const key = decodeKey(keyStr);
+  if (!key) return null;
 
   const iv = crypto.randomBytes(12);
   const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
@@ -53,8 +70,11 @@ function encryptSSN(ssnDigits: string): string | null {
   const enc = Buffer.concat([cipher.update(ssnDigits, "utf8"), cipher.final()]);
   const tag = cipher.getAuthTag();
 
-  return `${iv.toString("base64")}.${tag.toString("base64")}.${enc.toString("base64")}`;
+  return `${iv.toString("base64")}.${tag.toString("base64")}.${enc.toString(
+    "base64"
+  )}`;
 }
+
 
 export async function saveProfile(formData: FormData) {
   // ✅ Source of truth: cookie tokens (NEVER trust hidden fields)
@@ -99,7 +119,7 @@ export async function saveProfile(formData: FormData) {
     });
 
   // ---------- SSN (set once) ----------
-  const ssnDigits = digitsOnly(formData.get("ssn"));
+   const ssnDigits = digitsOnly(formData.get("ssn"));
   let ssnEncrypted: string | null = null;
   let ssnLast4: string | null = null;
   let ssnSetAt: Date | null = null;
@@ -115,10 +135,17 @@ export async function saveProfile(formData: FormData) {
 
     if (!alreadySet) {
       const enc = encryptSSN(ssnDigits);
-      if (!enc) throw new Error("SSN encryption is not configured.");
-      ssnEncrypted = enc;
-      ssnLast4 = ssnDigits.slice(-4);
-      ssnSetAt = new Date();
+
+      if (!enc) {
+        // ✅ Do NOT crash onboarding if encryption isn't configured
+        console.error(
+          "[onboarding] SSN_ENCRYPTION_KEY missing/invalid — SSN not saved"
+        );
+      } else {
+        ssnEncrypted = enc;
+        ssnLast4 = ssnDigits.slice(-4);
+        ssnSetAt = new Date();
+      }
     }
   }
 
