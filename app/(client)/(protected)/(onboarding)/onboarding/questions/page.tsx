@@ -214,6 +214,7 @@ export default function OnboardingQuestionsPage() {
             <CardContent className="space-y-6">
               {/* STEP 1 */}
               <section hidden={step !== 1} className="space-y-5">
+                <fieldset disabled={step !== 1} className="space-y-5">
                 <div>
                   <label className="mb-1 block text-sm font-medium text-foreground">
                     What filing status do you expect to use?
@@ -309,10 +310,12 @@ export default function OnboardingQuestionsPage() {
                   onRemove={removeDependent}
                   onChange={updateDependent}
                 />
+                </fieldset>
               </section>
 
               {/* STEP 2 */}
               <section hidden={step !== 2} className="space-y-4">
+                <fieldset disabled={step !== 2} className="space-y-4">
                 <QuestionsYesNo
                   required
                   name="workedW2"
@@ -348,10 +351,12 @@ export default function OnboardingQuestionsPage() {
                   name="hasOtherIncome"
                   label="Did you have other income (rental, gambling, etc.)?"
                 />
+                </fieldset>
               </section>
 
               {/* STEP 3 */}
               <section hidden={step !== 3} className="space-y-4">
+                 <fieldset disabled={step !== 3} className="space-y-4">
                 <QuestionsYesNo
                   required
                   name="paidChildcare"
@@ -387,10 +392,12 @@ export default function OnboardingQuestionsPage() {
                   name="contributedRetirement"
                   label="Did you contribute to a retirement account?"
                 />
+                </fieldset>
               </section>
 
               {/* STEP 4 */}
               <section hidden={step !== 4} className="space-y-4">
+                <fieldset disabled={step !== 4} className="space-y-4">
                 <QuestionsYesNo
                   required
                   name="movedLastYear"
@@ -462,6 +469,7 @@ export default function OnboardingQuestionsPage() {
                     placeholder="Tell us anything special: side income, concerns, life changes…"
                   />
                 </div>
+                </fieldset>
               </section>
 
               <NavButtons step={step} goBack={goBack} goNext={goNext} />
@@ -491,7 +499,7 @@ function NavButtons(props: {
         variant="outline"
         className="rounded-xl"
         onClick={props.goBack}
-        disabled={props.step === 1 || pending}
+        disabled={props.step === 1}
       >
         ← Back
       </Button>
@@ -501,7 +509,6 @@ function NavButtons(props: {
           type="button"
           className="rounded-xl"
           onClick={props.goNext}
-          disabled={pending}
         >
           Next step →
         </Button>
