@@ -1,3 +1,4 @@
+// app/(client)/(protected)/(onboarding)/onboarding/documents/page.tsx
 import { redirect } from "next/navigation";
 import { getServerRole } from "@/lib/auth/roleServer";
 import OnboardingDocumentsClient from "./_components/OnboardingDocumentsClient";

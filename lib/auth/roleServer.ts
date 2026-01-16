@@ -59,6 +59,12 @@ function normalizeEmail(v: unknown): string | null {
   return s ? s : null;
 }
 
+function norm(s: unknown) {
+  return String(s ?? "")
+    .trim()
+    .toUpperCase()
+    .replace(/-/g, "_");
+}
 /* ─────────────────────────────────────────────
    App roles (MUST match DB enum exactly)
 ───────────────────────────────────────────── */
@@ -80,62 +86,60 @@ function isAppRole(v: unknown): v is AppRole {
 /* ─────────────────────────────────────────────
    Resolve role (UPPERCASE ONLY)
 ───────────────────────────────────────────── */
-function resolveRole(
-  customRoleRaw: unknown,
-  groups: string[]
-): AppRole {
-  // 1️⃣ Prefer explicit custom role
-  if (isAppRole(customRoleRaw)) {
-    return customRoleRaw;
-  }
+function resolveRole(customRoleRaw: unknown, groupsRaw: string[]): AppRole {
+  const custom = norm(customRoleRaw);
+  if (isAppRole(custom)) return custom;
 
-  // 2️⃣ Map Cognito groups → AppRole
-  if (groups.includes("superadmin")) return "SUPERADMIN";
-  if (groups.includes("admin")) return "ADMIN";
-  if (groups.includes("support-agent")) return "SUPPORT_AGENT";
-  if (groups.includes("lms-admin")) return "LMS_ADMIN";
-  if (groups.includes("lms-preparer")) return "LMS_PREPARER";
-  if (groups.includes("tax-preparer")) return "TAX_PREPARER";
-  if (groups.includes("agency")) return "AGENCY";
-  if (groups.includes("taxpayer")) return "TAXPAYER";
+  const groups = (groupsRaw ?? []).map(norm);
 
-  // 3️⃣ Safe default
+  if (groups.includes("SUPERADMIN")) return "SUPERADMIN";
+  if (groups.includes("ADMIN")) return "ADMIN";
+  if (groups.includes("SUPPORT_AGENT")) return "SUPPORT_AGENT";
+  if (groups.includes("LMS_ADMIN")) return "LMS_ADMIN";
+  if (groups.includes("LMS_PREPARER")) return "LMS_PREPARER";
+  if (groups.includes("TAX_PREPARER")) return "TAX_PREPARER";
+  if (groups.includes("AGENCY")) return "AGENCY";
+  if (groups.includes("TAXPAYER")) return "TAXPAYER";
+
   return "TAXPAYER";
 }
 
 export async function getServerRole(): Promise<ServerRoleInfo | null> {
-  const cookieStore = await cookies();
+  try {
+    const cookieStore = await cookies(); // ✅ keep await (matches your types)
 
-  const accessToken = cookieStore.get("accessToken")?.value;
-  const idToken = cookieStore.get("idToken")?.value;
+    const accessToken = cookieStore.get("accessToken")?.value;
+    const idToken = cookieStore.get("idToken")?.value;
 
-   const payload =
-    (idToken && (await verifyAndDecode(idToken))) ||
-    (idToken && decodeJwtPayload(idToken)) ||
-    (accessToken && decodeJwtPayload(accessToken));
+    const payload =
+      (idToken && (await verifyAndDecode(idToken))) ||
+      (idToken && decodeJwtPayload(idToken)) ||
+      (accessToken && decodeJwtPayload(accessToken));
 
-  if (!payload) return null;
+    if (!payload) return null;
 
+    const groups: string[] =
+      (payload["cognito:groups"] as string[] | undefined) ?? [];
 
-  const groups: string[] =
-    (payload["cognito:groups"] as string[] | undefined) ?? [];
+    const role = resolveRole(payload["custom:role"], groups);
 
-  const customRoleRaw = payload["custom:role"];
-  const role = resolveRole(customRoleRaw, groups);
+    const email =
+      normalizeEmail(payload["email"]) ??
+      normalizeEmail(payload["username"]) ??
+      normalizeEmail(payload["cognito:username"]);
 
-  const email =
-    normalizeEmail(payload["email"]) ??
-    normalizeEmail(payload["username"]) ??
-    normalizeEmail(payload["cognito:username"]);
+    const sub = (typeof payload["sub"] === "string" && payload["sub"]) || null;
 
-  const sub =
-    (typeof payload["sub"] === "string" && payload["sub"]) || null;
-
-  return {
-    role,     // ✅ ALWAYS UPPERCASE AppRole
-    email,
-    groups,
-    payload,
-    sub,
-  };
+    return {
+      role,
+      email,
+      groups,
+      payload,
+      sub,
+    };
+  } catch {
+    return null;
+  }
 }
+
+

@@ -1,4 +1,4 @@
-// app/(client)/onboarding/documents/actions.ts
+// app/(client)/(protected)/(onboarding)/onboarding/documents/actions.ts
 "use server";
 
 import { db } from "@/drizzle/db";
@@ -6,7 +6,6 @@ import { users, documents } from "@/drizzle/schema";
 import { eq, and, desc } from "drizzle-orm";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { uploadToS3, deleteFromS3 } from "@/lib/s3/s3";
 import { getServerRole } from "@/lib/auth/roleServer";
 
 // ---------------- helpers ----------------
@@ -18,8 +17,23 @@ function normalizeEmail(v: unknown) {
   return clean(v, 255).toLowerCase();
 }
 
+
+// --- S3 helpers ---
+async function getS3() {
+  return await import("@/lib/s3/s3");
+}
+
+// ---------------- auth ----------------
 async function requireAuth() {
-  const auth = await getServerRole();
+  let auth: any = null;
+
+  // ✅ Never let auth crash the action
+  try {
+    auth = await getServerRole();
+  } catch {
+    auth = null;
+  }
+
   const sub = auth?.sub ? String(auth.sub) : "";
   const email = auth?.email ? normalizeEmail(auth.email) : "";
   if (!sub) throw new Error("Unauthorized. Please sign in again.");
@@ -88,7 +102,9 @@ export async function uploadDocument(formData: FormData) {
   const safeName = file.name.replace(/[^\w.-]/g, "_");
   const key = `users/${user.id}/documents/${Date.now()}-${safeName}`;
 
+  const { uploadToS3 } = await getS3();
   const { url, key: storedKey } = await uploadToS3(file, key);
+
 
   const [doc] = await db
     .insert(documents)
@@ -152,6 +168,7 @@ export async function deleteDocument(docId: string) {
 
   if (!doc) throw new Error("Document not found.");
 
+  const { deleteFromS3 } = await getS3();
   await deleteFromS3(doc.key);
 
   await db

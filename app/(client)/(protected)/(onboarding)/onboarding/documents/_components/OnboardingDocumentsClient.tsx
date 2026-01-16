@@ -1,3 +1,4 @@
+// app/(client)/(protected)/(onboarding)/onboarding/documents/_components/OnboardingDocumentsClient.tsx
 "use client";
 
 import { useState } from "react";
@@ -5,7 +6,6 @@ import { saveDocuments } from "../actions";
 import DocumentUploader from "../../_components/DocumentUploader";
 import DocumentList from "../../../../(app)/documents/_components/DocumentList";
 import { useFormStatus } from "react-dom";
-
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";

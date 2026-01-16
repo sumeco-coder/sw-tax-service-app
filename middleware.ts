@@ -30,6 +30,7 @@ const PUBLIC_API_PREFIXES = [
   "/api/stripe/create-checkout-session",
   "/api/stripe/confirm",
   "/api/public",
+  "/api/tax-calculator",
 ];
 
 /* ─────────────────────────────────────────────
@@ -155,6 +156,12 @@ export function middleware(req: NextRequest) {
   if (pathname.startsWith("/onboarding")) {
     return NextResponse.next();
   }
+
+    // ✅ Tax calculator UI is public
+  if (pathname === "/tax-calculator" || pathname.startsWith("/tax-calculator/")) {
+    return NextResponse.next();
+  }
+
 
   const isApi = pathname.startsWith("/api");
   const isPublicApi = PUBLIC_API_PREFIXES.some((p) => pathname.startsWith(p));
