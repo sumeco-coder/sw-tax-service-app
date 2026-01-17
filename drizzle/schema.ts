@@ -1530,6 +1530,13 @@ export const taxCalculatorLeads = pgTable(
       otherDependentsCount?: number;
       useMultiW2?: boolean;
       w2sCount?: number;
+      estimate?: {
+        type?: "refund" | "owe";
+        amount?: number;
+        totalTax?: number;
+        selfEmploymentTax?: number;
+        quarterlyPayment?: number;
+      };
     }>(),
 
     // Optional metadata (helps with fraud/spam + analytics)
@@ -1540,7 +1547,9 @@ export const taxCalculatorLeads = pgTable(
     // If you want an opt-in checkbox later
     marketingOptIn: boolean("marketing_opt_in").notNull().default(false),
     taxPlanUnlocked: boolean("tax_plan_unlocked").notNull().default(false),
-    taxPlanUnlockedAt: timestamp("tax_plan_unlocked_at", { withTimezone: true }),
+    taxPlanUnlockedAt: timestamp("tax_plan_unlocked_at", {
+      withTimezone: true,
+    }),
     paidAt: timestamp("paid_at", { withTimezone: true }),
     stripeCheckoutSessionId: text("stripe_checkout_session_id"),
     stripeCustomerId: text("stripe_customer_id"),
@@ -1607,7 +1616,9 @@ export const clientBusinesses = pgTable(
     has1099Income: boolean("has_1099_income").notNull().default(false),
     notes: text("notes"),
 
-    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .defaultNow()
       .$onUpdate(() => new Date())
@@ -1623,7 +1634,6 @@ export const clientBusinesses = pgTable(
     activeIdx: index("client_businesses_active_idx").on(t.isActive),
   })
 );
-
 
 // =========================
 // 2.3 NOTICES TRACKER
@@ -1660,7 +1670,9 @@ export const clientNotices = pgTable(
     summary: text("summary"),
     resolutionNotes: text("resolution_notes"),
 
-    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .defaultNow()
       .$onUpdate(() => new Date())
@@ -1697,7 +1709,9 @@ export const clientNextSteps = pgTable(
     status: nextStepStatusEnum("status").notNull().default("OPEN"),
     priority: nextStepPriorityEnum("priority").notNull().default("NORMAL"),
 
-    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .defaultNow()
       .$onUpdate(() => new Date())
@@ -1706,5 +1720,63 @@ export const clientNextSteps = pgTable(
   (t) => ({
     userIdx: index("client_next_steps_user_idx").on(t.userId),
     dueIdx: index("client_next_steps_due_idx").on(t.dueDate),
+  })
+);
+
+// =========================
+// 2.2 EMAIL LEADS
+// =========================
+export const emailLeads = pgTable(
+  "email_leads",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+
+    // raw + normalized for uniqueness
+    email: text("email").notNull(),
+    emailLower: text("email_lower").notNull(),
+
+    // last source we saw (newsletter, waitlist, contact, tax-calculator, lead-magnet-xyz)
+    source: text("source").notNull().default("unknown"),
+
+    // only true when user explicitly opts in
+    marketingOptIn: boolean("marketing_opt_in").notNull().default(false),
+
+    // tracking / analytics (optional)
+    utm: jsonb("utm").$type<
+      Partial<{
+        utm_source: string;
+        utm_medium: string;
+        utm_campaign: string;
+        utm_term: string;
+        utm_content: string;
+      }>
+    >(),
+
+    ip: text("ip"),
+    userAgent: text("user_agent"),
+    referrer: text("referrer"),
+
+    // lifecycle
+    firstSeenAt: timestamp("first_seen_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    submitCount: integer("submit_count").notNull().default(1),
+
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => ({
+    emailLowerUnique: uniqueIndex("email_leads_email_lower_unique").on(t.emailLower),
+    lastSeenIdx: index("email_leads_last_seen_idx").on(t.lastSeenAt),
+    sourceIdx: index("email_leads_source_idx").on(t.source),
+    optinIdx: index("email_leads_optin_idx").on(t.marketingOptIn),
   })
 );

@@ -2,6 +2,7 @@
 import { NextResponse } from "next/server";
 import { db } from "@/drizzle/db";
 import { taxCalculatorLeads } from "@/drizzle/schema";
+import { upsertEmailLead } from "@/lib/leads/upsertEmailLead.server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -12,7 +13,6 @@ function isValidEmail(email: string) {
 
 function firstIpFromXff(xff: string | null) {
   if (!xff) return null;
-  // "client, proxy1, proxy2"
   const first = xff.split(",")[0]?.trim();
   return first || null;
 }
@@ -25,13 +25,9 @@ export async function POST(req: Request) {
     const emailLower = rawEmail.toLowerCase();
 
     if (!rawEmail || !isValidEmail(emailLower)) {
-      return NextResponse.json(
-        { ok: false, error: "Invalid email" },
-        { status: 400 }
-      );
+      return NextResponse.json({ ok: false, error: "Invalid email" }, { status: 400 });
     }
 
-    // Pull optional tracking from request headers
     const headers = req.headers;
     const ip =
       firstIpFromXff(headers.get("x-forwarded-for")) ||
@@ -41,7 +37,7 @@ export async function POST(req: Request) {
     const userAgent = headers.get("user-agent") || null;
     const referrer = headers.get("referer") || null;
 
-    // Safe snapshot (no SSNs) — accept only expected keys
+    // Safe snapshot (no SSNs)
     const s = body?.snapshot ?? {};
     const snapshot = {
       filingStatus: typeof s?.filingStatus === "string" ? s.filingStatus : undefined,
@@ -54,7 +50,29 @@ export async function POST(req: Request) {
       w2sCount: typeof s?.w2sCount === "number" ? s.w2sCount : undefined,
     };
 
-    // UTM (optional) — allow only expected keys
+    // ✅ Estimate summary (optional)
+    const e = body?.estimate ?? {};
+    const estimate = {
+      type: e?.type === "refund" || e?.type === "owe" ? e.type : undefined,
+      amount: typeof e?.amount === "number" ? e.amount : undefined,
+      totalTax: typeof e?.totalTax === "number" ? e.totalTax : undefined,
+      selfEmploymentTax:
+        typeof e?.selfEmploymentTax === "number" ? e.selfEmploymentTax : undefined,
+      quarterlyPayment:
+        typeof e?.quarterlyPayment === "number" ? e.quarterlyPayment : undefined,
+    };
+
+    const hasEstimate =
+      estimate.type === "refund" ||
+      estimate.type === "owe" ||
+      typeof estimate.amount === "number" ||
+      typeof estimate.totalTax === "number" ||
+      typeof estimate.selfEmploymentTax === "number" ||
+      typeof estimate.quarterlyPayment === "number";
+
+    const snapshotWithEstimate = hasEstimate ? { ...snapshot, estimate } : snapshot;
+
+    // UTM (optional)
     const u = body?.utm ?? {};
     const utm = {
       utm_source: typeof u?.utm_source === "string" ? u.utm_source : undefined,
@@ -64,47 +82,68 @@ export async function POST(req: Request) {
       utm_content: typeof u?.utm_content === "string" ? u.utm_content : undefined,
     };
 
-    const source =
+    const sourceProvided =
       typeof body?.source === "string" && body.source.trim()
         ? body.source.trim()
-        : "tax-calculator";
+        : undefined;
 
-    const marketingOptIn = Boolean(body?.marketingOptIn);
+    const sourceFinal = sourceProvided ?? "tax-calculator";
 
-    await db
-      .insert(taxCalculatorLeads)
-      .values({
+    // ✅ Only update opt-in if caller provided it
+    const marketingOptInProvided =
+      typeof body?.marketingOptIn === "boolean" ? body.marketingOptIn : undefined;
+
+        try {
+      await upsertEmailLead({
         email: rawEmail,
-        emailLower,
-        snapshot,
+        source: sourceFinal,
+        marketingOptIn: marketingOptInProvided,
         utm,
-        source,
-        marketingOptIn,
         ip,
         userAgent,
         referrer,
-      })
+      });
+    } catch {
+      // ignore (prevents breaking calculator if email_leads isn't migrated yet)
+    }
+    
+    const insertValues: any = {
+      email: rawEmail,
+      emailLower,
+      snapshot: snapshotWithEstimate,
+      ip,
+      userAgent,
+      referrer,
+    };
+
+    // keep defaults if not provided
+    if (sourceProvided) insertValues.source = sourceProvided;
+    if (Object.values(utm).some((v) => typeof v === "string" && v.length)) insertValues.utm = utm;
+    if (typeof marketingOptInProvided === "boolean") insertValues.marketingOptIn = marketingOptInProvided;
+
+    const updateSet: any = {
+      email: rawEmail,
+      snapshot: snapshotWithEstimate,
+      ip,
+      userAgent,
+      referrer,
+      updatedAt: new Date(),
+    };
+
+    if (sourceProvided) updateSet.source = sourceProvided;
+    if (Object.values(utm).some((v) => typeof v === "string" && v.length)) updateSet.utm = utm;
+    if (typeof marketingOptInProvided === "boolean") updateSet.marketingOptIn = marketingOptInProvided;
+
+    await db
+      .insert(taxCalculatorLeads)
+      .values(insertValues)
       .onConflictDoUpdate({
         target: taxCalculatorLeads.emailLower,
-        set: {
-          // keep latest casing too
-          email: rawEmail,
-          snapshot,
-          utm,
-          source,
-          marketingOptIn,
-          ip,
-          userAgent,
-          referrer,
-          updatedAt: new Date(),
-        },
+        set: updateSet,
       });
 
     return NextResponse.json({ ok: true });
-  } catch (e) {
-    return NextResponse.json(
-      { ok: false, error: "Bad request" },
-      { status: 400 }
-    );
+  } catch {
+    return NextResponse.json({ ok: false, error: "Bad request" }, { status: 400 });
   }
 }

@@ -1,3 +1,4 @@
+// app/(site)/_components/CalculatorShell.tsx
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -13,6 +14,7 @@ type Step = "quick" | "email" | "estimate" | "detailed" | "final";
 
 const STORAGE_KEY = "sw_tax_calc_state_v1";
 
+
 export default function CalculatorShell({
   access,
   unlocked,
@@ -27,6 +29,7 @@ export default function CalculatorShell({
 
   const [step, setStep] = useState<Step>("quick");
   const [localUnlocked, setLocalUnlocked] = useState(false);
+
 
   const effectiveUnlocked = useMemo(
     () => Boolean(unlocked || localUnlocked),
@@ -118,9 +121,10 @@ export default function CalculatorShell({
           )}
 
           {step === "email" && (
-            <EmailGate
+             <EmailGate
               state={state}
               onSubmit={(email) => {
+                // EmailGate already saved the lead to /api/tax-calculator/lead
                 setState((s) => ({ ...s, email }));
                 setStep("estimate");
               }}

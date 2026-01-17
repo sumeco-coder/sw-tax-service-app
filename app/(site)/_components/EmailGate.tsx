@@ -2,6 +2,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import type { CalculatorState } from "./types";
 
 function isValidEmail(email: string) {
@@ -15,15 +16,36 @@ export default function EmailGate({
   state: CalculatorState;
   onSubmit: (email: string) => void;
 }) {
+  const sp = useSearchParams();
+
   const [email, setEmail] = useState(state.email ?? "");
+  const [marketingOptIn, setMarketingOptIn] = useState(true);
   const [err, setErr] = useState("");
   const [saving, setSaving] = useState(false);
 
+  const emailTrimmed = useMemo(() => email.trim(), [email]);
   const emailLower = useMemo(() => email.trim().toLowerCase(), [email]);
+
   const canSubmit = useMemo(
     () => isValidEmail(emailLower) && !saving,
     [emailLower, saving]
   );
+
+  const utm = useMemo(() => {
+    const pick = (k: string) => sp.get(k) ?? undefined;
+    return {
+      utm_source: pick("utm_source"),
+      utm_medium: pick("utm_medium"),
+      utm_campaign: pick("utm_campaign"),
+      utm_term: pick("utm_term"),
+      utm_content: pick("utm_content"),
+    };
+  }, [sp]);
+
+  const source = useMemo(() => {
+    return (sp.get("source") ?? "").trim() || "tax-calculator";
+  }, [sp]);
+
 
   async function handleSubmit() {
     setErr("");
@@ -52,8 +74,11 @@ export default function EmailGate({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          email: emailLower,
+           email: emailTrimmed,
           snapshot,
+             utm,
+          source,
+          marketingOptIn,
         }),
       });
 
@@ -95,6 +120,15 @@ export default function EmailGate({
             }
           }}
         />
+
+        <label className="flex items-center gap-2 text-xs text-muted-foreground">
+          <input
+            type="checkbox"
+            checked={marketingOptIn}
+            onChange={(e) => setMarketingOptIn(e.target.checked)}
+          />
+          Email me tax updates (optional)
+        </label>
 
         {err ? <p className="text-sm text-destructive">{err}</p> : null}
       </div>

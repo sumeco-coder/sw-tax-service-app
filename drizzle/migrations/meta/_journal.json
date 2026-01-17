@@ -225,6 +225,13 @@
       "when": 1767935724625,
       "tag": "0031_tricky_kitty_pryde",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1768618592299,
+      "tag": "0032_nosy_vector",
+      "breakpoints": true
     }
   ]
 }

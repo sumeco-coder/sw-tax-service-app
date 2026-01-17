@@ -156,21 +156,63 @@ export default function AdminNav({ onNavigate }: { onNavigate?: () => void }) {
       { label: "Tasks", href: "/admin/tasks", icon: ClipboardList },
       { label: "Messages", href: "/admin/messages", icon: MessagesSquare },
       { label: "Billing", href: "/admin/billing", icon: CreditCard },
-      { label: "Appointments", href: "/admin/appointments", icon: CalendarClock },
-      
+      {
+        label: "Appointments",
+        href: "/admin/appointments",
+        icon: CalendarClock,
+      },
     ],
     []
   );
 
-  // ✅ Marketing / Ops (your existing items grouped)
+  // ✅ Leads group (new)
+  const leadsNav: NavItem[] = useMemo(
+    () => [
+      { label: "Leads (Emails)", href: "/admin/leads/emails", icon: Mail },
+      { label: "Tax Calculator Leads", href: "/admin/leads", icon: Calculator },
+    ],
+    []
+  );
+
+  const analyticsNav: NavItem[] = useMemo(
+    () => [
+      { label: "Overview", href: "/admin/analytics", icon: BarChart3 },
+      {
+        label: "Tax Knowledge",
+        href: "/admin/analytics/tax-knowledge",
+        icon: FileText,
+      },
+    ],
+    []
+  );
+
+  const reportsNav: NavItem[] = useMemo(
+  () => [
+    { label: "Reports Hub", href: "/admin/reports", icon: BarChart3 },
+    { label: "Payments", href: "/admin/reports/payments", icon: CreditCard },
+    { label: "Returns", href: "/admin/reports/returns", icon: FileText },
+    { label: "Clients", href: "/admin/reports/clients", icon: Users },
+    { label: "Leads", href: "/admin/reports/leads", icon: Mail },
+    { label: "Staff", href: "/admin/reports/staff", icon: UserCog },
+    { label: "Compliance", href: "/admin/reports/compliance", icon: ShieldCheck },
+    { label: "Exports", href: "/admin/reports/exports", icon: FolderOpen },
+  ],
+  []
+);
+
+
+  // ✅ Marketing / Ops
   const marketingNav: NavItem[] = useMemo(
     () => [
       { label: "Waitlist", href: "/admin/waitlist", icon: Users },
       { label: "Email", href: "/admin/email", icon: Mail },
       { label: "Campaigns", href: "/admin/email/campaigns", icon: Mail },
-      { label: "Scheduler", href: "/admin/email/scheduler", icon: CalendarClock },
+      {
+        label: "Scheduler",
+        href: "/admin/email/scheduler",
+        icon: CalendarClock,
+      },
       { label: "Social", href: "/admin/social", icon: Megaphone },
-      { label: "Analytics", href: "/admin/analytics", icon: BarChart3 },
       { label: "Tax Tools", href: "/admin/tax-tools/unlock", icon: Calculator },
     ],
     []
@@ -181,7 +223,6 @@ export default function AdminNav({ onNavigate }: { onNavigate?: () => void }) {
     () => [
       { label: "Users & Roles", href: "/admin/users", icon: UserCog },
       { label: "Agencies", href: "/admin/agencies", icon: Building2 },
-      { label: "Reports", href: "/admin/reports", icon: BarChart3 },
       { label: "Integrations", href: "/admin/integrations", icon: PlugZap },
       { label: "Compliance", href: "/admin/compliance", icon: ShieldCheck },
       { label: "System", href: "/admin/system", icon: Wrench },
@@ -203,7 +244,23 @@ export default function AdminNav({ onNavigate }: { onNavigate?: () => void }) {
         />
       ))}
 
-      {/* Groups */}
+      {/* Leads */}
+      <CollapsibleGroup
+        label="Leads"
+        items={leadsNav}
+        pathname={pathname}
+        onNavigate={onNavigate}
+      />
+
+      <CollapsibleGroup
+  label="Reports"
+  items={reportsNav}
+  pathname={pathname}
+  onNavigate={onNavigate}
+/>
+
+
+      {/* Marketing */}
       <CollapsibleGroup
         label="Marketing"
         items={marketingNav}
@@ -211,6 +268,14 @@ export default function AdminNav({ onNavigate }: { onNavigate?: () => void }) {
         onNavigate={onNavigate}
       />
 
+      <CollapsibleGroup
+        label="Analytics"
+        items={analyticsNav}
+        pathname={pathname}
+        onNavigate={onNavigate}
+      />
+
+      {/* Admin */}
       <CollapsibleGroup
         label="Admin"
         items={adminNav}
