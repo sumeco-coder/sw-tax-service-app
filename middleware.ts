@@ -18,6 +18,7 @@ const PUBLIC_UI_PATHS = new Set([
   "/invite",
   "/invite/consume",
   "/taxpayer/onboarding-sign-up",
+  "/analytics",
 ]);
 
 /* ─────────────────────────────────────────────
@@ -37,6 +38,7 @@ const PUBLIC_API_PREFIXES = [
    Client protected UI routes
 ───────────────────────────────────────────── */
 const CLIENT_PROTECTED_PREFIXES = [
+  "/analytics", 
   "/appointments",
   "/dashboard",
   "/dependents",
