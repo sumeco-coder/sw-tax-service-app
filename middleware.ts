@@ -19,6 +19,9 @@ const PUBLIC_UI_PATHS = new Set([
   "/invite/consume",
   "/taxpayer/onboarding-sign-up",
   "/analytics",
+  "/checkout",
+  "/checkout/success",
+  "/checkout/cancel",
 ]);
 
 /* ─────────────────────────────────────────────
