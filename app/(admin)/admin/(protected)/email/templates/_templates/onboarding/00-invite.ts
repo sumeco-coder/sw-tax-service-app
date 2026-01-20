@@ -75,7 +75,7 @@ export const template: EmailTemplate = {
                         <tr>
                           <td class="btn" align="center" style="background:#E00040; border-radius:14px; padding:12px 18px;">
                             <a
-                              href="{{invite_link}}"
+                              href="{{onboarding_sign_up_url}}"
                               aria-label="Start onboarding"
                               style="display:inline-block; font-size:14px; font-weight:900; color:#ffffff; text-decoration:none; border-radius:14px; mso-padding-alt:12px 18px;"
                             >

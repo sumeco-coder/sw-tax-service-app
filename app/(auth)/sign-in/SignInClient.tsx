@@ -5,13 +5,14 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import Image from "next/image";
+import { decodeJwt } from "jose";
+
 
 import {
   signIn,
   confirmSignIn,
   confirmSignUp,
   resendSignUpCode,
-  fetchUserAttributes,
   getCurrentUser,
   signOut,
   fetchAuthSession,
@@ -144,35 +145,32 @@ export default function SigninClient() {
   }
 
   /** ✅ Force onboarding for taxpayers (or invite flow) until onboardingComplete=true */
-  async function routeAfterAuth() {
-    const intended = intendedAfterOnboarding || "/dashboard";
+ /** ✅ Force onboarding for taxpayers (or invite flow) until onboardingComplete=true */
+async function routeAfterAuth() {
+  const intended = intendedAfterOnboarding || "/dashboard";
 
-    try {
-      const attrs = await fetchUserAttributes();
-      const role = (attrs["custom:role"] ?? "").toLowerCase();
+  try {
+    const session = await fetchAuthSession();
+    const idToken = session.tokens?.idToken?.toString() ?? "";
+
+    if (idToken) {
+      const payload = decodeJwt(idToken) as Record<string, any>;
+      const roleClaim = String(payload["custom:role"] ?? "").toLowerCase();
       const onboardingComplete =
-        (attrs["custom:onboardingComplete"] ?? "").toLowerCase() === "true";
+        String(payload["custom:onboardingComplete"] ?? "").toLowerCase() === "true";
 
-      // If they are invited OR taxpayer, and onboarding isn't complete, force onboarding.
-      if ((invite || role === "taxpayer") && !onboardingComplete) {
-        const qs = new URLSearchParams();
-        // preserve intended destination so onboarding can send them there later
-        qs.set("next", intended);
-
-        router.push(`/onboarding/profile?${qs.toString()}`);
+      if ((invite || roleClaim === "taxpayer") && !onboardingComplete) {
+        router.push(`/onboarding/profile?next=${encodeURIComponent(intended)}`);
         return;
       }
-    } catch {
-      if (invite) {
-      const qs = new URLSearchParams();
-      qs.set("next", intended);
-      router.push(`/onboarding/profile?${qs.toString()}`);
-      return;
     }
-    }
-
-    router.push(intended);
+  } catch (e) {
+    console.error("routeAfterAuth token check failed:", e);
   }
+
+  router.push(intended);
+}
+
 
   // ✅ If already signed in, redirect right away
   useEffect(() => {

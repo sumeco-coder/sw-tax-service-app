@@ -41,7 +41,7 @@ const PUBLIC_API_PREFIXES = [
    Client protected UI routes
 ───────────────────────────────────────────── */
 const CLIENT_PROTECTED_PREFIXES = [
-  "/analytics", 
+  "/analytics",
   "/appointments",
   "/dashboard",
   "/dependents",
@@ -162,11 +162,13 @@ export function middleware(req: NextRequest) {
     return NextResponse.next();
   }
 
-    // ✅ Tax calculator UI is public
-  if (pathname === "/tax-calculator" || pathname.startsWith("/tax-calculator/")) {
+  // ✅ Tax calculator UI is public
+  if (
+    pathname === "/tax-calculator" ||
+    pathname.startsWith("/tax-calculator/")
+  ) {
     return NextResponse.next();
   }
-
 
   const isApi = pathname.startsWith("/api");
   const isPublicApi = PUBLIC_API_PREFIXES.some((p) => pathname.startsWith(p));
@@ -180,6 +182,10 @@ export function middleware(req: NextRequest) {
   const payload = getAuthPayload(req);
   const groups = payload ? getGroups(payload) : [];
   const role = payload ? resolveRole(payload["custom:role"], groups) : null;
+
+  const onboardingComplete =
+    String(payload?.["custom:onboardingComplete"] ?? "").toLowerCase() ===
+    "true";
 
   const isAdmin =
     role === "ADMIN" ||
@@ -195,6 +201,19 @@ export function middleware(req: NextRequest) {
     const next = pathname + (url.search || "");
     return NextResponse.redirect(
       new URL(`/sign-in?next=${encodeURIComponent(next)}`, req.url)
+    );
+  }
+
+  // ✅ HARD GATE: taxpayers must finish onboarding before using protected pages
+  if (
+    clientProtected &&
+    payload &&
+    role === "TAXPAYER" &&
+    !onboardingComplete
+  ) {
+    const next = pathname + (url.search || "");
+    return NextResponse.redirect(
+      new URL(`/onboarding/profile?next=${encodeURIComponent(next)}`, req.url)
     );
   }
 

@@ -12,6 +12,7 @@ import { configureAmplify } from "@/lib/amplifyClient";
 import Link from "next/link";
 import { completeInvite } from "../onboarding-sign-up/actions";
 import { useRouter } from "next/navigation";
+import { Eye, EyeOff } from "lucide-react";
 
 interface Props {
   email: string;
@@ -34,6 +35,15 @@ const inputBase =
 const inputFocus =
   "focus:ring-2 focus:ring-[#E72B69]/25 focus:border-[#E72B69]";
 const inputBorder = "border-slate-200";
+
+function safeInternalPath(input: string | undefined | null, fallback: string) {
+  const raw = String(input ?? "").trim();
+  if (!raw) return fallback;
+  if (!raw.startsWith("/")) return fallback;
+  if (raw.startsWith("//")) return fallback;
+  if (raw.startsWith("/onboarding")) return fallback; // next should be AFTER onboarding
+  return raw;
+}
 
 async function syncServerCookiesFromSession() {
   const session = await fetchAuthSession();
@@ -61,16 +71,22 @@ export default function OnboardingSignUpForm({
     configureAmplify();
   }, []);
 
+  const normalizedNext = useMemo(
+    () => safeInternalPath(nextPath, "/dashboard"),
+    [nextPath]
+  );
+
   const signInHref = useMemo(() => {
     const qs = new URLSearchParams();
     qs.set("invite", token);
-    qs.set("next", nextPath); // ✅ next = after onboarding
+    qs.set("next", normalizedNext); // ✅ next = AFTER onboarding
     return `/sign-in?${qs.toString()}`;
-  }, [token, nextPath]);
+  }, [token, normalizedNext]);
 
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [code, setCode] = useState("");
   const [phase, setPhase] = useState<Phase>("signup");
   const [msg, setMsg] = useState("");
@@ -147,8 +163,13 @@ export default function OnboardingSignUpForm({
 
       // ✅ go directly to your real onboarding step
       const qs = new URLSearchParams();
-      qs.set("next", nextPath);
-      router.replace(`/onboarding/profile?${qs.toString()}`);
+      qs.set("next", normalizedNext);
+
+      const target = `/onboarding/profile?${qs.toString()}`;
+      router.replace(target);
+      setTimeout(() => {
+        window.location.href = target;
+      }, 50);
     } catch (err: any) {
       console.error(err);
       setMsg(err?.message ?? "Invalid code. Please try again.");
@@ -236,14 +257,29 @@ export default function OnboardingSignUpForm({
             <label className="mb-1 block text-sm font-medium text-slate-700">
               Create a password
             </label>
-            <input
-              type="password"
-              required
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="Choose a secure password"
-              className={`${inputBase} ${inputBorder} ${inputFocus}`}
-            />
+            <div className="relative">
+              <input
+                type={showPassword ? "text" : "password"}
+                required
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Choose a secure password"
+                className={`${inputBase} ${inputBorder} ${inputFocus} pr-11`}
+              />
+
+              <button
+                type="button"
+                onClick={() => setShowPassword((v) => !v)}
+                className="absolute right-2 top-1/2 -translate-y-1/2 rounded-lg p-2 text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+                aria-label={showPassword ? "Hide password" : "Show password"}
+              >
+                {showPassword ? (
+                  <EyeOff className="h-5 w-5" />
+                ) : (
+                  <Eye className="h-5 w-5" />
+                )}
+              </button>
+            </div>
           </div>
 
           <input type="hidden" name="token" value={token} />
