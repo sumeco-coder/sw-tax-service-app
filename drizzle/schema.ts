@@ -818,6 +818,10 @@ export const dependents = pgTable(
 export const clientAgreements = pgTable("client_agreements", {
   id: uuid("id").defaultRandom().primaryKey(),
 
+  taxReturnId: uuid("tax_return_id").references(() => taxReturns.id, {
+    onDelete: "cascade",
+  }),
+
   userId: text("user_id").notNull(),
   taxYear: text("tax_year").notNull(),
 
@@ -1774,7 +1778,9 @@ export const emailLeads = pgTable(
       .$onUpdate(() => new Date()),
   },
   (t) => ({
-    emailLowerUnique: uniqueIndex("email_leads_email_lower_unique").on(t.emailLower),
+    emailLowerUnique: uniqueIndex("email_leads_email_lower_unique").on(
+      t.emailLower
+    ),
     lastSeenIdx: index("email_leads_last_seen_idx").on(t.lastSeenAt),
     sourceIdx: index("email_leads_source_idx").on(t.source),
     optinIdx: index("email_leads_optin_idx").on(t.marketingOptIn),

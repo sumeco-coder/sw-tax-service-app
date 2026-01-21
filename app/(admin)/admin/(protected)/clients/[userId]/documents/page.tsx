@@ -1,10 +1,12 @@
 // app/(admin)/admin/(protected)/clients/[userId]/documents/page.tsx
 import Link from "next/link";
-import { redirect } from "next/navigation";
+import { redirect, notFound  } from "next/navigation";
 import { ArrowLeft, Send } from "lucide-react";
-
+import { db } from "@/drizzle/db";
+import { users } from "@/drizzle/schema";
+import { eq } from "drizzle-orm";
 import { getServerRole } from "@/lib/auth/roleServer";
-
+import ResendInviteButton from "../_components/ResendInviteButton";
 // ✅ Prefer alias import instead of deep ../../.. (less fragile)
 import DocumentsClient from "@/app/(client)/(protected)/(app)/documents/_components/DocumentsClient";
 
@@ -30,6 +32,14 @@ export default async function AdminClientDocumentsPage({
 
   const userId = params.userId;
 
+    const [u] = await db
+    .select({ email: users.email })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+
+  if (!u?.email) notFound();
+
   return (
     <main className="min-h-dvh bg-background px-3 py-6 sm:px-6">
       <div className="mx-auto w-full max-w-6xl space-y-4">
@@ -48,6 +58,8 @@ export default async function AdminClientDocumentsPage({
               Client documents
             </div>
           </div>
+
+            <ResendInviteButton email={u.email} />
 
           <Link
             href={`/admin/clients/${userId}/documents/request`}

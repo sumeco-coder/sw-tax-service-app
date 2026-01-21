@@ -1,9 +1,11 @@
+// app/(admin)/admin/(protected)/clients/page.tsx
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { db } from "@/drizzle/db";
 import { users, documents, taxReturns } from "@/drizzle/schema";
 import { getServerRole } from "@/lib/auth/roleServer";
 import { desc, eq, sql } from "drizzle-orm";
+import { adminCreateClientAndRedirect } from "./actions";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -120,6 +122,80 @@ export default async function ClientActivityReportPage() {
           </Link>
         </div>
       </div>
+
+        {/* ✅ Create Client (Invite) */}
+      <details className="rounded-2xl border bg-background/80 shadow-sm">
+        <summary className="cursor-pointer select-none p-4 font-medium">
+          Create client (send invite)
+        </summary>
+
+        <form
+          action={adminCreateClientAndRedirect}
+          className="p-4 pt-0 grid gap-3 sm:grid-cols-2"
+        >
+          <div className="grid gap-1">
+            <label className="text-xs text-muted-foreground">Email</label>
+            <input
+              name="email"
+              type="email"
+              required
+              className="h-10 rounded-md border px-3 bg-background"
+              placeholder="client@email.com"
+            />
+          </div>
+
+          <div className="grid gap-1">
+            <label className="text-xs text-muted-foreground">Phone (optional)</label>
+            <input
+              name="phone"
+              className="h-10 rounded-md border px-3 bg-background"
+              placeholder="+17025551234"
+            />
+          </div>
+
+          <div className="grid gap-1">
+            <label className="text-xs text-muted-foreground">First name (optional)</label>
+            <input name="firstName" className="h-10 rounded-md border px-3 bg-background" />
+          </div>
+
+          <div className="grid gap-1">
+            <label className="text-xs text-muted-foreground">Last name (optional)</label>
+            <input name="lastName" className="h-10 rounded-md border px-3 bg-background" />
+          </div>
+
+          <div className="grid gap-1">
+            <label className="text-xs text-muted-foreground">Role (optional)</label>
+            <input
+              name="role"
+              className="h-10 rounded-md border px-3 bg-background"
+              placeholder="client"
+            />
+          </div>
+
+          <div className="grid gap-1">
+            <label className="text-xs text-muted-foreground">AgencyId (optional)</label>
+            <input name="agencyId" className="h-10 rounded-md border px-3 bg-background" />
+          </div>
+
+           <div className="grid gap-1 sm:col-span-2">
+            <label className="text-xs text-muted-foreground">Invite method</label>
+            <select
+              name="inviteMode"
+              defaultValue="branded"
+              className="h-10 rounded-md border px-3 bg-background"
+            >
+              <option value="branded">Branded email (Resend) + Forgot password</option>
+              <option value="cognito">Cognito invite (temp password email)</option>
+            </select>
+          </div>
+
+          <div className="sm:col-span-2 flex justify-end">
+            <button className="inline-flex h-10 items-center justify-center rounded-md border px-4 text-sm font-medium">
+              Create & Send Invite
+            </button>
+          </div>
+        </form>
+      </details>
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Card label="Total clients" value={fmt.format(totalClients)} />

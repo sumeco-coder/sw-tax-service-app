@@ -232,6 +232,13 @@
       "when": 1768618592299,
       "tag": "0032_nosy_vector",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1768949456036,
+      "tag": "0033_add-tax-return-id-to-client-agreements",
+      "breakpoints": true
     }
   ]
 }
