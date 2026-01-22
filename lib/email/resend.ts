@@ -34,8 +34,9 @@ let _resend: Resend | null = null;
 
 function getResendClient() {
   if (_resend) return _resend;
-  const key = process.env.RESEND_API_KEY;
+  const key = (process.env["RESEND_API_KEY"] ?? "").trim();
   if (!key) throw new Error("RESEND_API_KEY is not set");
+
   _resend = new Resend(key);
   return _resend;
 }

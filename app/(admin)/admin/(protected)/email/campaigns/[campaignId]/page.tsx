@@ -8,7 +8,7 @@ import {
   appointmentAudienceSegment,
 } from "@/drizzle/schema";
 import { desc, eq, sql } from "drizzle-orm";
-
+import { DateTime } from "luxon";
 import ConfirmActionButton from "./_components/ConfirmActionButton";
 import CampaignHeader from "./_components/campaign-header";
 import AudienceSection from "./_components/audience-section";
@@ -173,10 +173,21 @@ export default async function CampaignDetailPage({ params }: PageProps) {
   }
 
   async function scheduleDirectResendAction(formData: FormData) {
-    "use server";
-    const sendAtIso = String(formData.get("sendAtIso") ?? "").trim();
-    await scheduleDirectResend(campaign.id, sendAtIso);
-  }
+  "use server";
+
+  const local = String(formData.get("sendAtIso") ?? "").trim(); // e.g. 2026-01-22T09:00
+  if (!local) throw new Error("Pick a date/time.");
+
+  // Treat the input as Los Angeles time, then convert to UTC ISO for Resend
+  const sendAtUtcIso = DateTime
+    .fromFormat(local, "yyyy-MM-dd'T'HH:mm", { zone: "America/Los_Angeles" })
+    .toUTC()
+    .toISO();
+
+  if (!sendAtUtcIso) throw new Error("Invalid date/time.");
+
+  await scheduleDirectResend(campaign.id, sendAtUtcIso);
+}
 
   /* =========================
      ✅ PREVIEW RENDER (server)
