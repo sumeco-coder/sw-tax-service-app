@@ -3,8 +3,6 @@
 
 import "server-only";
 
-export const runtime = "nodejs";
-
 import crypto from "crypto";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
