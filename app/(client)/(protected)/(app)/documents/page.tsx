@@ -10,7 +10,14 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 export default async function ClientDocumentsPage() {
-  const auth = await getServerRole();
+  let auth: any = null;
+  try {
+    auth = await getServerRole();
+  } catch (e) {
+    console.error("getServerRole failed on /documents", e);
+    auth = null;
+  }
+  
   if (!auth) return redirect("/sign-in");
 
   const sub = String(auth.sub ?? "");

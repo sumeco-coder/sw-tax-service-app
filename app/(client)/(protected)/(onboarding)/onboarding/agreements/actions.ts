@@ -1,11 +1,16 @@
 // app/(client)/(protected)/onboarding/agreements/actions.ts
 "use server";
 
+import "server-only";
+
+export const runtime = "nodejs";
+
 import crypto from "crypto";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { and, desc, eq, inArray } from "drizzle-orm";
+
 import { db } from "@/drizzle/db";
 import { users, clientAgreements } from "@/drizzle/schema";
 import { getServerRole } from "@/lib/auth/roleServer";
@@ -15,15 +20,15 @@ import {
   type AgreementKind,
 } from "@/lib/legal/agreements";
 
-/* ---------------- helpers ---------------- */
+const ERR_UNAUTHORIZED = "UNAUTHORIZED";
 
 function sha256(input: string) {
   return crypto.createHash("sha256").update(input, "utf8").digest("hex");
 }
 
-// 2026 filing season => 2025 tax year
+// ✅ MUST match agreements/page.tsx (your UI shows Tax year 2026)
 function getTaxYear() {
-  return String(new Date().getFullYear() - 1);
+  return String(new Date().getFullYear());
 }
 
 const ALL_KINDS = ["ENGAGEMENT", "CONSENT_7216_USE", "CONSENT_PAYMENT"] as const;
@@ -34,19 +39,29 @@ async function auditTrail() {
     h.get("x-forwarded-for")?.split(",")[0]?.trim() ??
     h.get("x-real-ip") ??
     null;
+
   const userAgent = h.get("user-agent") ?? null;
   return { ip, userAgent };
 }
 
+/**
+ * Auth + user row helper
+ * - Throws UNAUTHORIZED instead of redirecting (so you control redirects at call sites)
+ */
 async function requireUserRow() {
-  const auth = await getServerRole();
-  if (!auth) return redirect("/sign-in");
+  let auth: any = null;
+  try {
+    auth = await getServerRole();
+  } catch (e) {
+    console.error("getServerRole failed in agreements/actions", e);
+    auth = null;
+  }
 
-  const sub = String(auth.sub ?? "");
-  if (!sub) return redirect("/sign-in");
+  const sub = auth?.sub ? String(auth.sub) : "";
+  if (!sub) throw new Error(ERR_UNAUTHORIZED);
 
-  const email = String(auth.email ?? "").trim().toLowerCase();
-  if (!email) return redirect("/sign-in"); // email is NOT NULL in DB
+  const email = String(auth?.email ?? "").trim().toLowerCase();
+  if (!email) throw new Error(ERR_UNAUTHORIZED); // email is NOT NULL in DB
 
   const [u] = await db
     .select({
@@ -59,14 +74,12 @@ async function requireUserRow() {
     .where(eq(users.cognitoSub, sub))
     .limit(1);
 
-  // ✅ If missing, create it (instead of redirecting)
   if (!u) {
     const [created] = await db
       .insert(users)
       .values({
         cognitoSub: sub,
         email,
-        // onboardingStep has default("PROFILE") in schema, so no need to set it
         updatedAt: new Date(),
       })
       .returning({
@@ -76,11 +89,11 @@ async function requireUserRow() {
         email: users.email,
       });
 
-    if (!created) return redirect("/onboarding"); // safety fallback
+    if (!created) throw new Error("USER_CREATE_FAILED");
     return { auth, user: created };
   }
 
-  // ✅ keep email in sync (optional but recommended)
+  // keep email in sync
   if (u.email !== email) {
     await db
       .update(users)
@@ -91,26 +104,22 @@ async function requireUserRow() {
   return { auth, user: { ...u, email } };
 }
 
-
 /* ---------------- actions ---------------- */
 
-/**
- * Called from SUMMARY → sets step to AGREEMENTS and redirects
- */
 export async function startAgreements() {
-  const { user } = await requireUserRow();
+  let user: any;
+  try {
+    ({ user } = await requireUserRow());
+  } catch (e: any) {
+    if (String(e?.message) === ERR_UNAUTHORIZED) redirect("/sign-in?next=/onboarding/agreements");
+    throw e;
+  }
 
   const step = String(user.onboardingStep ?? "");
 
-  // If they’re already finished, just send them out
-  if (step === "SUBMITTED" || step === "DONE") {
-    redirect("/profile");
-  }
+  if (step === "SUBMITTED" || step === "DONE") redirect("/profile");
 
-  // Only allow entry from SUMMARY (or if already on AGREEMENTS)
-  if (step !== "SUMMARY" && step !== "AGREEMENTS") {
-    redirect("/onboarding/summary");
-  }
+  if (step !== "SUMMARY" && step !== "AGREEMENTS") redirect("/onboarding/summary");
 
   if (step !== "AGREEMENTS") {
     await db
@@ -126,9 +135,6 @@ export async function startAgreements() {
   redirect("/onboarding/agreements");
 }
 
-/**
- * Save single agreement signature (append-only)
- */
 export async function signAgreement(input: {
   kind: AgreementKind;
   taxpayerName: string;
@@ -136,11 +142,20 @@ export async function signAgreement(input: {
   spouseName?: string;
   decision?: "SIGNED" | "GRANTED" | "DECLINED" | "SKIPPED";
 }) {
-  const { user } = await requireUserRow();
+  let user: any;
+  try {
+    ({ user } = await requireUserRow());
+  } catch (e: any) {
+    // IMPORTANT: don’t redirect here unless your UI expects navigation.
+    // Throw a clean error the client can show.
+    if (String(e?.message) === ERR_UNAUTHORIZED) throw new Error("Please sign in again.");
+    throw e;
+  }
 
   const currentStep = String(user.onboardingStep ?? "");
   if (currentStep !== "AGREEMENTS" && currentStep !== "SUMMARY") {
-    redirect("/onboarding/summary");
+    // Don’t redirect (can cause weird 500s depending on how client calls this action)
+    throw new Error("Please return to the onboarding summary to continue.");
   }
 
   const kind = input.kind;
@@ -152,9 +167,7 @@ export async function signAgreement(input: {
   const spouseName = String(input.spouseName ?? "").trim();
 
   if (taxpayerName.length < 5) throw new Error("Enter taxpayer full legal name.");
-  if (spouseRequired && spouseName.length < 5) {
-    throw new Error("Enter spouse full legal name.");
-  }
+  if (spouseRequired && spouseName.length < 5) throw new Error("Enter spouse full legal name.");
 
   const decision =
     input.decision ?? (kind === "CONSENT_7216_USE" ? "SKIPPED" : "SIGNED");
@@ -169,14 +182,11 @@ export async function signAgreement(input: {
     version: AGREEMENT_VERSION,
     contentHash: sha256(text),
     decision,
-
     taxpayerName,
     taxpayerSignedAt: now,
-
     spouseRequired,
     spouseName: spouseRequired ? spouseName : null,
     spouseSignedAt: spouseRequired ? now : null,
-
     ip,
     userAgent,
   });
@@ -185,11 +195,14 @@ export async function signAgreement(input: {
   revalidatePath("/onboarding");
 }
 
-/**
- * Final submit — validates latest of each kind, sets step to SUBMITTED, then redirects
- */
 export async function submitAgreementsAndFinish() {
-  const { user } = await requireUserRow();
+  let user: any;
+  try {
+    ({ user } = await requireUserRow());
+  } catch (e: any) {
+    if (String(e?.message) === ERR_UNAUTHORIZED) redirect("/sign-in?next=/onboarding/agreements");
+    throw e;
+  }
 
   const step = String(user.onboardingStep ?? "");
   if (step !== "AGREEMENTS") redirect("/onboarding/agreements");
@@ -215,7 +228,6 @@ export async function submitAgreementsAndFinish() {
     )
     .orderBy(desc(clientAgreements.createdAt));
 
-  // newest first → latest per kind
   const latest = new Map<string, (typeof rows)[number]>();
   for (const r of rows) if (!latest.has(String(r.kind))) latest.set(String(r.kind), r);
 

@@ -39,20 +39,62 @@ function getStepIndex(step: OnboardingStep) {
   return idx === -1 ? 0 : idx;
 }
 
-export default async function AgreementsPage() {
-  const auth = await getServerRole();
-  const sub = auth?.sub ? String(auth.sub) : "";
-  if (!sub) redirect("/sign-in");
+function ErrorShell({ taxYear }: { taxYear: string }) {
+  return (
+    <main className="min-h-screen bg-gradient-to-b from-secondary to-background px-4 py-10">
+      <div className="mx-auto max-w-5xl">
+        <Card className="rounded-2xl">
+          <CardHeader className="space-y-3">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <Badge variant="secondary">Onboarding</Badge>
+                <CardTitle className="mt-2">Agreements</CardTitle>
+              </div>
+              <Badge variant="outline">Tax year {taxYear}</Badge>
+            </div>
+            <Separator />
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-muted-foreground">
+              We couldn’t load your agreements right now. Please refresh. If it
+              keeps happening, sign out and sign in again.
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+    </main>
+  );
+}
 
-  const [u] = await db
-    .select({ id: users.id, onboardingStep: users.onboardingStep })
-    .from(users)
-    .where(eq(users.cognitoSub, sub))
-    .limit(1);
+export default async function AgreementsPage() {
+  const taxYear = getTaxYear();
+
+  let auth: any = null;
+  try {
+    auth = await getServerRole();
+  } catch (e) {
+    console.error("getServerRole failed on /onboarding/agreements", e);
+    auth = null;
+  }
+
+   const sub = auth?.sub ? String(auth.sub) : "";
+  if (!sub) redirect(`/sign-in?next=/onboarding/agreements`);
+
+  let u: { id: string; onboardingStep: OnboardingStep } | undefined;
+  try {
+    [u] = await db
+      .select({ id: users.id, onboardingStep: users.onboardingStep })
+      .from(users)
+      .where(eq(users.cognitoSub, sub))
+      .limit(1);
+  } catch (e) {
+    console.error("DB error loading user for agreements", e);
+    return <ErrorShell taxYear={taxYear} />;
+  }
 
   if (!u) redirect("/onboarding");
 
-   const step = (u.onboardingStep as unknown as OnboardingStep) ?? null;
+  const step = (u.onboardingStep as unknown as OnboardingStep) ?? null;
 
   // If already submitted, go dashboard
   if (step === "SUBMITTED" || step === "DONE") {
@@ -60,10 +102,10 @@ export default async function AgreementsPage() {
       auth?.role === "ADMIN"
         ? "/admin"
         : auth?.role === "LMS_ADMIN"
-        ? "/lms"
-        : auth?.role === "TAX_PREPARER"
-        ? "/preparer"
-        : "/profile";
+          ? "/lms"
+          : auth?.role === "TAX_PREPARER"
+            ? "/preparer"
+            : "/profile";
     redirect(next);
   }
 
@@ -72,33 +114,36 @@ export default async function AgreementsPage() {
     redirect("/onboarding");
   }
 
-
   // If they jump here too early, send them back
   if (step !== "AGREEMENTS" && step !== "SUMMARY") {
     redirect("/onboarding/summary");
   }
 
-  const taxYear = getTaxYear();
-
-  // Pull latest signed status per kind (scoped by tax year)
-  const rows = await db
-    .select({
-      kind: clientAgreements.kind,
-      decision: clientAgreements.decision,
-      taxpayerSignedAt: clientAgreements.taxpayerSignedAt,
-      spouseRequired: clientAgreements.spouseRequired,
-      spouseSignedAt: clientAgreements.spouseSignedAt,
-      createdAt: clientAgreements.createdAt,
-    })
-    .from(clientAgreements)
-    .where(
-      and(
-        eq(clientAgreements.userId, String(u.id)), // ✅ userId is TEXT
-        eq(clientAgreements.taxYear, taxYear), // ✅ taxYear required in your schema
-        inArray(clientAgreements.kind, KINDS as any)
+  // ✅ Agreement query must never crash the render
+  let rows: any[] = [];
+  try {
+    rows = await db
+      .select({
+        kind: clientAgreements.kind,
+        decision: clientAgreements.decision,
+        taxpayerSignedAt: clientAgreements.taxpayerSignedAt,
+        spouseRequired: clientAgreements.spouseRequired,
+        spouseSignedAt: clientAgreements.spouseSignedAt,
+        createdAt: clientAgreements.createdAt,
+      })
+      .from(clientAgreements)
+      .where(
+        and(
+          eq(clientAgreements.userId, String(u.id)),
+          eq(clientAgreements.taxYear, taxYear),
+          inArray(clientAgreements.kind, KINDS as any)
+        )
       )
-    )
-    .orderBy(desc(clientAgreements.createdAt));
+      .orderBy(desc(clientAgreements.createdAt));
+  } catch (e) {
+    console.error("DB error loading agreements", e);
+    return <ErrorShell taxYear={taxYear} />;
+  }
 
   // newest first → keep latest per kind
   const latest: Record<string, any> = {};
@@ -142,7 +187,7 @@ export default async function AgreementsPage() {
   };
 
   return (
-      <main className="min-h-screen bg-gradient-to-b from-secondary to-background px-4 py-10">
+    <main className="min-h-screen bg-gradient-to-b from-secondary to-background px-4 py-10">
       <div className="mx-auto max-w-5xl">
         <Card className="rounded-2xl">
           <CardHeader className="space-y-3">
@@ -164,4 +209,3 @@ export default async function AgreementsPage() {
     </main>
   );
 }
-
