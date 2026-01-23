@@ -1,3 +1,10 @@
+import { redirect } from "next/navigation";
+import { cookies } from "next/headers";
+import { decodeJwt } from "jose";
+import { db } from "@/drizzle/db";
+import { users } from "@/drizzle/schema";
+import { eq } from "drizzle-orm";
+
 import CompleteButton from "./_components/CompleteButton";
 import { completeOnboarding } from "./actions";
 
@@ -30,9 +37,41 @@ type SearchParams = { [key: string]: string | string[] | undefined };
 export default async function OnboardingCompletePage({
   searchParams,
 }: {
-  // ✅ Next 15: treat searchParams as async
   searchParams: Promise<SearchParams>;
 }) {
+  /* ───────────────────────── HARD GUARD ───────────────────────── */
+
+  const cookieStore = await cookies();
+  const idToken = cookieStore.get("idToken")?.value;
+
+  if (!idToken) {
+    redirect("/sign-in");
+  }
+
+  let sub: string | undefined;
+  try {
+    sub = (decodeJwt(idToken!) as any)?.sub;
+  } catch {
+    redirect("/sign-in");
+  }
+
+  if (!sub) {
+    redirect("/sign-in");
+  }
+
+  const [user] = await db
+    .select({ onboardingStep: users.onboardingStep })
+    .from(users)
+    .where(eq(users.cognitoSub, sub))
+    .limit(1);
+
+  // 🔒 STOP re-render loop forever
+  if (user?.onboardingStep === "DONE") {
+    redirect("/dashboard");
+  }
+
+  /* ───────────────────────── PAGE LOGIC ───────────────────────── */
+
   const sp = await searchParams;
 
   const nextParam = oneParam(sp.next);
@@ -105,7 +144,6 @@ export default async function OnboardingCompletePage({
             </ul>
           </section>
 
-          {/* Server action form (fallback). Button tries API first. */}
           <form id={formId} action={completeOnboarding} className="mt-6">
             <input type="hidden" name="next" value={intendedAfterOnboarding} />
             <CompleteButton formId={formId} />
