@@ -1,4 +1,5 @@
 // app/(client)/(protected)/(onboarding)/layout.tsx
+import React from "react";
 import { redirect } from "next/navigation";
 import { getServerRole } from "@/lib/auth/roleServer";
 import { db } from "@/drizzle/db";
@@ -15,11 +16,29 @@ function safeInternalPath(input: string | null, fallback: string) {
   if (!raw) return fallback;
   if (!raw.startsWith("/")) return fallback;
   if (raw.startsWith("//")) return fallback;
+  if (raw.includes("://")) return fallback;
   return raw;
 }
 
 function cleanLower(v: unknown) {
   return String(v ?? "").trim().toLowerCase();
+}
+
+// Best-effort way to know which onboarding page is being requested.
+// (We mainly need this to avoid redirecting /onboarding/complete to itself.)
+async function getCurrentPathname(): Promise<string> {
+  const h = await headers();
+
+  // try a few common proxy/CDN headers (may be empty depending on platform)
+  const fromOriginalUrl = h.get("x-original-url") || h.get("x-rewrite-url") || "";
+  if (fromOriginalUrl.startsWith("/")) return fromOriginalUrl.split("?")[0] || "";
+
+  // Next.js sometimes includes this
+  const nextUrl = h.get("next-url");
+  if (nextUrl?.startsWith("/")) return nextUrl.split("?")[0] || "";
+
+  // fallback: if none available, return empty string (we'll avoid risky redirects)
+  return "";
 }
 
 export default async function OnboardingLayout({
@@ -36,8 +55,8 @@ export default async function OnboardingLayout({
 
   const sub = String(me.sub);
 
-  // ✅ Get ?next= from current request (works well enough behind CDN)
-  const h = await Promise.resolve(headers());
+  // ✅ Get ?next= best-effort. (Referer may be missing; default to dashboard.)
+  const h = await headers();
   const urlStr = h.get("x-url") || h.get("referer") || "";
   const nextFromUrl = (() => {
     try {
@@ -57,9 +76,9 @@ export default async function OnboardingLayout({
     .where(eq(users.cognitoSub, sub))
     .limit(1);
 
-  // ✅ Permanent fix: if missing, create the DB user row (fresh Cognito account)
+  // ✅ If missing, create the DB user row (fresh Cognito account)
   if (!u && role === "taxpayer") {
-    const c = await Promise.resolve(cookies());
+    const c = await cookies();
     const idToken = c.get("idToken")?.value ?? "";
 
     let email = "";
@@ -77,7 +96,6 @@ export default async function OnboardingLayout({
       // ignore
     }
 
-    // DB requires email; if token missing, force sign-in again
     if (!email) {
       redirect("/sign-in?reason=reauth");
     }
@@ -92,11 +110,9 @@ export default async function OnboardingLayout({
         name: fullName || `${firstName} ${lastName}`.trim() || null,
         onboardingStep: "PROFILE",
       })
-      // drizzle conflict helper (keeps it safe in races)
       // @ts-ignore
       .onConflictDoNothing({ target: users.cognitoSub });
 
-    // reload after insert
     [u] = await db
       .select({ onboardingStep: users.onboardingStep })
       .from(users)
@@ -105,10 +121,33 @@ export default async function OnboardingLayout({
   }
 
   const step = String(u?.onboardingStep ?? "");
+  const pathname = await getCurrentPathname();
 
-  // ✅ If finished, push them forward
-  if (step === "DONE") redirect(next);
-  if (step === "SUBMITTED") redirect("/onboarding/complete"); // optional
+  /**
+   * ✅ IMPORTANT REDIRECT RULES (NO LOOPS)
+   *
+   * - DO NOT redirect to /onboarding/complete from this layout.
+   *   This layout wraps /onboarding/complete, so doing so causes a self-redirect loop (307 -> same URL).
+   *
+   * - If you want "finished" users out of onboarding, send them to /dashboard (or next),
+   *   but only if we are not already on /onboarding/complete (or if pathname is unknown).
+   */
+
+  // If user is truly finished, keep them out of onboarding pages *except* complete.
+  if (step === "DONE") {
+    // If we're on the complete page, let it render.
+    if (pathname && pathname.startsWith("/onboarding/complete")) {
+      return <>{children}</>;
+    }
+    // Otherwise push to intended next destination
+    redirect(next);
+  }
+
+  // If step is SUBMITTED, do NOT redirect here (prevents loop).
+  // Let summary/actions redirect to complete, and let complete page render.
+  if (step === "SUBMITTED") {
+    return <>{children}</>;
+  }
 
   return <>{children}</>;
 }
