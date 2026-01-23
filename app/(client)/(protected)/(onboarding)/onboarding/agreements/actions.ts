@@ -43,10 +43,6 @@ async function auditTrail() {
   return { ip, userAgent };
 }
 
-function oneParam(v: string | string[] | undefined) {
-  return Array.isArray(v) ? v[0] : v;
-}
-
 function signInRedirect(nextPath: string) {
   redirect(`/sign-in?next=${encodeURIComponent(nextPath)}`);
 }
@@ -119,7 +115,7 @@ async function requireUserRow() {
     if (!created) throw new Error("USER_CREATE_FAILED");
     return { auth, user: { ...created, email } };
   } catch (e) {
-    // if unique conflict happened, re-select
+    // If unique conflict happened, re-select
     const [raced] = await db
       .select({
         id: users.id,
@@ -246,9 +242,8 @@ export async function signAgreement(input: {
 
 /**
  * IMPORTANT:
- * This action is used as <form action={submitAgreementsAndFinish}>.
- * It MUST NOT throw on “expected” validation failures, or you’ll get prod digest errors.
- * We redirect back with ?err=... instead.
+ * Used as <form action={submitAgreementsAndFinish}>.
+ * Must not throw on expected failures — redirect with ?err=...
  */
 export async function submitAgreementsAndFinish() {
   let user: Awaited<ReturnType<typeof requireUserRow>>["user"];
@@ -288,7 +283,6 @@ export async function submitAgreementsAndFinish() {
           inArray(clientAgreements.kind, ALL_KINDS as any)
         )
       )
-      // ✅ deterministic latest-per-kind
       .orderBy(desc(clientAgreements.createdAt), desc(clientAgreements.id));
   } catch (e) {
     console.error("[submitAgreementsAndFinish] DB read failed", e);
@@ -314,7 +308,6 @@ export async function submitAgreementsAndFinish() {
     (!payment?.spouseRequired || Boolean(payment?.spouseSignedAt));
 
   const consentDecision = String(consent?.decision ?? "");
-
   if (consentDecision === "DECLINED") {
     redirect("/onboarding/agreements?err=consent_declined");
   }

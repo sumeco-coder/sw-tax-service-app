@@ -121,18 +121,9 @@ export default function AgreementsClient({
   const [err, setErr] = useState<string>(() => errMessage(errorCode ?? null));
   const [signed, setSigned] = useState<Initial>(initial);
 
-  const engagementDone = useMemo(
-    () => isRequiredDone(signed.ENGAGEMENT),
-    [signed]
-  );
-  const consentDone = useMemo(
-    () => isDone(signed.CONSENT_7216_USE),
-    [signed]
-  );
-  const paymentDone = useMemo(
-    () => isRequiredDone(signed.CONSENT_PAYMENT),
-    [signed]
-  );
+  const engagementDone = useMemo(() => isRequiredDone(signed.ENGAGEMENT), [signed]);
+  const consentDone = useMemo(() => isDone(signed.CONSENT_7216_USE), [signed]);
+  const paymentDone = useMemo(() => isRequiredDone(signed.CONSENT_PAYMENT), [signed]);
 
   const consentDeclined = useMemo(
     () => (signed.CONSENT_7216_USE?.decision ?? consentChoice) === "DECLINED",
@@ -166,8 +157,7 @@ export default function AgreementsClient({
     }
 
     const decision: Decision =
-      decisionOverride ??
-      (kind === "CONSENT_7216_USE" ? consentChoice : "SIGNED");
+      decisionOverride ?? (kind === "CONSENT_7216_USE" ? consentChoice : "SIGNED");
 
     startTransition(async () => {
       try {
@@ -235,7 +225,8 @@ export default function AgreementsClient({
 
             {done ? (
               <p className="mt-1 text-xs text-muted-foreground">
-                Completed ✓ <span className="text-muted-foreground/80">({fmt(signedAt)})</span>
+                Completed ✓{" "}
+                <span className="text-muted-foreground/80">({fmt(signedAt)})</span>
               </p>
             ) : (
               <p className="mt-1 text-xs text-muted-foreground">
@@ -453,7 +444,7 @@ export default function AgreementsClient({
               </Button>
             ) : null}
 
-            {/* Final submit (form action is OK because server action never throws now) */}
+            {/* Final submit */}
             <form action={submitAgreementsAndFinish}>
               <FinalSubmitButton disabled={!canSubmit || pending} />
             </form>

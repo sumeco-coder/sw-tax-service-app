@@ -9,6 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 
+export const runtime = "nodejs"; // ✅ ADD THIS
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
@@ -103,7 +104,6 @@ export default async function AgreementsPage({ searchParams }: PageProps) {
 
   const step = (u.onboardingStep as unknown as OnboardingStep) ?? null;
 
-  // If already submitted, go dashboard
   if (step === "SUBMITTED" || step === "DONE") {
     const next =
       auth?.role === "ADMIN"
@@ -116,17 +116,14 @@ export default async function AgreementsPage({ searchParams }: PageProps) {
     redirect(next);
   }
 
-  // If they jump here too early (before SUMMARY), send them to onboarding home
   if (getStepIndex(step) < getStepIndex("SUMMARY")) {
     redirect("/onboarding");
   }
 
-  // If they jump here too early, send them back
   if (step !== "AGREEMENTS" && step !== "SUMMARY") {
     redirect("/onboarding/summary");
   }
 
-  // ✅ Agreement query must never crash the render
   let rows: any[] = [];
   try {
     rows = await db
@@ -147,14 +144,12 @@ export default async function AgreementsPage({ searchParams }: PageProps) {
           inArray(clientAgreements.kind, KINDS as any)
         )
       )
-      // ✅ deterministic latest-per-kind
       .orderBy(desc(clientAgreements.createdAt), desc(clientAgreements.id));
   } catch (e) {
     console.error("DB error loading agreements", e);
     return <ErrorShell taxYear={taxYear} />;
   }
 
-  // newest first → keep latest per kind
   const latest: Record<string, any> = {};
   for (const r of rows) {
     if (!latest[r.kind]) latest[r.kind] = r;

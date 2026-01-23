@@ -36,15 +36,36 @@ function getS3Config() {
   const bucket =
     process.env.DOCUMENTS_BUCKET ||
     process.env.FILES_BUCKET ||
+    process.env.S3_BUCKET_NAME || // ✅ add this
     process.env.S3_BUCKET ||
     process.env.AWS_S3_BUCKET ||
     "";
 
-  const region = process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || "";
+  const region =
+    process.env.AWS_REGION ||
+    process.env.AWS_DEFAULT_REGION ||
+    process.env.S3_REGION || // ✅ optional
+    "";
 
-  if (!bucket || !region) return null;
+  if (!bucket || !region) {
+    console.error("[getS3Config] CONFIG_MISSING", {
+      hasBucket: !!bucket,
+      hasRegion: !!region,
+      DOCUMENTS_BUCKET: !!process.env.DOCUMENTS_BUCKET,
+      FILES_BUCKET: !!process.env.FILES_BUCKET,
+      S3_BUCKET_NAME: !!process.env.S3_BUCKET_NAME,
+      S3_BUCKET: !!process.env.S3_BUCKET,
+      AWS_S3_BUCKET: !!process.env.AWS_S3_BUCKET,
+      AWS_REGION: !!process.env.AWS_REGION,
+      AWS_DEFAULT_REGION: !!process.env.AWS_DEFAULT_REGION,
+      S3_REGION: !!process.env.S3_REGION,
+    });
+    return null;
+  }
+
   return { bucket, region };
 }
+
 
 function sanitizeFileName(name: string) {
   const n = String(name ?? "file").trim() || "file";
