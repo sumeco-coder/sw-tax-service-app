@@ -1,3 +1,4 @@
+// app/(client)/(protected)/(onboarding)/onboarding/complete/_components/CompleteButton.tsx
 "use client";
 
 import { useState } from "react";

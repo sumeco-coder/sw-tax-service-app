@@ -18,10 +18,11 @@ const PUBLIC_UI_PATHS = new Set([
   "/invite",
   "/invite/consume",
   "/taxpayer/onboarding-sign-up",
-  "/analytics",
+  // ✅ checkout pages public
   "/checkout",
   "/checkout/success",
   "/checkout/cancel",
+  // ❌ removed "/analytics" (it was also protected)
 ]);
 
 /* ─────────────────────────────────────────────
@@ -60,6 +61,21 @@ function isClientProtectedPath(pathname: string) {
 }
 
 /* ─────────────────────────────────────────────
+   Allow these even if onboarding is incomplete
+   (prevents “upload → redirect → bounce” loops)
+───────────────────────────────────────────── */
+const ALLOW_WHILE_ONBOARDING_INCOMPLETE = [
+  "/documents",
+  "/files",
+] as const;
+
+function isAllowedWhileOnboardingIncomplete(pathname: string) {
+  return ALLOW_WHILE_ONBOARDING_INCOMPLETE.some(
+    (p) => pathname === p || pathname.startsWith(p + "/")
+  );
+}
+
+/* ─────────────────────────────────────────────
    Roles
 ───────────────────────────────────────────── */
 type AppRole =
@@ -88,14 +104,12 @@ function isAppRole(v: unknown): v is AppRole {
 }
 
 function resolveRole(customRoleRaw: unknown, groups: string[]): AppRole {
-  // prefer custom role if it matches enum
   const role = String(customRoleRaw ?? "")
     .trim()
     .toUpperCase()
     .replace(/-/g, "_");
   if (isAppRole(role)) return role;
 
-  // groups → role
   const g = groups.map((x) =>
     String(x).trim().toUpperCase().replace(/-/g, "_")
   );
@@ -136,7 +150,7 @@ function getGroups(payload: Record<string, any>): string[] {
 }
 
 /* ─────────────────────────────────────────────
-   UTM tracking keys (your existing logic)
+   UTM tracking keys
 ───────────────────────────────────────────── */
 const UTM_KEYS = [
   "utm_source",
@@ -152,21 +166,14 @@ export function middleware(req: NextRequest) {
   const url = req.nextUrl;
   const pathname = url.pathname;
 
-  // ✅ NEVER run middleware on Next.js internals/static assets
-  if (pathname.startsWith("/_next")) {
-    return NextResponse.next();
-  }
+  // ✅ Always allow Next internals
+  if (pathname.startsWith("/_next")) return NextResponse.next();
 
-  // ✅ IMPORTANT: middleware must do NOTHING for onboarding
-  if (pathname.startsWith("/onboarding")) {
-    return NextResponse.next();
-  }
+  // ✅ Always allow onboarding routes (no auth redirects here)
+  if (pathname.startsWith("/onboarding")) return NextResponse.next();
 
   // ✅ Tax calculator UI is public
-  if (
-    pathname === "/tax-calculator" ||
-    pathname.startsWith("/tax-calculator/")
-  ) {
+  if (pathname === "/tax-calculator" || pathname.startsWith("/tax-calculator/")) {
     return NextResponse.next();
   }
 
@@ -176,16 +183,20 @@ export function middleware(req: NextRequest) {
   // ✅ Allow public UI always
   if (PUBLIC_UI_PATHS.has(pathname)) return NextResponse.next();
 
-  // ✅ Allow public APIs always (auth/webhooks/etc)
+  // ✅ Allow public APIs always
   if (isApi && isPublicApi) return NextResponse.next();
 
   const payload = getAuthPayload(req);
   const groups = payload ? getGroups(payload) : [];
   const role = payload ? resolveRole(payload["custom:role"], groups) : null;
 
+  // ✅ IMPORTANT: Cookie is immediate “truth” (prevents stale JWT loops)
+  const onboardingCookie =
+    (req.cookies.get("onboardingComplete")?.value ?? "").toLowerCase() === "true";
+
   const onboardingComplete =
-    String(payload?.["custom:onboardingComplete"] ?? "").toLowerCase() ===
-    "true";
+    onboardingCookie ||
+    String(payload?.["custom:onboardingComplete"] ?? "").toLowerCase() === "true";
 
   const isAdmin =
     role === "ADMIN" ||
@@ -204,12 +215,14 @@ export function middleware(req: NextRequest) {
     );
   }
 
-  // ✅ HARD GATE: taxpayers must finish onboarding before using protected pages
+  // ✅ HARD GATE: taxpayers must finish onboarding before protected pages
+  // BUT allow docs/files while onboarding (prevents upload loop)
   if (
     clientProtected &&
     payload &&
     role === "TAXPAYER" &&
-    !onboardingComplete
+    !onboardingComplete &&
+    !isAllowedWhileOnboardingIncomplete(pathname)
   ) {
     const next = pathname + (url.search || "");
     return NextResponse.redirect(
@@ -219,22 +232,17 @@ export function middleware(req: NextRequest) {
 
   // ✅ Admin routes require admin
   if (pathname.startsWith("/admin")) {
-    if (!payload)
-      return NextResponse.redirect(new URL("/admin/sign-in", req.url));
-    if (!isAdmin)
-      return NextResponse.redirect(new URL("/not-authorized", req.url));
+    if (!payload) return NextResponse.redirect(new URL("/admin/sign-in", req.url));
+    if (!isAdmin) return NextResponse.redirect(new URL("/not-authorized", req.url));
     return NextResponse.next();
   }
 
   // ✅ Private APIs require auth; /api/admin requires admin
   if (isApi && !isPublicApi) {
-    if (!payload)
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
+    if (!payload) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     if (pathname.startsWith("/api/admin") && !isAdmin) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
-
     return NextResponse.next();
   }
 
@@ -275,7 +283,6 @@ export const config = {
   matcher: [
     "/admin/:path*",
     "/api/:path*",
-    // ✅ Catch-all but EXCLUDE onboarding so middleware does not run there
     "/((?!onboarding|_next|favicon.ico|robots.txt|sitemap.xml).*)",
   ],
 };
