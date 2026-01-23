@@ -66,19 +66,19 @@ async function syncServerCookiesFromSession(): Promise<boolean> {
   const session = await fetchAuthSession();
   const accessToken = session.tokens?.accessToken?.toString() ?? "";
   const idToken = session.tokens?.idToken?.toString() ?? "";
-
   if (!accessToken || !idToken) return false;
 
   const res = await fetch("/api/auth/session", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    credentials: "include", // ✅ important
-    cache: "no-store",
+    credentials: "include",
     body: JSON.stringify({ accessToken, idToken }),
-  });
+    cache: "no-store",
+  }).catch(() => null);
 
-  return res.ok;
+  return !!res && res.ok;
 }
+
 
 export default function SigninClient() {
   const router = useRouter();

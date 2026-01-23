@@ -1,12 +1,18 @@
-// app/(client)/(protected)/(onboarding)/onboarding/documents/_components/OnboardingDocumentsClient.tsx
 "use client";
 
 import { useState } from "react";
-import { saveDocuments } from "../actions";
 import DocumentUploader from "../../_components/DocumentUploader";
-import DocumentList from "../../../../(app)/documents/_components/DocumentList";
+import OnboardingDocumentList from "./OnboardingDocumentList"
+import { saveDocuments } from "../actions";
 import { useFormStatus } from "react-dom";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -16,6 +22,7 @@ import { Label } from "@/components/ui/label";
 export default function OnboardingDocumentsClient() {
   const [acknowledged, setAcknowledged] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   return (
     <main className="min-h-screen bg-gradient-to-b from-secondary to-background px-4 py-10">
@@ -49,8 +56,8 @@ export default function OnboardingDocumentsClient() {
             </Alert>
 
             <section className="space-y-4">
-              <DocumentUploader />
-              <DocumentList />
+              <DocumentUploader onUploaded={() => setRefreshKey((k) => k + 1)} />
+              <OnboardingDocumentList refreshKey={refreshKey} />
             </section>
 
             <Separator />
@@ -70,7 +77,9 @@ export default function OnboardingDocumentsClient() {
               className="space-y-4"
             >
               <div className="rounded-2xl border border-border bg-background/60 p-4">
-                <p className="text-sm font-semibold text-foreground">Common documents to upload</p>
+                <p className="text-sm font-semibold text-foreground">
+                  Common documents to upload
+                </p>
 
                 <ul className="mt-3 space-y-2 text-sm text-muted-foreground">
                   <li>• Photo ID (Driver’s license, state ID, or passport)</li>
@@ -94,7 +103,8 @@ export default function OnboardingDocumentsClient() {
                     }}
                   />
                   <span className="text-muted-foreground">
-                    I’ve uploaded or gathered my documents, or I’ll finish uploading them before my review call.
+                    I’ve uploaded or gathered my documents, or I’ll finish uploading them
+                    before my review call.
                   </span>
                 </Label>
 
@@ -116,7 +126,6 @@ export default function OnboardingDocumentsClient() {
 
 function ContinueButton() {
   const { pending } = useFormStatus();
-
   return (
     <Button type="submit" disabled={pending} className="w-full rounded-xl">
       {pending ? "Saving…" : "Continue to questions"}

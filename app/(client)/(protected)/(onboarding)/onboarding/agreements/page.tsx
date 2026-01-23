@@ -1,4 +1,3 @@
-// app/(client)/(protected)/onboarding/agreements/page.tsx
 import { redirect } from "next/navigation";
 import { and, desc, eq, inArray } from "drizzle-orm";
 
@@ -28,8 +27,15 @@ const STEP_ORDER = [
 
 type OnboardingStep = (typeof users.$inferSelect)["onboardingStep"];
 
+type PageProps = {
+  searchParams?: { [key: string]: string | string[] | undefined };
+};
+
+function oneParam(v: string | string[] | undefined) {
+  return Array.isArray(v) ? v[0] : v;
+}
+
 function getTaxYear() {
-  // keep consistent with your actions.ts
   return String(new Date().getFullYear());
 }
 
@@ -66,8 +72,9 @@ function ErrorShell({ taxYear }: { taxYear: string }) {
   );
 }
 
-export default async function AgreementsPage() {
+export default async function AgreementsPage({ searchParams }: PageProps) {
   const taxYear = getTaxYear();
+  const errCode = (oneParam(searchParams?.err) ?? "").trim() || null;
 
   let auth: any = null;
   try {
@@ -77,7 +84,7 @@ export default async function AgreementsPage() {
     auth = null;
   }
 
-   const sub = auth?.sub ? String(auth.sub) : "";
+  const sub = auth?.sub ? String(auth.sub) : "";
   if (!sub) redirect(`/sign-in?next=/onboarding/agreements`);
 
   let u: { id: string; onboardingStep: OnboardingStep } | undefined;
@@ -124,6 +131,7 @@ export default async function AgreementsPage() {
   try {
     rows = await db
       .select({
+        id: clientAgreements.id,
         kind: clientAgreements.kind,
         decision: clientAgreements.decision,
         taxpayerSignedAt: clientAgreements.taxpayerSignedAt,
@@ -139,7 +147,8 @@ export default async function AgreementsPage() {
           inArray(clientAgreements.kind, KINDS as any)
         )
       )
-      .orderBy(desc(clientAgreements.createdAt));
+      // ✅ deterministic latest-per-kind
+      .orderBy(desc(clientAgreements.createdAt), desc(clientAgreements.id));
   } catch (e) {
     console.error("DB error loading agreements", e);
     return <ErrorShell taxYear={taxYear} />;
@@ -155,33 +164,27 @@ export default async function AgreementsPage() {
     ENGAGEMENT: latest.ENGAGEMENT
       ? {
           decision: latest.ENGAGEMENT.decision ?? null,
-          taxpayerSignedAt:
-            latest.ENGAGEMENT.taxpayerSignedAt?.toISOString?.() ?? null,
+          taxpayerSignedAt: latest.ENGAGEMENT.taxpayerSignedAt?.toISOString?.() ?? null,
           spouseRequired: Boolean(latest.ENGAGEMENT.spouseRequired),
-          spouseSignedAt:
-            latest.ENGAGEMENT.spouseSignedAt?.toISOString?.() ?? null,
+          spouseSignedAt: latest.ENGAGEMENT.spouseSignedAt?.toISOString?.() ?? null,
         }
       : null,
 
     CONSENT_7216_USE: latest.CONSENT_7216_USE
       ? {
           decision: latest.CONSENT_7216_USE.decision ?? null,
-          taxpayerSignedAt:
-            latest.CONSENT_7216_USE.taxpayerSignedAt?.toISOString?.() ?? null,
+          taxpayerSignedAt: latest.CONSENT_7216_USE.taxpayerSignedAt?.toISOString?.() ?? null,
           spouseRequired: Boolean(latest.CONSENT_7216_USE.spouseRequired),
-          spouseSignedAt:
-            latest.CONSENT_7216_USE.spouseSignedAt?.toISOString?.() ?? null,
+          spouseSignedAt: latest.CONSENT_7216_USE.spouseSignedAt?.toISOString?.() ?? null,
         }
       : null,
 
     CONSENT_PAYMENT: latest.CONSENT_PAYMENT
       ? {
           decision: latest.CONSENT_PAYMENT.decision ?? null,
-          taxpayerSignedAt:
-            latest.CONSENT_PAYMENT.taxpayerSignedAt?.toISOString?.() ?? null,
+          taxpayerSignedAt: latest.CONSENT_PAYMENT.taxpayerSignedAt?.toISOString?.() ?? null,
           spouseRequired: Boolean(latest.CONSENT_PAYMENT.spouseRequired),
-          spouseSignedAt:
-            latest.CONSENT_PAYMENT.spouseSignedAt?.toISOString?.() ?? null,
+          spouseSignedAt: latest.CONSENT_PAYMENT.spouseSignedAt?.toISOString?.() ?? null,
         }
       : null,
   };
@@ -202,7 +205,7 @@ export default async function AgreementsPage() {
           </CardHeader>
 
           <CardContent>
-            <AgreementsClient initial={initial} taxYear={taxYear} />
+            <AgreementsClient initial={initial as any} taxYear={taxYear} errorCode={errCode} />
           </CardContent>
         </Card>
       </div>

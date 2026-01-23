@@ -1,207 +1,215 @@
-// app/(client)/(protected)/(onboarding)/onboarding/documents/actions.ts
 "use server";
 
+import crypto from "crypto";
+import { redirect } from "next/navigation";
+import { desc, eq, and } from "drizzle-orm";
 import { db } from "@/drizzle/db";
 import { users, documents } from "@/drizzle/schema";
-import { eq, and, desc } from "drizzle-orm";
-import { redirect } from "next/navigation";
-import { revalidatePath } from "next/cache";
 import { getServerRole } from "@/lib/auth/roleServer";
 
-// ---------------- helpers ----------------
-function clean(v: unknown, max = 255) {
-  const s = String(v ?? "").trim();
-  return s ? s.slice(0, max) : "";
+import {
+  S3Client,
+  GetObjectCommand,
+  PutObjectCommand,
+  DeleteObjectCommand,
+} from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+
+type ListItem = {
+  key: string;
+  name: string;
+  size: number;
+  lastModified: string | null;
+};
+
+type ActionResult<T> =
+  | { ok: true; data: T }
+  | {
+      ok: false;
+      code: "UNAUTHENTICATED" | "NO_USER_ROW" | "CONFIG_MISSING" | "FORBIDDEN" | "ERROR";
+      message?: string;
+    };
+
+const NEXT_PATH = "/onboarding/documents";
+
+function getS3Config() {
+  const bucket =
+    process.env.DOCUMENTS_BUCKET ||
+    process.env.FILES_BUCKET ||
+    process.env.S3_BUCKET ||
+    process.env.AWS_S3_BUCKET ||
+    "";
+
+  const region = process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || "";
+
+  if (!bucket || !region) return null;
+  return { bucket, region };
 }
-function normalizeEmail(v: unknown) {
-  return clean(v, 255).toLowerCase();
+
+function sanitizeFileName(name: string) {
+  const n = String(name ?? "file").trim() || "file";
+  return n.replace(/[\/\\]/g, "_").replace(/[^\w.\-()\s]/g, "_");
 }
 
+async function getViewer() {
+  const me = await getServerRole();
+  const sub = String(me?.sub ?? "").trim();
+  if (!sub) return null;
 
-// --- S3 helpers ---
-async function getS3() {
-  return await import("@/lib/s3/s3");
-}
-
-// ---------------- auth ----------------
-async function requireAuth() {
-  let auth: any = null;
-
-  // ✅ Never let auth crash the action
-  try {
-    auth = await getServerRole();
-  } catch {
-    auth = null;
-  }
-
-  const sub = auth?.sub ? String(auth.sub) : "";
-  const email = auth?.email ? normalizeEmail(auth.email) : "";
-  if (!sub) throw new Error("Unauthorized. Please sign in again.");
-  return { sub, email };
-}
-
-/** DB helper: get or create user by cognitoSub (email is required on insert) */
-async function getOrCreateUserBySub(cognitoSub: string, email?: string) {
-  const userCols = {
-    id: users.id,
-    cognitoSub: users.cognitoSub,
-    email: users.email,
-  };
-
-  const [existing] = await db
-    .select(userCols)
+  const [userRow] = await db
+    .select({ id: users.id, cognitoSub: users.cognitoSub })
     .from(users)
-    .where(eq(users.cognitoSub, cognitoSub))
+    .where(eq(users.cognitoSub, sub))
     .limit(1);
 
-  if (existing) {
-    // if we have a better email now, update it
-    if (email && email !== existing.email) {
-      const [updated] = await db
-        .update(users)
-        .set({ email, updatedAt: new Date() })
-        .where(eq(users.id, existing.id))
-        .returning(userCols);
+  return { sub, userRow };
+}
 
-      return updated ?? existing;
-    }
-    return existing;
+/* ------------------------- DB-backed list (like /documents) ------------------------- */
+
+export async function onboardingListMyDocuments(): Promise<ActionResult<ListItem[]>> {
+  try {
+    const viewer = await getViewer();
+    if (!viewer) return { ok: false, code: "UNAUTHENTICATED" };
+    if (!viewer.userRow) return { ok: false, code: "NO_USER_ROW" };
+
+    const rows = await db
+      .select({
+        key: documents.key,
+        name: documents.displayName,
+        uploadedAt: documents.uploadedAt,
+      })
+      .from(documents)
+      .where(eq(documents.userId, String(viewer.userRow.id)))
+      .orderBy(desc(documents.uploadedAt));
+
+    const items: ListItem[] = (rows ?? []).map((r) => ({
+      key: String(r.key),
+      name: String(r.name ?? r.key),
+      size: 0,
+      lastModified: r.uploadedAt ? new Date(r.uploadedAt as any).toISOString() : null,
+    }));
+
+    return { ok: true, data: items };
+  } catch (e: any) {
+    console.error("[onboardingListMyDocuments] failed", e?.name, e?.message, e);
+    return { ok: false, code: "ERROR" };
   }
+}
 
-  const finalEmail = email?.trim();
-  if (!finalEmail) {
-    throw new Error("Missing email. Please sign in again.");
+/* ------------------------- presigned upload url + DB insert (like /documents) ------------------------- */
+
+export async function onboardingCreateMyUploadUrl(input: {
+  fileName: string;
+  contentType?: string;
+}): Promise<ActionResult<{ key: string; url: string }>> {
+  try {
+    const viewer = await getViewer();
+    if (!viewer) return { ok: false, code: "UNAUTHENTICATED" };
+    if (!viewer.userRow) return { ok: false, code: "NO_USER_ROW" };
+
+    const cfg = getS3Config();
+    if (!cfg) return { ok: false, code: "CONFIG_MISSING" };
+
+    const fileName = sanitizeFileName(input.fileName);
+    const contentType = String(input.contentType ?? "application/octet-stream");
+
+    const targetUserId = String(viewer.userRow.id);
+    const key = `${targetUserId}/${crypto.randomUUID()}-${fileName}`;
+
+    const s3 = new S3Client({ region: cfg.region });
+
+    const url = await getSignedUrl(
+      s3,
+      new PutObjectCommand({
+        Bucket: cfg.bucket,
+        Key: key,
+        ContentType: contentType,
+      }),
+      { expiresIn: 60 * 5 }
+    );
+
+    // Insert DB row so it shows in lists immediately
+    await db.insert(documents).values({
+      userId: targetUserId,
+      key,
+      displayName: fileName,
+      uploadedAt: new Date(),
+    });
+
+    return { ok: true, data: { key, url } };
+  } catch (e: any) {
+    console.error("[onboardingCreateMyUploadUrl] failed", e?.name, e?.message, e);
+    return { ok: false, code: "ERROR" };
   }
-
-  const [created] = await db
-    .insert(users)
-    .values({
-      cognitoSub,
-      email: finalEmail,
-      onboardingStep: "DOCUMENTS" as any,
-      updatedAt: new Date(),
-    } as any)
-    .returning(userCols);
-
-  return created;
 }
 
-// ---------------- actions ----------------
+/* ------------------------- presigned download url (owner-only) ------------------------- */
 
-/**
- * 1) Upload a single document to S3 + save metadata in DB
- */
-export async function uploadDocument(formData: FormData) {
-  const { sub: cookieSub, email: cookieEmail } = await requireAuth();
+export async function onboardingCreateMyDownloadUrl(
+  key: string
+): Promise<ActionResult<{ url: string }>> {
+  try {
+    const viewer = await getViewer();
+    if (!viewer) return { ok: false, code: "UNAUTHENTICATED" };
+    if (!viewer.userRow) return { ok: false, code: "NO_USER_ROW" };
 
-  const file = formData.get("file") as File | null;
-  if (!file) throw new Error("Missing file");
+    const cfg = getS3Config();
+    if (!cfg) return { ok: false, code: "CONFIG_MISSING" };
 
-  const user = await getOrCreateUserBySub(cookieSub, cookieEmail);
+    const k = String(key ?? "").trim();
+    if (!k) return { ok: false, code: "ERROR", message: "Missing key." };
 
-  const safeName = file.name.replace(/[^\w.-]/g, "_");
-  const key = `users/${user.id}/documents/${Date.now()}-${safeName}`;
+    const targetUserId = String(viewer.userRow.id);
 
-  const { uploadToS3 } = await getS3();
-  const { url, key: storedKey } = await uploadToS3(file, key);
+    // Ensure this key belongs to this user
+    const [doc] = await db
+      .select({ key: documents.key, ownerId: documents.userId })
+      .from(documents)
+      .where(eq(documents.key, k))
+      .limit(1);
 
+    if (!doc) return { ok: false, code: "ERROR", message: "Document not found." };
+    if (String(doc.ownerId) !== targetUserId) return { ok: false, code: "FORBIDDEN" };
 
-  const [doc] = await db
-    .insert(documents)
-    .values({
-      userId: user.id,
-      key: storedKey,
-      fileName: file.name,
-      mimeType: file.type,
-      size: file.size,
-    } as any)
-    .returning();
+    const s3 = new S3Client({ region: cfg.region });
 
-  revalidatePath("/onboarding/documents");
+    const url = await getSignedUrl(
+      s3,
+      new GetObjectCommand({ Bucket: cfg.bucket, Key: k }),
+      { expiresIn: 60 * 5 }
+    );
 
-  return {
-    id: doc.id,
-    fileName: doc.fileName,
-    mimeType: doc.mimeType,
-    size: doc.size,
-    key: doc.key,
-    url,
-    uploadedAt: doc.uploadedAt,
-  };
+    return { ok: true, data: { url } };
+  } catch (e: any) {
+    console.error("[onboardingCreateMyDownloadUrl] failed", e?.name, e?.message, e);
+    return { ok: false, code: "ERROR" };
+  }
 }
 
-/**
- * 2) List all documents for this user
- */
-export async function listDocuments() {
-  const { sub: cookieSub, email: cookieEmail } = await requireAuth();
-  const user = await getOrCreateUserBySub(cookieSub, cookieEmail);
+/* ------------------------- continue to next step ------------------------- */
 
-  const rows = await db
-    .select()
-    .from(documents)
-    .where(eq(documents.userId, user.id))
-    .orderBy(desc(documents.uploadedAt));
-
-  return rows.map((d) => ({
-    id: d.id,
-    fileName: d.fileName,
-    mimeType: d.mimeType,
-    size: d.size,
-    key: d.key,
-    uploadedAt: d.uploadedAt,
-  }));
-}
-
-/**
- * 3) Delete a document (S3 + DB)
- */
-export async function deleteDocument(docId: string) {
-  const { sub: cookieSub, email: cookieEmail } = await requireAuth();
-  const user = await getOrCreateUserBySub(cookieSub, cookieEmail);
-
-  const [doc] = await db
-    .select()
-    .from(documents)
-    .where(and(eq(documents.id, docId), eq(documents.userId, user.id)))
-    .limit(1);
-
-  if (!doc) throw new Error("Document not found.");
-
-  const { deleteFromS3 } = await getS3();
-  await deleteFromS3(doc.key);
-
-  await db
-    .delete(documents)
-    .where(and(eq(documents.id, docId), eq(documents.userId, user.id)));
-
-  revalidatePath("/onboarding/documents");
-
-  return { ok: true };
-}
-
-/**
- * 4) Save documents step → advance onboarding to QUESTIONS
- */
 export async function saveDocuments(formData: FormData) {
-  const { sub: cookieSub, email: cookieEmail } = await requireAuth();
+  const acknowledged = String(formData.get("acknowledged") ?? "") === "on";
+  if (!acknowledged) {
+    // client already blocks, but keep server safe
+    redirect(`${NEXT_PATH}?err=ack`);
+  }
 
-  const acknowledged = formData.get("acknowledged") === "on";
-  if (!acknowledged) throw new Error("Please confirm that you’ve uploaded your documents.");
+  const me = await getServerRole();
+  const sub = String(me?.sub ?? "").trim();
+  if (!sub) redirect(`/sign-in?next=${encodeURIComponent(NEXT_PATH)}`);
 
-  const user = await getOrCreateUserBySub(cookieSub, cookieEmail);
-
-  await db
-    .update(users)
-    .set({
-      onboardingStep: "QUESTIONS" as any,
-      updatedAt: new Date(),
-    })
-    .where(eq(users.id, user.id));
-
-  revalidatePath("/onboarding");
-  revalidatePath("/onboarding/documents");
-  revalidatePath("/onboarding/questions");
+  // OPTIONAL: if you have an enum step, set it here.
+  // Wrap in try so it never crashes prod if enum differs.
+  try {
+    await db
+      .update(users)
+      .set({ onboardingStep: "QUESTIONS" as any })
+      .where(eq(users.cognitoSub, sub));
+  } catch (e) {
+    console.error("[saveDocuments] onboardingStep update skipped/failed:", e);
+  }
 
   redirect("/onboarding/questions");
 }

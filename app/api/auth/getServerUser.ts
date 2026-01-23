@@ -1,4 +1,4 @@
-// api/auth
+// api/auth/getServerUser.ts
 import { getServerRole } from "@/lib/auth/roleServer";
 
 export async function getServerUser() {

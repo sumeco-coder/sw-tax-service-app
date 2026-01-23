@@ -1,4 +1,3 @@
-// app/(client)/(protected)/onboarding/agreements/actions.ts
 "use server";
 
 import "server-only";
@@ -20,47 +19,60 @@ import {
 
 const ERR_UNAUTHORIZED = "UNAUTHORIZED";
 
-function sha256(input: string) {
-  return crypto.createHash("sha256").update(input, "utf8").digest("hex");
-}
+const ALL_KINDS = ["ENGAGEMENT", "CONSENT_7216_USE", "CONSENT_PAYMENT"] as const;
 
-// ✅ MUST match agreements/page.tsx (your UI shows Tax year 2026)
+/** MUST match agreements/page.tsx */
 function getTaxYear() {
   return String(new Date().getFullYear());
 }
 
-const ALL_KINDS = ["ENGAGEMENT", "CONSENT_7216_USE", "CONSENT_PAYMENT"] as const;
+function sha256(input: string) {
+  return crypto.createHash("sha256").update(input, "utf8").digest("hex");
+}
 
 async function auditTrail() {
   const h = await headers();
+
   const ip =
     h.get("x-forwarded-for")?.split(",")[0]?.trim() ??
     h.get("x-real-ip") ??
     null;
 
   const userAgent = h.get("user-agent") ?? null;
+
   return { ip, userAgent };
+}
+
+function oneParam(v: string | string[] | undefined) {
+  return Array.isArray(v) ? v[0] : v;
+}
+
+function signInRedirect(nextPath: string) {
+  redirect(`/sign-in?next=${encodeURIComponent(nextPath)}`);
 }
 
 /**
  * Auth + user row helper
- * - Throws UNAUTHORIZED instead of redirecting (so you control redirects at call sites)
+ * - Throws UNAUTHORIZED instead of redirecting (caller decides redirect vs message)
+ * - Ensures a user row exists (race-safe)
  */
 async function requireUserRow() {
-  let auth: any = null;
+  let auth: Awaited<ReturnType<typeof getServerRole>> = null;
+
   try {
     auth = await getServerRole();
   } catch (e) {
-    console.error("getServerRole failed in agreements/actions", e);
+    console.error("getServerRole failed in onboarding/agreements/actions", e);
     auth = null;
   }
 
-  const sub = auth?.sub ? String(auth.sub) : "";
+  const sub = auth?.sub ? String(auth.sub).trim() : "";
   if (!sub) throw new Error(ERR_UNAUTHORIZED);
 
   const email = String(auth?.email ?? "").trim().toLowerCase();
-  if (!email) throw new Error(ERR_UNAUTHORIZED); // email is NOT NULL in DB
+  if (!email) throw new Error(ERR_UNAUTHORIZED);
 
+  // 1) Select
   const [u] = await db
     .select({
       id: users.id,
@@ -72,7 +84,24 @@ async function requireUserRow() {
     .where(eq(users.cognitoSub, sub))
     .limit(1);
 
-  if (!u) {
+  if (u) {
+    // keep email synced (non-fatal)
+    if (String(u.email ?? "").trim().toLowerCase() !== email) {
+      try {
+        await db
+          .update(users)
+          .set({ email, updatedAt: new Date() })
+          .where(eq(users.id, u.id));
+      } catch (e) {
+        console.error("[requireUserRow] email sync failed", e);
+      }
+    }
+
+    return { auth, user: { ...u, email } };
+  }
+
+  // 2) Insert (race-safe)
+  try {
     const [created] = await db
       .insert(users)
       .values({
@@ -88,28 +117,46 @@ async function requireUserRow() {
       });
 
     if (!created) throw new Error("USER_CREATE_FAILED");
-    return { auth, user: created };
-  }
+    return { auth, user: { ...created, email } };
+  } catch (e) {
+    // if unique conflict happened, re-select
+    const [raced] = await db
+      .select({
+        id: users.id,
+        onboardingStep: users.onboardingStep,
+        cognitoSub: users.cognitoSub,
+        email: users.email,
+      })
+      .from(users)
+      .where(eq(users.cognitoSub, sub))
+      .limit(1);
 
-  // keep email in sync
-  if (u.email !== email) {
-    await db
-      .update(users)
-      .set({ email, updatedAt: new Date() })
-      .where(eq(users.id, u.id));
-  }
+    if (!raced) throw e;
 
-  return { auth, user: { ...u, email } };
+    if (String(raced.email ?? "").trim().toLowerCase() !== email) {
+      try {
+        await db
+          .update(users)
+          .set({ email, updatedAt: new Date() })
+          .where(eq(users.id, raced.id));
+      } catch {}
+    }
+
+    return { auth, user: { ...raced, email } };
+  }
 }
 
 /* ---------------- actions ---------------- */
 
 export async function startAgreements() {
-  let user: any;
+  let user: Awaited<ReturnType<typeof requireUserRow>>["user"];
+
   try {
     ({ user } = await requireUserRow());
   } catch (e: any) {
-    if (String(e?.message) === ERR_UNAUTHORIZED) redirect("/sign-in?next=/onboarding/agreements");
+    if (String(e?.message) === ERR_UNAUTHORIZED) {
+      signInRedirect("/onboarding/agreements");
+    }
     throw e;
   }
 
@@ -140,19 +187,20 @@ export async function signAgreement(input: {
   spouseName?: string;
   decision?: "SIGNED" | "GRANTED" | "DECLINED" | "SKIPPED";
 }) {
-  let user: any;
+  let user: Awaited<ReturnType<typeof requireUserRow>>["user"];
+
   try {
     ({ user } = await requireUserRow());
   } catch (e: any) {
-    // IMPORTANT: don’t redirect here unless your UI expects navigation.
-    // Throw a clean error the client can show.
-    if (String(e?.message) === ERR_UNAUTHORIZED) throw new Error("Please sign in again.");
+    if (String(e?.message) === ERR_UNAUTHORIZED) {
+      // client catches this and shows alert
+      throw new Error("Please sign in again.");
+    }
     throw e;
   }
 
   const currentStep = String(user.onboardingStep ?? "");
   if (currentStep !== "AGREEMENTS" && currentStep !== "SUMMARY") {
-    // Don’t redirect (can cause weird 500s depending on how client calls this action)
     throw new Error("Please return to the onboarding summary to continue.");
   }
 
@@ -180,11 +228,14 @@ export async function signAgreement(input: {
     version: AGREEMENT_VERSION,
     contentHash: sha256(text),
     decision,
+
     taxpayerName,
     taxpayerSignedAt: now,
+
     spouseRequired,
     spouseName: spouseRequired ? spouseName : null,
     spouseSignedAt: spouseRequired ? now : null,
+
     ip,
     userAgent,
   });
@@ -193,41 +244,62 @@ export async function signAgreement(input: {
   revalidatePath("/onboarding");
 }
 
+/**
+ * IMPORTANT:
+ * This action is used as <form action={submitAgreementsAndFinish}>.
+ * It MUST NOT throw on “expected” validation failures, or you’ll get prod digest errors.
+ * We redirect back with ?err=... instead.
+ */
 export async function submitAgreementsAndFinish() {
-  let user: any;
+  let user: Awaited<ReturnType<typeof requireUserRow>>["user"];
+
   try {
     ({ user } = await requireUserRow());
   } catch (e: any) {
-    if (String(e?.message) === ERR_UNAUTHORIZED) redirect("/sign-in?next=/onboarding/agreements");
-    throw e;
+    if (String(e?.message) === ERR_UNAUTHORIZED) {
+      signInRedirect("/onboarding/agreements");
+    }
+    console.error("[submitAgreementsAndFinish] auth failed", e);
+    redirect("/onboarding/agreements?err=auth_failed");
   }
 
   const step = String(user.onboardingStep ?? "");
-  if (step !== "AGREEMENTS") redirect("/onboarding/agreements");
+  if (step !== "AGREEMENTS") redirect("/onboarding/agreements?err=wrong_step");
 
   const taxYear = getTaxYear();
 
-  const rows = await db
-    .select({
-      kind: clientAgreements.kind,
-      decision: clientAgreements.decision,
-      taxpayerSignedAt: clientAgreements.taxpayerSignedAt,
-      spouseRequired: clientAgreements.spouseRequired,
-      spouseSignedAt: clientAgreements.spouseSignedAt,
-      createdAt: clientAgreements.createdAt,
-    })
-    .from(clientAgreements)
-    .where(
-      and(
-        eq(clientAgreements.userId, String(user.id)),
-        eq(clientAgreements.taxYear, taxYear),
-        inArray(clientAgreements.kind, ALL_KINDS as any)
+  let rows: any[] = [];
+  try {
+    rows = await db
+      .select({
+        id: clientAgreements.id,
+        kind: clientAgreements.kind,
+        decision: clientAgreements.decision,
+        taxpayerSignedAt: clientAgreements.taxpayerSignedAt,
+        spouseRequired: clientAgreements.spouseRequired,
+        spouseSignedAt: clientAgreements.spouseSignedAt,
+        createdAt: clientAgreements.createdAt,
+      })
+      .from(clientAgreements)
+      .where(
+        and(
+          eq(clientAgreements.userId, String(user.id)),
+          eq(clientAgreements.taxYear, taxYear),
+          inArray(clientAgreements.kind, ALL_KINDS as any)
+        )
       )
-    )
-    .orderBy(desc(clientAgreements.createdAt));
+      // ✅ deterministic latest-per-kind
+      .orderBy(desc(clientAgreements.createdAt), desc(clientAgreements.id));
+  } catch (e) {
+    console.error("[submitAgreementsAndFinish] DB read failed", e);
+    redirect("/onboarding/agreements?err=db_read_failed");
+  }
 
   const latest = new Map<string, (typeof rows)[number]>();
-  for (const r of rows) if (!latest.has(String(r.kind))) latest.set(String(r.kind), r);
+  for (const r of rows) {
+    const k = String(r.kind);
+    if (!latest.has(k)) latest.set(k, r);
+  }
 
   const engagement = latest.get("ENGAGEMENT");
   const payment = latest.get("CONSENT_PAYMENT");
@@ -242,8 +314,9 @@ export async function submitAgreementsAndFinish() {
     (!payment?.spouseRequired || Boolean(payment?.spouseSignedAt));
 
   const consentDecision = String(consent?.decision ?? "");
+
   if (consentDecision === "DECLINED") {
-    throw new Error('You selected “I do not consent.” The onboarding cannot continue.');
+    redirect("/onboarding/agreements?err=consent_declined");
   }
 
   const okConsent =
@@ -251,13 +324,18 @@ export async function submitAgreementsAndFinish() {
     (consentDecision === "GRANTED" || consentDecision === "SKIPPED");
 
   if (!okEngagement || !okPayment || !okConsent) {
-    throw new Error("Please complete all required agreements to continue.");
+    redirect("/onboarding/agreements?err=incomplete");
   }
 
-  await db
-    .update(users)
-    .set({ onboardingStep: "SUBMITTED" as any, updatedAt: new Date() })
-    .where(eq(users.id, user.id));
+  try {
+    await db
+      .update(users)
+      .set({ onboardingStep: "SUBMITTED" as any, updatedAt: new Date() })
+      .where(eq(users.id, user.id));
+  } catch (e) {
+    console.error("[submitAgreementsAndFinish] step update failed", e);
+    redirect("/onboarding/agreements?err=save_failed");
+  }
 
   revalidatePath("/onboarding");
   revalidatePath("/onboarding/agreements");

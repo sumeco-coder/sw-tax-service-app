@@ -25,6 +25,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { useFormStatus } from "react-dom";
 
 type Decision = "SIGNED" | "GRANTED" | "DECLINED" | "SKIPPED";
 
@@ -72,12 +73,34 @@ function isRequiredDone(row: SignedRow | null) {
   return Boolean(row.spouseSignedAt);
 }
 
+function errMessage(code: string | null) {
+  if (!code) return "";
+  switch (code) {
+    case "incomplete":
+      return "Please complete all required agreements to continue.";
+    case "consent_declined":
+      return "You selected “I do not consent.” The onboarding cannot continue.";
+    case "wrong_step":
+      return "You’re not on the Agreements step yet. Please return to the onboarding summary.";
+    case "auth_failed":
+      return "Your session may have expired. Please sign in again.";
+    case "db_read_failed":
+      return "We couldn’t verify your agreements right now. Please refresh and try again.";
+    case "save_failed":
+      return "We couldn’t save your final submission. Please refresh and try again.";
+    default:
+      return "Something went wrong. Please refresh and try again.";
+  }
+}
+
 export default function AgreementsClient({
   initial,
   taxYear,
+  errorCode,
 }: {
   initial: Initial;
   taxYear: string;
+  errorCode?: string | null;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -95,7 +118,7 @@ export default function AgreementsClient({
     return (d as Decision) || "SKIPPED";
   });
 
-  const [err, setErr] = useState<string>("");
+  const [err, setErr] = useState<string>(() => errMessage(errorCode ?? null));
   const [signed, setSigned] = useState<Initial>(initial);
 
   const engagementDone = useMemo(
@@ -430,16 +453,9 @@ export default function AgreementsClient({
               </Button>
             ) : null}
 
-            {/* Final submit */}
+            {/* Final submit (form action is OK because server action never throws now) */}
             <form action={submitAgreementsAndFinish}>
-              <Button
-                type="submit"
-                variant="outline"
-                className="rounded-xl"
-                disabled={!canSubmit || pending}
-              >
-                Submit and finish
-              </Button>
+              <FinalSubmitButton disabled={!canSubmit || pending} />
             </form>
           </div>
 
@@ -462,5 +478,20 @@ export default function AgreementsClient({
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+function FinalSubmitButton({ disabled }: { disabled: boolean }) {
+  const { pending } = useFormStatus();
+
+  return (
+    <Button
+      type="submit"
+      variant="outline"
+      className="rounded-xl"
+      disabled={disabled || pending}
+    >
+      {pending ? "Submitting..." : "Submit and finish"}
+    </Button>
   );
 }

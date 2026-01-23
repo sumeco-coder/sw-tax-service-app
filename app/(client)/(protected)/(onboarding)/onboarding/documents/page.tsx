@@ -1,8 +1,11 @@
-// app/(client)/(protected)/(onboarding)/onboarding/documents/page.tsx
 import { redirect } from "next/navigation";
+import { db } from "@/drizzle/db";
+import { users } from "@/drizzle/schema";
+import { eq } from "drizzle-orm";
 import { getServerRole } from "@/lib/auth/roleServer";
 import OnboardingDocumentsClient from "./_components/OnboardingDocumentsClient";
 
+export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
@@ -15,24 +18,26 @@ function oneParam(v: string | string[] | undefined) {
 }
 
 export default async function OnboardingDocumentsPage({ searchParams }: PageProps) {
-  let auth: any = null;
-  try {
-    auth = await getServerRole();
-  } catch (e) {
-    console.error("getServerRole failed on /onboarding/documents", e);
-    auth = null;
-  }
+  const auth = await getServerRole();
+  const sub = String(auth?.sub ?? "").trim();
 
-  // If not signed in, send them to sign-in AND bring them back here
-  if (!auth?.sub) {
+  if (!sub) {
     const invite = (oneParam(searchParams?.invite) ?? "").trim();
+    const nextUrl = invite
+      ? `/onboarding/documents?invite=${encodeURIComponent(invite)}`
+      : "/onboarding/documents";
 
-    const qs = new URLSearchParams();
-    if (invite) qs.set("invite", invite);
-    qs.set("next", "/onboarding/documents");
-
-    redirect(`/sign-in?${qs.toString()}`);
+    redirect(`/sign-in?next=${encodeURIComponent(nextUrl)}`);
   }
+
+  // Ensure they exist in DB (prevents server-action redirect surprises)
+  const [u] = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(eq(users.cognitoSub, sub))
+    .limit(1);
+
+  if (!u) redirect("/onboarding");
 
   return <OnboardingDocumentsClient />;
 }
