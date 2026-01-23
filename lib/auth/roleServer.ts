@@ -140,19 +140,24 @@ export async function getServerRole(): Promise<ServerRoleInfo | null> {
   try {
     const cookieStore = await cookies();
 
-    const accessToken = cookieStore.get("accessToken")?.value;
-    const idToken = cookieStore.get("idToken")?.value;
+    const accessToken = cookieStore.get("accessToken")?.value ?? "";
+    const idToken = cookieStore.get("idToken")?.value ?? "";
 
-      if (idToken) {
-      const decoded = decodeJwtPayload(idToken) as any;
-      if (decoded?.exp && Date.now() / 1000 > decoded.exp) return null;
-    }
+    const now = Date.now() / 1000;
 
-    // Prefer verified ID token, fallback to decoded for resilience
-    const payload =
-      (idToken && (await verifyAndDecode(idToken))) ||
-      (idToken && (decodeJwtPayload(idToken) as CognitoJwtPayload | null)) ||
-      (accessToken && (decodeJwtPayload(accessToken) as CognitoJwtPayload | null));
+    const idDecoded = idToken ? (decodeJwtPayload(idToken) as any) : null;
+    const accessDecoded = accessToken ? (decodeJwtPayload(accessToken) as any) : null;
+
+    const idTokenUsable = !!idToken && (!idDecoded?.exp || now <= Number(idDecoded.exp));
+    const accessTokenUsable =
+      !!accessToken && (!accessDecoded?.exp || now <= Number(accessDecoded.exp));
+
+    // Prefer verified ID token if usable; fallback to decoded ID/access token
+    const payload: CognitoJwtPayload | null =
+      (idTokenUsable && idToken ? await verifyAndDecode(idToken) : null) ||
+      (idTokenUsable && idToken ? (decodeJwtPayload(idToken) as CognitoJwtPayload | null) : null) ||
+      (accessTokenUsable && accessToken ? (decodeJwtPayload(accessToken) as CognitoJwtPayload | null) : null) ||
+      null;
 
     if (!payload) return null;
 
