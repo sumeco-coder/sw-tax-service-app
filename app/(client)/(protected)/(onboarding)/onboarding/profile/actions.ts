@@ -58,7 +58,7 @@ function decodeKey(keyStr: string): Buffer | null {
  * Stores as: iv.tag.data (base64 segments)
  */
 function encryptSSN(ssnDigits: string): string | null {
-  const keyStr = process.env.SSN_ENCRYPTION_KEY;
+  const keyStr = process.env.SSN_ENCRYPTION_KEY?.trim();
   if (!keyStr) return null;
 
   const key = decodeKey(keyStr);
