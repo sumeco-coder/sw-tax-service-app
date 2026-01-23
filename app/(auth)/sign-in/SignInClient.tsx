@@ -7,7 +7,6 @@ import { useRouter, useSearchParams } from "next/navigation";
 import Image from "next/image";
 import { decodeJwt } from "jose";
 
-
 import {
   signIn,
   confirmSignIn,
@@ -63,23 +62,23 @@ function normalizePostOnboardingTarget(path: string) {
   return path;
 }
 
-async function syncServerCookiesFromSession() {
+async function syncServerCookiesFromSession(): Promise<boolean> {
   const session = await fetchAuthSession();
   const accessToken = session.tokens?.accessToken?.toString() ?? "";
   const idToken = session.tokens?.idToken?.toString() ?? "";
 
-  if (!accessToken || !idToken) return null;
+  if (!accessToken || !idToken) return false;
 
-  await fetch("/api/auth/session", {
+  const res = await fetch("/api/auth/session", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ accessToken, idToken }),
+    credentials: "include", // ✅ important
     cache: "no-store",
+    body: JSON.stringify({ accessToken, idToken }),
   });
 
-  return session;
+  return res.ok;
 }
-
 
 export default function SigninClient() {
   const router = useRouter();
@@ -145,32 +144,34 @@ export default function SigninClient() {
   }
 
   /** ✅ Force onboarding for taxpayers (or invite flow) until onboardingComplete=true */
- /** ✅ Force onboarding for taxpayers (or invite flow) until onboardingComplete=true */
-async function routeAfterAuth() {
-  const intended = intendedAfterOnboarding || "/dashboard";
+  /** ✅ Force onboarding for taxpayers (or invite flow) until onboardingComplete=true */
+  async function routeAfterAuth() {
+    const intended = intendedAfterOnboarding || "/dashboard";
 
-  try {
-    const session = await fetchAuthSession();
-    const idToken = session.tokens?.idToken?.toString() ?? "";
+    try {
+      const session = await fetchAuthSession();
+      const idToken = session.tokens?.idToken?.toString() ?? "";
 
-    if (idToken) {
-      const payload = decodeJwt(idToken) as Record<string, any>;
-      const roleClaim = String(payload["custom:role"] ?? "").toLowerCase();
-      const onboardingComplete =
-        String(payload["custom:onboardingComplete"] ?? "").toLowerCase() === "true";
+      if (idToken) {
+        const payload = decodeJwt(idToken) as Record<string, any>;
+        const roleClaim = String(payload["custom:role"] ?? "").toLowerCase();
+        const onboardingComplete =
+          String(payload["custom:onboardingComplete"] ?? "").toLowerCase() ===
+          "true";
 
-      if ((invite || roleClaim === "taxpayer") && !onboardingComplete) {
-        router.push(`/onboarding/profile?next=${encodeURIComponent(intended)}`);
-        return;
+        if ((invite || roleClaim === "taxpayer") && !onboardingComplete) {
+          router.push(
+            `/onboarding/profile?next=${encodeURIComponent(intended)}`
+          );
+          return;
+        }
       }
+    } catch (e) {
+      console.error("routeAfterAuth token check failed:", e);
     }
-  } catch (e) {
-    console.error("routeAfterAuth token check failed:", e);
+
+    router.push(intended);
   }
-
-  router.push(intended);
-}
-
 
   // ✅ If already signed in, redirect right away
   useEffect(() => {
@@ -178,8 +179,17 @@ async function routeAfterAuth() {
 
     (async () => {
       try {
-        await getCurrentUser(); // if this works, someone is already signed in
+        await getCurrentUser();
+
         if (cancelled) return;
+
+        const ok = await syncServerCookiesFromSession();
+        if (!ok) {
+          setMsg("Session sync failed. Please refresh and sign in again.");
+          await signOut().catch(() => {});
+          return;
+        }
+
         await routeAfterAuth();
         return;
       } catch {
@@ -192,7 +202,8 @@ async function routeAfterAuth() {
     return () => {
       cancelled = true;
     };
-  }, [invite, intendedAfterOnboarding]); // affects routeAfterAuth behavior
+  }, [invite, intendedAfterOnboarding]);
+  // affects routeAfterAuth behavior
 
   async function handleSignIn(e: React.FormEvent) {
     e.preventDefault();
@@ -243,6 +254,11 @@ async function routeAfterAuth() {
 
       // ✅ if already signed in, just route them in
       if (m.toLowerCase().includes("already a signed in user")) {
+        const ok = await syncServerCookiesFromSession();
+        if (!ok) {
+          setMsg("Session sync failed. Please refresh and try again.");
+          return;
+        }
         await routeAfterAuth();
         return;
       }
