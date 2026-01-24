@@ -4,7 +4,7 @@
 import crypto from "crypto";
 import { db } from "@/drizzle/db";
 import { users, dependents } from "@/drizzle/schema";
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { getServerRole } from "@/lib/auth/roleServer";
@@ -68,46 +68,46 @@ function mapFilingStatus(code: string) {
   }
 }
 
-function decodeKey32(key: string) {
-  const k = String(key ?? "").trim();
-  if (!k) throw new Error("SSN_ENCRYPTION_KEY is not set.");
+/**
+ * AES-256-GCM key reader:
+ * - accepts HEX (>=64 hex chars) OR base64/base64url
+ * - must decode to 32 bytes
+ */
+function readAes256Key(envName: string): Buffer {
+  const raw = (process.env[envName] ?? "").trim();
+  if (!raw) throw new Error(`Missing ${envName} env var.`);
 
-  // Accept BOTH base64 and base64url (because you used base64url generator)
-  let buf: Buffer | null = null;
+  const isHex = /^[0-9a-fA-F]+$/.test(raw) && raw.length >= 64;
 
-  try {
-    buf = Buffer.from(k, "base64url");
-  } catch {
-    buf = null;
+  const key = isHex
+    ? Buffer.from(raw, "hex")
+    : Buffer.from(
+        raw,
+        raw.includes("-") || raw.includes("_") ? ("base64url" as any) : "base64"
+      );
+
+  if (key.length !== 32) {
+    throw new Error(`${envName} must decode to 32 bytes (AES-256).`);
   }
-
-  if (!buf || buf.length !== 32) {
-    try {
-      buf = Buffer.from(k, "base64");
-    } catch {
-      buf = null;
-    }
-  }
-
-  if (!buf || buf.length !== 32) {
-    throw new Error("SSN_ENCRYPTION_KEY must decode to 32 bytes (base64 or base64url).");
-  }
-
-  return buf;
+  return key;
 }
 
-function encryptSSN(ssnDigits: string): string {
-  const key = decodeKey32(process.env.SSN_ENCRYPTION_KEY!);
-
+/**
+ * Stores a versioned value compatible with your /api/dependents encryption style:
+ * v1.<iv_b64url>.<tag_b64url>.<ciphertext_b64url>
+ */
+function encryptSsnV1(ssn9: string) {
+  const key = readAes256Key("SSN_ENCRYPTION_KEY");
   const iv = crypto.randomBytes(12);
   const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
 
-  const enc = Buffer.concat([cipher.update(ssnDigits, "utf8"), cipher.final()]);
+  const ciphertext = Buffer.concat([cipher.update(ssn9, "utf8"), cipher.final()]);
   const tag = cipher.getAuthTag();
 
-  return `${iv.toString("base64")}.${tag.toString("base64")}.${enc.toString("base64")}`;
+  return `v1.${iv.toString("base64url")}.${tag.toString("base64url")}.${ciphertext.toString(
+    "base64url"
+  )}`;
 }
-
 
 type DependentInput = {
   firstName: string;
@@ -115,7 +115,8 @@ type DependentInput = {
   lastName: string;
   dob: string;
   relationship: string;
-  ssn: string;
+  ssn?: string;
+  appliedButNotReceived?: boolean; // optional support (if client includes it)
 };
 
 function parseDependentsJson(raw: string): DependentInput[] {
@@ -125,9 +126,7 @@ function parseDependentsJson(raw: string): DependentInput[] {
   try {
     arr = JSON.parse(raw);
   } catch {
-    throw new Error(
-      "Dependents data is invalid. Please refresh and try again."
-    );
+    throw new Error("Dependents data is invalid. Please refresh and try again.");
   }
 
   if (!Array.isArray(arr)) return [];
@@ -141,6 +140,7 @@ function parseDependentsJson(raw: string): DependentInput[] {
       dob: clean(o.dob, 10),
       relationship: clean(o.relationship, 40),
       ssn: clean(o.ssn, 20),
+      appliedButNotReceived: Boolean(o.appliedButNotReceived),
     };
   });
 }
@@ -171,23 +171,32 @@ export async function saveQuestions(formData: FormData) {
     );
   }
 
+  // Build rows we will sync into `dependents` (non-destructive, ID-stable)
   const dependentRows = dependentInputs.map((d, idx) => {
     const firstName = clean(d.firstName, 60);
     const middleName = clean(d.middleName ?? "", 60);
     const lastName = clean(d.lastName, 60);
     const dob = normalizeDobYYYYMMDD(d.dob);
     const relationship = clean(d.relationship, 40);
+
+    const applied = Boolean(d.appliedButNotReceived);
     const ssnDigits = digitsOnly(d.ssn);
 
     if (!firstName)
       throw new Error(`Dependent #${idx + 1}: first name is required.`);
-    if (!lastName)
-      throw new Error(`Dependent #${idx + 1}: last name is required.`);
+    if (!lastName) throw new Error(`Dependent #${idx + 1}: last name is required.`);
     if (!dob) throw new Error(`Dependent #${idx + 1}: DOB must be YYYY-MM-DD.`);
     if (!relationship)
       throw new Error(`Dependent #${idx + 1}: relationship is required.`);
-    if (ssnDigits.length !== 9)
-      throw new Error(`Dependent #${idx + 1}: SSN must be 9 digits.`);
+
+    // SSN rules:
+    // - If applied = true, SSN may be blank and we store applied=true + ssnEncrypted=null
+    // - Else SSN must be 9 digits and we store encrypted SSN
+    if (!applied && ssnDigits.length !== 9) {
+      throw new Error(
+        `Dependent #${idx + 1}: SSN must be 9 digits (or mark applied-but-not-received).`
+      );
+    }
 
     return {
       firstName,
@@ -195,7 +204,8 @@ export async function saveQuestions(formData: FormData) {
       lastName,
       dob,
       relationship,
-      ssnEncrypted: encryptSSN(ssnDigits),
+      appliedButNotReceived: applied,
+      ssnEncrypted: applied ? null : encryptSsnV1(ssnDigits),
     };
   });
 
@@ -299,21 +309,76 @@ export async function saveQuestions(formData: FormData) {
     // if auth email was missing, keep DB email (no crash)
     if (!email && u.email) email = u.email;
 
-    await tx.delete(dependents).where(eq(dependents.userId, u.id));
+    // ✅ Non-destructive dependent sync (recommended):
+    // - updates existing dependents by a stable key
+    // - inserts new dependents when truly new
+    // - DOES NOT delete remaining dependents (preserves IDs + questionnaires)
 
-    if (dependentRows.length) {
-      await tx.insert(dependents).values(
-        dependentRows.map((r) => ({
+    const existing = await tx
+      .select({
+        id: dependents.id,
+        firstName: dependents.firstName,
+        lastName: dependents.lastName,
+        dob: dependents.dob,
+      })
+      .from(dependents)
+      .where(eq(dependents.userId, u.id));
+
+    const dobKey = (v: any) =>
+      v instanceof Date ? v.toISOString().slice(0, 10) : String(v ?? "").slice(0, 10);
+
+    // 🔒 Stable key: first + last + dob (relationship can change without creating duplicates)
+    const keyOf = (d: any) =>
+      `${String(d.firstName).trim().toLowerCase()}|${String(d.lastName)
+        .trim()
+        .toLowerCase()}|${dobKey(d.dob)}`;
+
+    const existingByKey = new Map(existing.map((d) => [keyOf(d), d.id]));
+
+    for (const r of dependentRows) {
+      const k = keyOf(r);
+      const matchId = existingByKey.get(k);
+
+      const ssnPart = r.appliedButNotReceived
+        ? { appliedButNotReceived: true, ssnEncrypted: null }
+        : { appliedButNotReceived: false, ssnEncrypted: r.ssnEncrypted };
+
+      if (matchId) {
+        // ✅ Update existing dependent (ID stays the same)
+        // Note: We intentionally do NOT overwrite monthsInHome/isStudent/isDisabled here
+        // because onboarding/questions doesn’t collect those fields.
+        await tx
+          .update(dependents)
+          .set({
+            firstName: r.firstName,
+            middleName: r.middleName ?? "",
+            lastName: r.lastName,
+            dob: r.dob,
+            relationship: r.relationship,
+            ...ssnPart,
+            updatedAt: new Date(),
+          } as any)
+          .where(and(eq(dependents.id, matchId), eq(dependents.userId, u.id)));
+      } else {
+        // ✅ Insert truly new dependent
+        await tx.insert(dependents).values({
           userId: u.id,
           firstName: r.firstName,
-          middleName: r.middleName,
+          middleName: r.middleName ?? "",
           lastName: r.lastName,
           dob: r.dob,
           relationship: r.relationship,
-          ssnEncrypted: r.ssnEncrypted,
-        }))
-      );
+          ...ssnPart,
+          monthsInHome: 12,
+          isStudent: false,
+          isDisabled: false,
+          updatedAt: new Date(),
+        } as any);
+      }
     }
+
+    // ✅ DO NOT delete leftover dependents.
+    // Leaving them preserves dependent IDs and any dependent_questionnaires rows.
   });
 
   revalidatePath("/onboarding");
