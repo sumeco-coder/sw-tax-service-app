@@ -2,7 +2,7 @@
 
 import crypto from "crypto";
 import { redirect } from "next/navigation";
-import { desc, eq } from "drizzle-orm"; // ✅ FIXED: removed `and`
+import { desc, eq, and } from "drizzle-orm"; // ✅ FIXED: removed `and`
 import { db } from "@/drizzle/db";
 import { users, documents } from "@/drizzle/schema";
 import { getServerRole } from "@/lib/auth/roleServer";
@@ -81,7 +81,12 @@ function sanitizeFileName(name: string) {
     .replace(/[^\w.\-()\s]/g, "_");
 }
 
-async function getViewer() {
+type Viewer =
+  | { ok: true; userId: string }
+  | { ok: false; code: "NO_USER_ROW" }
+  | null;
+
+async function getViewer(): Promise<Viewer> {
   const me = await getServerRole();
   const sub = String(me?.sub ?? "").trim();
   if (!sub) return null;
@@ -92,7 +97,9 @@ async function getViewer() {
     .where(eq(users.cognitoSub, sub))
     .limit(1);
 
-  return userRow ? { userId: String(userRow.id) } : null;
+  if (!userRow?.id) return { ok: false, code: "NO_USER_ROW" };
+
+  return { ok: true, userId: String(userRow.id) };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -105,6 +112,7 @@ export async function onboardingListMyDocuments(): Promise<
   try {
     const viewer = await getViewer();
     if (!viewer) return { ok: false, code: "UNAUTHENTICATED" };
+    if (!viewer.ok) return { ok: false, code: "NO_USER_ROW" };
 
     const rows = await db
       .select({
@@ -144,6 +152,7 @@ export async function onboardingCreateMyUploadUrl(input: {
   try {
     const viewer = await getViewer();
     if (!viewer) return { ok: false, code: "UNAUTHENTICATED" };
+    if (!viewer.ok) return { ok: false, code: "NO_USER_ROW" };
 
     const cfg = getS3Config();
     if (!cfg) return { ok: false, code: "CONFIG_MISSING" };
@@ -164,16 +173,55 @@ export async function onboardingCreateMyUploadUrl(input: {
       { expiresIn: 300 }
     );
 
-    await db.insert(documents).values({
-      userId: viewer.userId,
-      key,
-      displayName: input.fileName,
-      uploadedAt: new Date(),
-    });
-
     return { ok: true, data: { key, url } };
   } catch (e) {
     console.error("[onboardingCreateMyUploadUrl]", e);
+    return { ok: false, code: "ERROR" };
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Finalize upload (DB WRITE AFTER PUT) */
+/* -------------------------------------------------------------------------- */
+
+export async function onboardingFinalizeMyUpload(input: {
+  key: string;
+  fileName: string;
+}): Promise<ActionResult<{ key: string }>> {
+  try {
+    const viewer = await getViewer();
+    if (!viewer) return { ok: false, code: "UNAUTHENTICATED" };
+    if (!viewer.ok) return { ok: false, code: "NO_USER_ROW" };
+
+    const key = String(input.key ?? "").trim();
+    if (!key) return { ok: false, code: "ERROR", message: "Missing key." };
+
+    // ✅ key must belong to this user (prevents writing other users’ keys)
+    if (!key.startsWith(`${viewer.userId}/`)) {
+      return { ok: false, code: "FORBIDDEN" };
+    }
+
+    const displayName = sanitizeFileName(input.fileName);
+
+    // avoid duplicates if finalize is called twice
+    const [exists] = await db
+      .select({ key: documents.key })
+      .from(documents)
+      .where(and(eq(documents.userId, viewer.userId), eq(documents.key, key)))
+      .limit(1);
+
+    if (!exists) {
+      await db.insert(documents).values({
+        userId: viewer.userId,
+        key,
+        displayName,
+        uploadedAt: new Date(),
+      });
+    }
+
+    return { ok: true, data: { key } };
+  } catch (e) {
+    console.error("[onboardingFinalizeMyUpload]", e);
     return { ok: false, code: "ERROR" };
   }
 }
@@ -188,9 +236,24 @@ export async function onboardingCreateMyDownloadUrl(
   try {
     const viewer = await getViewer();
     if (!viewer) return { ok: false, code: "UNAUTHENTICATED" };
+    if (!viewer.ok) return { ok: false, code: "NO_USER_ROW" };
 
     const cfg = getS3Config();
     if (!cfg) return { ok: false, code: "CONFIG_MISSING" };
+
+    const cleanKey = String(key ?? "").trim();
+    if (!cleanKey) return { ok: false, code: "ERROR", message: "Missing key." };
+
+    // ✅ Verify ownership (don’t sign arbitrary keys)
+    const [row] = await db
+      .select({ key: documents.key })
+      .from(documents)
+      .where(
+        and(eq(documents.userId, viewer.userId), eq(documents.key, cleanKey))
+      )
+      .limit(1);
+
+    if (!row) return { ok: false, code: "FORBIDDEN" };
 
     const s3 = new S3Client({ region: cfg.region });
 
@@ -198,7 +261,7 @@ export async function onboardingCreateMyDownloadUrl(
       s3,
       new GetObjectCommand({
         Bucket: cfg.bucket,
-        Key: key,
+        Key: cleanKey,
       }),
       { expiresIn: 300 }
     );

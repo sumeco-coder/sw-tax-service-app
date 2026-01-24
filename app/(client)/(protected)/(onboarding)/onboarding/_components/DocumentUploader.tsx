@@ -1,7 +1,11 @@
 "use client";
 
 import React, { useState } from "react";
-import { onboardingCreateMyUploadUrl } from "../documents/actions";
+import {
+  onboardingCreateMyUploadUrl,
+  onboardingFinalizeMyUpload,
+} from "../documents/actions";
+
 
 type DocumentUploaderProps = {
   onUploaded?: () => void;
@@ -14,39 +18,50 @@ export default function DocumentUploader({
   const [error, setError] = useState<string | null>(null);
 
   async function uploadFile(file: File) {
-    if (file.size > 10 * 1024 * 1024) throw new Error("Max file size is 10MB.");
+  if (file.size > 10 * 1024 * 1024) throw new Error("Max file size is 10MB.");
 
-    const contentType = file.type || "application/octet-stream";
+  const contentType = file.type || "application/octet-stream";
 
-    const res = await onboardingCreateMyUploadUrl({
-      fileName: file.name,
-      contentType,
-    });
+  const res = await onboardingCreateMyUploadUrl({
+    fileName: file.name,
+    contentType,
+  });
 
-    if (!res.ok) {
-      if (res.code === "UNAUTHENTICATED") {
-        window.location.href =
-          "/sign-in?next=" + encodeURIComponent("/onboarding/documents");
-        return;
-      }
-      if (res.code === "NO_USER_ROW") {
-        window.location.href = "/onboarding";
-        return;
-      }
-      throw new Error(res.message || `Upload could not start (${res.code}).`);
+  if (!res.ok) {
+    if (res.code === "UNAUTHENTICATED") {
+      window.location.href =
+        "/sign-in?next=" + encodeURIComponent("/onboarding/documents");
+      return;
     }
-
-    const { url } = res.data;
-
-    const put = await fetch(url, {
-      method: "PUT",
-      headers: { "Content-Type": contentType },
-      body: file,
-    });
-
-    if (!put.ok)
-      throw new Error(`Upload failed (${put.status}). Please try again.`);
+    if (res.code === "NO_USER_ROW") {
+      window.location.href = "/onboarding";
+      return;
+    }
+    throw new Error(res.message || `Upload could not start (${res.code}).`);
   }
+
+  const { url, key } = res.data;
+
+  const put = await fetch(url, {
+    method: "PUT",
+    headers: { "Content-Type": contentType },
+    body: file,
+  });
+
+  if (!put.ok) {
+    throw new Error(`Upload failed (${put.status}). Please try again.`);
+  }
+
+  // ✅ finalize AFTER successful PUT (creates the documents row)
+  const fin = await onboardingFinalizeMyUpload({
+    key,
+    fileName: file.name,
+  });
+
+  if (!fin.ok) {
+    throw new Error(fin.message || "Upload saved to storage, but failed to finalize.");
+  }
+}
 
   async function handleChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
