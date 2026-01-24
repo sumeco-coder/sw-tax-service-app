@@ -548,9 +548,15 @@ export const identification = pgTable(
       .references(() => users.id, { onDelete: "cascade" }),
 
     type: identificationType("type").notNull(),
-    issuingState: text("issuing_state"), // e.g. "NV"
+    issuingState: text("issuing_state"),
+    issueDate: date("issue_date"),
     expiresOn: date("expires_on"),
     idLast4: text("id_last4"),
+    idNumberEncrypted: text("id_number_encrypted"),
+    hasNoId: boolean("has_no_id").notNull().default(false),
+    doesNotWantToProvide: boolean("does_not_want_to_provide")
+      .notNull()
+      .default(false),
     frontKey: text("front_key"),
     backKey: text("back_key"),
     person: identificationPersonEnum("person").notNull(),
@@ -560,6 +566,7 @@ export const identification = pgTable(
       .notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .defaultNow()
+      .$onUpdate(() => new Date())
       .notNull(),
   },
   (t) => ({

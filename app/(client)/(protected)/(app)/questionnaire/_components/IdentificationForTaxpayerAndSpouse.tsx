@@ -2,7 +2,13 @@
 "use client";
 
 import * as React from "react";
-import { useForm, Controller, type Resolver, type SubmitHandler } from "react-hook-form";
+import {
+  useForm,
+  Controller,
+  type Resolver,
+  type SubmitHandler,
+  useWatch,
+} from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { CreditCard, ShieldCheck } from "lucide-react";
@@ -20,22 +26,18 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
+/* ---------------- brand ---------------- */
+
 const BRAND = {
   pink: "#E72B69",
   copper: "#BA4A26",
-  charcoal: "#2C2B33",
 };
 
 const brandGradient = {
   background: `linear-gradient(135deg, ${BRAND.pink}, ${BRAND.copper})`,
 };
 
-const focusRing =
-  "focus:outline-none focus:ring-2 focus:ring-[#E72B69]/25 focus:border-[#E72B69]/40";
-
-const inputBase =
-  `w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 ` +
-  `placeholder:text-slate-400 transition ${focusRing}`;
+/* ---------------- constants ---------------- */
 
 const STATES = [
   "AL","AK","AZ","AR","CA","CO","CT","DE","DC","FL","GA","HI","ID","IL","IN","IA","KS","KY","LA","ME","MD","MA","MI","MN",
@@ -51,6 +53,8 @@ const ID_TYPES = [
   "Other",
 ] as const;
 
+/* ---------------- schema ---------------- */
+
 const schema = z
   .object({
     taxpayer: z.object({
@@ -58,14 +62,14 @@ const schema = z
       doesNotWantToProvide: z.boolean().default(false),
 
       type: z.enum(ID_TYPES).default("Driver’s License"),
-      number: z.string().trim().default(""),
+      number: z.string().trim().default(""), // full number (encrypted on server)
       state: z.enum(STATES).default("CA"),
-      issueDate: z.string().trim().default(""),
-      expirationDate: z.string().trim().default(""),
+      issueDate: z.string().trim().default(""),       // YYYY-MM-DD or ""
+      expirationDate: z.string().trim().default(""),  // YYYY-MM-DD or ""
     }),
 
     spouse: z.object({
-      enabled: z.boolean().default(false), // show spouse section only if enabled
+      enabled: z.boolean().default(false),
       hasNoId: z.boolean().default(false),
       doesNotWantToProvide: z.boolean().default(false),
 
@@ -147,7 +151,9 @@ const defaultValues: IdentificationForTaxpayerAndSpouseValues = {
   },
 };
 
-function scrubIfOptedOut<T extends { hasNoId: boolean; doesNotWantToProvide: boolean } & Record<string, any>>(p: T) {
+function scrubIfOptedOut<
+  T extends { hasNoId: boolean; doesNotWantToProvide: boolean } & Record<string, any>
+>(p: T) {
   if (!p.hasNoId && !p.doesNotWantToProvide) return p;
   return {
     ...p,
@@ -157,32 +163,58 @@ function scrubIfOptedOut<T extends { hasNoId: boolean; doesNotWantToProvide: boo
   };
 }
 
-function PersonIdCard({
-  title,
-  subtitle,
-  control,
-  register,
-  watchPrefix,
-  setValue,
-  errors,
-  showSectionToggle,
-  sectionEnabledValue,
-  onToggleSection,
-}: {
+/* ---------------- UI helpers ---------------- */
+
+function Last4Hint({ last4 }: { last4?: string }) {
+  if (!last4) return null;
+  return (
+    <span className="ml-2 text-[11px] text-slate-500">
+      (on file ending in <span className="font-semibold">{last4}</span>)
+    </span>
+  );
+}
+
+/* ---------------- subcomponent ---------------- */
+
+function PersonIdCard(props: {
   title: string;
   subtitle?: string;
   control: any;
   register: any;
-  watchPrefix: "taxpayer" | "spouse";
   setValue: (name: any, value: any, opts?: any) => void;
   errors: any;
+
+  prefix: "taxpayer" | "spouse";
+  enabled: boolean; // spouse.enabled controls this; taxpayer always true
+
   showSectionToggle?: boolean;
   sectionEnabledValue?: boolean;
   onToggleSection?: (v: boolean) => void;
+
+  last4?: string;
 }) {
-  const hasNoId = control._formValues?.[watchPrefix]?.hasNoId ?? false;
-  const doesNotWant = control._formValues?.[watchPrefix]?.doesNotWantToProvide ?? false;
-  const disabled = Boolean(hasNoId || doesNotWant);
+  const {
+    title,
+    subtitle,
+    control,
+    register,
+    setValue,
+    errors,
+    prefix,
+    enabled,
+    showSectionToggle,
+    sectionEnabledValue,
+    onToggleSection,
+    last4,
+  } = props;
+
+  const hasNoId = useWatch({ control, name: `${prefix}.hasNoId` }) as boolean;
+  const doesNotWant = useWatch({
+    control,
+    name: `${prefix}.doesNotWantToProvide`,
+  }) as boolean;
+
+  const disabled = !enabled || Boolean(hasNoId || doesNotWant);
 
   return (
     <Card className="border-slate-200">
@@ -211,7 +243,9 @@ function PersonIdCard({
               </div>
               <div>
                 <p className="text-sm font-semibold text-slate-900">Include spouse ID</p>
-                <p className="text-xs text-slate-600">Turn on if you are filing jointly or need spouse info.</p>
+                <p className="text-xs text-slate-600">
+                  Turn on if you are filing jointly or need spouse info.
+                </p>
               </div>
             </div>
 
@@ -221,12 +255,18 @@ function PersonIdCard({
       </CardHeader>
 
       <CardContent className="space-y-5">
+        {!enabled ? (
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
+            Turn on <span className="font-semibold">Include spouse ID</span> to enter spouse details.
+          </div>
+        ) : null}
+
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <div>
             <Label className="text-slate-700">Type</Label>
             <Controller
               control={control}
-              name={`${watchPrefix}.type`}
+              name={`${prefix}.type`}
               render={({ field }: any) => (
                 <Select value={field.value} onValueChange={field.onChange} disabled={disabled}>
                   <SelectTrigger className="mt-1">
@@ -245,15 +285,18 @@ function PersonIdCard({
           </div>
 
           <div>
-            <Label className="text-slate-700">Number</Label>
+            <Label className="text-slate-700">
+              Number <Last4Hint last4={last4} />
+            </Label>
             <Input
               className="mt-1"
               disabled={disabled}
               placeholder="ID number"
-              {...register(`${watchPrefix}.number`)}
+              {...register(`${prefix}.number`)}
+              autoComplete="off"
             />
-            {errors?.[watchPrefix]?.number && (
-              <p className="mt-1 text-xs text-red-600">{errors[watchPrefix].number.message}</p>
+            {errors?.[prefix]?.number && (
+              <p className="mt-1 text-xs text-red-600">{errors[prefix].number.message}</p>
             )}
           </div>
 
@@ -261,7 +304,7 @@ function PersonIdCard({
             <Label className="text-slate-700">State</Label>
             <Controller
               control={control}
-              name={`${watchPrefix}.state`}
+              name={`${prefix}.state`}
               render={({ field }: any) => (
                 <Select value={field.value} onValueChange={field.onChange} disabled={disabled}>
                   <SelectTrigger className="mt-1">
@@ -281,17 +324,27 @@ function PersonIdCard({
 
           <div>
             <Label className="text-slate-700">Issue Date</Label>
-            <Input className="mt-1" type="date" disabled={disabled} {...register(`${watchPrefix}.issueDate`)} />
-            {errors?.[watchPrefix]?.issueDate && (
-              <p className="mt-1 text-xs text-red-600">{errors[watchPrefix].issueDate.message}</p>
+            <Input
+              className="mt-1"
+              type="date"
+              disabled={disabled}
+              {...register(`${prefix}.issueDate`)}
+            />
+            {errors?.[prefix]?.issueDate && (
+              <p className="mt-1 text-xs text-red-600">{errors[prefix].issueDate.message}</p>
             )}
           </div>
 
           <div>
             <Label className="text-slate-700">Expiration Date</Label>
-            <Input className="mt-1" type="date" disabled={disabled} {...register(`${watchPrefix}.expirationDate`)} />
-            {errors?.[watchPrefix]?.expirationDate && (
-              <p className="mt-1 text-xs text-red-600">{errors[watchPrefix].expirationDate.message}</p>
+            <Input
+              className="mt-1"
+              type="date"
+              disabled={disabled}
+              {...register(`${prefix}.expirationDate`)}
+            />
+            {errors?.[prefix]?.expirationDate && (
+              <p className="mt-1 text-xs text-red-600">{errors[prefix].expirationDate.message}</p>
             )}
           </div>
 
@@ -306,17 +359,18 @@ function PersonIdCard({
                 </div>
                 <Controller
                   control={control}
-                  name={`${watchPrefix}.hasNoId`}
+                  name={`${prefix}.hasNoId`}
                   render={({ field }: any) => (
                     <Switch
                       checked={!!field.value}
+                      disabled={!enabled}
                       onCheckedChange={(v) => {
                         field.onChange(v);
                         if (v) {
-                          setValue(`${watchPrefix}.doesNotWantToProvide`, false, { shouldDirty: true });
-                          setValue(`${watchPrefix}.number`, "", { shouldDirty: true });
-                          setValue(`${watchPrefix}.issueDate`, "", { shouldDirty: true });
-                          setValue(`${watchPrefix}.expirationDate`, "", { shouldDirty: true });
+                          setValue(`${prefix}.doesNotWantToProvide`, false, { shouldDirty: true });
+                          setValue(`${prefix}.number`, "", { shouldDirty: true });
+                          setValue(`${prefix}.issueDate`, "", { shouldDirty: true });
+                          setValue(`${prefix}.expirationDate`, "", { shouldDirty: true });
                         }
                       }}
                     />
@@ -333,17 +387,18 @@ function PersonIdCard({
                 </div>
                 <Controller
                   control={control}
-                  name={`${watchPrefix}.doesNotWantToProvide`}
+                  name={`${prefix}.doesNotWantToProvide`}
                   render={({ field }: any) => (
                     <Switch
                       checked={!!field.value}
+                      disabled={!enabled}
                       onCheckedChange={(v) => {
                         field.onChange(v);
                         if (v) {
-                          setValue(`${watchPrefix}.hasNoId`, false, { shouldDirty: true });
-                          setValue(`${watchPrefix}.number`, "", { shouldDirty: true });
-                          setValue(`${watchPrefix}.issueDate`, "", { shouldDirty: true });
-                          setValue(`${watchPrefix}.expirationDate`, "", { shouldDirty: true });
+                          setValue(`${prefix}.hasNoId`, false, { shouldDirty: true });
+                          setValue(`${prefix}.number`, "", { shouldDirty: true });
+                          setValue(`${prefix}.issueDate`, "", { shouldDirty: true });
+                          setValue(`${prefix}.expirationDate`, "", { shouldDirty: true });
                         }
                       }}
                     />
@@ -362,6 +417,8 @@ function PersonIdCard({
   );
 }
 
+/* ---------------- main component ---------------- */
+
 export default function IdentificationForTaxpayerAndSpouse({
   initialValues,
   onSave,
@@ -374,14 +431,23 @@ export default function IdentificationForTaxpayerAndSpouse({
   saveLabel?: string;
 }) {
   const [msg, setMsg] = React.useState("");
+  const [loadingSaved, setLoadingSaved] = React.useState(true);
+  const [loadErr, setLoadErr] = React.useState<string | null>(null);
+  const didLoadRef = React.useRef(false);
 
-  // ✅ match your earlier fix style (avoids resolver optional/required mismatch)
+  const [last4, setLast4] = React.useState<{ taxpayer?: string; spouse?: string }>({});
+
   const resolver: Resolver<IdentificationForTaxpayerAndSpouseValues> =
     zodResolver(schema) as unknown as Resolver<IdentificationForTaxpayerAndSpouseValues>;
 
   const form = useForm<IdentificationForTaxpayerAndSpouseValues>({
     resolver,
-    defaultValues: { ...defaultValues, ...(initialValues ?? {}) },
+    defaultValues: {
+      ...defaultValues,
+      ...(initialValues ?? {}),
+      taxpayer: { ...defaultValues.taxpayer, ...(initialValues?.taxpayer ?? {}) },
+      spouse: { ...defaultValues.spouse, ...(initialValues?.spouse ?? {}) },
+    },
     mode: "onBlur",
   });
 
@@ -390,25 +456,102 @@ export default function IdentificationForTaxpayerAndSpouse({
     register,
     handleSubmit,
     setValue,
-    watch,
+    reset,
     formState: { errors, isSubmitting },
   } = form;
 
-  const spouseEnabled = watch("spouse.enabled");
+  const spouseEnabled = useWatch({ control, name: "spouse.enabled" }) as boolean;
+
+  // ✅ Load saved values on mount (like education credit)
+  React.useEffect(() => {
+    let alive = true;
+
+    (async () => {
+      try {
+        setLoadingSaved(true);
+        setLoadErr(null);
+
+        const res = await fetch("/api/identification", { method: "GET" });
+        if (!res.ok) {
+          didLoadRef.current = true;
+          return;
+        }
+
+        const json = await res.json().catch(() => null);
+        if (!alive || !json?.ok || !json?.data) {
+          didLoadRef.current = true;
+          return;
+        }
+
+        // server returns { ok:true, data:{taxpayer, spouse}, meta:{taxpayerLast4, spouseLast4} }
+        const merged: IdentificationForTaxpayerAndSpouseValues = {
+          taxpayer: {
+            ...defaultValues.taxpayer,
+            ...(initialValues?.taxpayer ?? {}),
+            ...(json.data.taxpayer ?? {}),
+          },
+          spouse: {
+            ...defaultValues.spouse,
+            ...(initialValues?.spouse ?? {}),
+            ...(json.data.spouse ?? {}),
+          },
+        };
+
+        // ✅ never hydrate the full ID number back into the input
+        merged.taxpayer.number = "";
+        merged.spouse.number = "";
+
+        reset(merged, { keepDirty: false, keepTouched: false });
+
+        setLast4({
+          taxpayer: String(json?.meta?.taxpayerLast4 ?? ""),
+          spouse: String(json?.meta?.spouseLast4 ?? ""),
+        });
+
+        didLoadRef.current = true;
+      } catch (e: any) {
+        if (!alive) return;
+        setLoadErr(e?.message ?? "Failed to load saved identification.");
+        didLoadRef.current = true;
+      } finally {
+        if (!alive) return;
+        setLoadingSaved(false);
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, [reset, initialValues]);
 
   const submit: SubmitHandler<IdentificationForTaxpayerAndSpouseValues> = async (values) => {
     setMsg("");
 
     const payload: IdentificationForTaxpayerAndSpouseValues = {
       taxpayer: scrubIfOptedOut(values.taxpayer),
-      spouse: values.spouse.enabled ? scrubIfOptedOut(values.spouse) : { ...values.spouse },
+      spouse: values.spouse.enabled
+        ? scrubIfOptedOut(values.spouse)
+        : {
+            ...values.spouse,
+            hasNoId: false,
+            doesNotWantToProvide: false,
+            number: "",
+            issueDate: "",
+            expirationDate: "",
+          },
     };
 
+    // if spouse disabled, force-clear to avoid stale values
     if (!payload.spouse.enabled) {
-      payload.spouse = { ...payload.spouse, hasNoId: false, doesNotWantToProvide: false };
-      payload.spouse.number = "";
-      payload.spouse.issueDate = "";
-      payload.spouse.expirationDate = "";
+      payload.spouse = {
+        ...payload.spouse,
+        enabled: false,
+        hasNoId: false,
+        doesNotWantToProvide: false,
+        number: "",
+        issueDate: "",
+        expirationDate: "",
+      };
     }
 
     if (onSave) {
@@ -428,22 +571,53 @@ export default function IdentificationForTaxpayerAndSpouse({
       throw new Error(err?.error || "Failed to save identification info");
     }
 
+    // refresh last4 from server after save (optional but nice)
+    try {
+      const reload = await fetch("/api/identification", { method: "GET" });
+      const json = await reload.json().catch(() => null);
+      if (json?.ok) {
+        setLast4({
+          taxpayer: String(json?.meta?.taxpayerLast4 ?? ""),
+          spouse: String(json?.meta?.spouseLast4 ?? ""),
+        });
+      }
+    } catch {
+      // ignore
+    }
+
+    // clear inputs after successful save (privacy)
+    reset(
+      {
+        ...values,
+        taxpayer: { ...values.taxpayer, number: "" },
+        spouse: { ...values.spouse, number: "" },
+      },
+      { keepDirty: false, keepTouched: true }
+    );
+
     setMsg("Saved.");
   };
 
   return (
     <div className="space-y-6">
-      {msg && <p className="text-sm text-slate-600">{msg}</p>}
+      {loadingSaved ? (
+        <p className="text-sm text-slate-600">Loading saved identification…</p>
+      ) : null}
+
+      {loadErr ? <p className="text-sm text-red-600">{loadErr}</p> : null}
+      {msg ? <p className="text-sm text-slate-600">{msg}</p> : null}
 
       <form onSubmit={handleSubmit(submit)} className="space-y-6" noValidate>
         <PersonIdCard
           title="Taxpayer’s Driver’s License or State-Issued Photo ID"
-          subtitle="Provide ID details (optional). If you don’t have one or don’t want to share it, toggle the options below."
+          subtitle="Provide ID details. If you don’t have one or don’t want to share it, toggle the options below."
           control={control}
           register={register}
-          watchPrefix="taxpayer"
           setValue={setValue}
           errors={errors}
+          prefix="taxpayer"
+          enabled={true}
+          last4={last4.taxpayer}
         />
 
         <PersonIdCard
@@ -451,12 +625,25 @@ export default function IdentificationForTaxpayerAndSpouse({
           subtitle="Optional spouse ID details (only if spouse section is enabled)."
           control={control}
           register={register}
-          watchPrefix="spouse"
           setValue={setValue}
           errors={errors}
+          prefix="spouse"
+          enabled={!!spouseEnabled}
           showSectionToggle
           sectionEnabledValue={spouseEnabled}
-          onToggleSection={(v) => setValue("spouse.enabled", v, { shouldDirty: true })}
+          onToggleSection={(v) => {
+            setValue("spouse.enabled", v, { shouldDirty: true });
+
+            if (!v) {
+              // clear spouse values when turning OFF
+              setValue("spouse.hasNoId", false, { shouldDirty: true });
+              setValue("spouse.doesNotWantToProvide", false, { shouldDirty: true });
+              setValue("spouse.number", "", { shouldDirty: true });
+              setValue("spouse.issueDate", "", { shouldDirty: true });
+              setValue("spouse.expirationDate", "", { shouldDirty: true });
+            }
+          }}
+          last4={last4.spouse}
         />
 
         <div className="flex flex-wrap items-center justify-end gap-2">
@@ -466,14 +653,19 @@ export default function IdentificationForTaxpayerAndSpouse({
             </Button>
           )}
 
-          <Button type="submit" className="text-white hover:opacity-90" style={brandGradient} disabled={isSubmitting}>
+          <Button
+            type="submit"
+            className="text-white hover:opacity-90"
+            style={brandGradient}
+            disabled={isSubmitting || loadingSaved}
+          >
             {isSubmitting ? "Saving…" : saveLabel}
           </Button>
         </div>
       </form>
 
       <p className="text-xs text-slate-500">
-        Dates are optional unless you provide an ID number. If provided, use YYYY-MM-DD format.
+        For privacy, full ID numbers won’t re-appear after refresh. If an ID is saved, you’ll see “on file ending in ____”.
       </p>
     </div>
   );
