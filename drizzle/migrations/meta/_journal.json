@@ -239,6 +239,13 @@
       "when": 1768949456036,
       "tag": "0033_add-tax-return-id-to-client-agreements",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1769243304021,
+      "tag": "0034_short_guardian",
+      "breakpoints": true
     }
   ]
 }
