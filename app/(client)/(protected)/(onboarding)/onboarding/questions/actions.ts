@@ -77,20 +77,34 @@ function readAes256Key(envName: string): Buffer {
   const raw = (process.env[envName] ?? "").trim();
   if (!raw) throw new Error(`Missing ${envName} env var.`);
 
-  const isHex = /^[0-9a-fA-F]+$/.test(raw) && raw.length >= 64;
+  // If it looks like hex, prefer hex
+  const looksHex = /^[0-9a-fA-F]+$/.test(raw) && raw.length >= 64;
+  if (looksHex) {
+    const key = Buffer.from(raw, "hex");
+    if (key.length !== 32) throw new Error(`${envName} must decode to 32 bytes (hex).`);
+    return key;
+  }
 
-  const key = isHex
-    ? Buffer.from(raw, "hex")
-    : Buffer.from(
-        raw,
-        raw.includes("-") || raw.includes("_") ? ("base64url" as any) : "base64"
-      );
+  // Try base64url then base64
+  let key: Buffer | null = null;
 
-  if (key.length !== 32) {
+  try {
+    key = Buffer.from(raw, "base64url");
+  } catch {}
+
+  if (!key || key.length !== 32) {
+    try {
+      key = Buffer.from(raw, "base64");
+    } catch {}
+  }
+
+  if (!key || key.length !== 32) {
     throw new Error(`${envName} must decode to 32 bytes (AES-256).`);
   }
+
   return key;
 }
+
 
 /**
  * Stores a versioned value compatible with your /api/dependents encryption style:
