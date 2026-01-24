@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { adminResendClientInvite } from "../../actions";
+import { adminResendClientInvite } from "../actions";
 
 export default function ResendInviteButton({ email }: { email: string }) {
   const [loading, setLoading] = useState(false);

@@ -234,7 +234,7 @@ export default function QuestionnairePage() {
             </TabsList>
 
             <TabsContent value="dependent" className="mt-5">
-              <DependentQuestionnaire onSave={wrapSave(handleSaveDependent)} />
+              <DependentQuestionnaire dependentId="" onSave={wrapSave(handleSaveDependent)} />
             </TabsContent>
 
             <TabsContent value="directDeposit" className="mt-5">
