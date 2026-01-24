@@ -1,115 +1,39 @@
-// app/api/invoices/route.ts
-import { NextRequest, NextResponse } from "next/server";
-import { decodeJwt } from "jose";
-import { db } from "@/drizzle/db";
-import { invoices, invoicePayments } from "@/drizzle/schema";
-import { and, desc, eq, gte, lt, inArray } from "drizzle-orm";
+// app/(admin)/admin/(protected)/billing/page.tsx
+import { redirect } from "next/navigation";
+import { getServerRole } from "@/lib/auth/roleServer";
 
-export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
-type PaymentRow = typeof invoicePayments.$inferSelect;
+export default async function AdminBillingPage() {
+  const auth = await getServerRole();
+  if (!auth) redirect("/admin/sign-in");
 
-function getUserId(req: NextRequest) {
-  const token =
-    req.cookies.get("accessToken")?.value ||
-    req.cookies.get("idToken")?.value;
+  const role = String(auth.role ?? "");
+  const isAdmin =
+    role === "ADMIN" ||
+    role === "SUPERADMIN" ||
+    role === "LMS_ADMIN" ||
+    role === "LMS_PREPARER";
 
-  if (!token) return null;
+  if (!isAdmin) redirect("/admin");
 
-  const payload = decodeJwt(token);
-  return typeof payload.sub === "string" ? payload.sub : null;
-}
+  return (
+    <main className="min-h-dvh bg-background px-3 py-6 sm:px-6">
+      <div className="mx-auto w-full max-w-5xl space-y-6">
+        <header className="space-y-1">
+          <h1 className="text-2xl font-semibold">Billing</h1>
+          <p className="text-muted-foreground">
+            Manage invoices, payments, and billing settings.
+          </p>
+        </header>
 
-export async function GET(req: NextRequest) {
-  try {
-    const userId = getUserId(req);
-    if (!userId) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    const { searchParams } = new URL(req.url);
-    const yearParam = searchParams.get("year");
-    const includePayments = searchParams.get("includePayments") === "true";
-
-    let where = eq(invoices.userId, userId);
-
-    // Filter by invoice issued year (calendar year)
-    if (yearParam) {
-      const year = Number(yearParam);
-      if (!Number.isInteger(year)) {
-        return NextResponse.json({ error: "Invalid year" }, { status: 400 });
-      }
-
-      const start = new Date(Date.UTC(year, 0, 1, 0, 0, 0));
-      const end = new Date(Date.UTC(year + 1, 0, 1, 0, 0, 0));
-
-      where =
-        and(where, gte(invoices.issuedAt, start), lt(invoices.issuedAt, end)) ??
-        where;
-    }
-
-    // No payments included
-    if (!includePayments) {
-      const rows = await db
-        .select()
-        .from(invoices)
-        .where(where)
-        .orderBy(desc(invoices.issuedAt));
-
-      return NextResponse.json(
-        rows.map((inv) => ({
-          ...inv,
-          amount: String(inv.amount),
-        }))
-      );
-    }
-
-    // Include payments
-    const invRows = await db
-      .select()
-      .from(invoices)
-      .where(where)
-      .orderBy(desc(invoices.issuedAt));
-
-    const invIds = invRows.map((i) => i.id);
-
-    const payRows: PaymentRow[] =
-      invIds.length === 0
-        ? []
-        : await db
-            .select()
-            .from(invoicePayments)
-            .where(
-              and(
-                eq(invoicePayments.userId, userId),
-                inArray(invoicePayments.invoiceId, invIds)
-              )!
-            )
-            .orderBy(desc(invoicePayments.createdAt));
-
-    const paymentsByInvoice = new Map<string, PaymentRow[]>();
-
-    for (const p of payRows) {
-      const list = paymentsByInvoice.get(p.invoiceId) ?? [];
-      list.push({
-        ...p,
-        amount: String(p.amount),
-      } as PaymentRow);
-      paymentsByInvoice.set(p.invoiceId, list);
-    }
-
-    return NextResponse.json(
-      invRows.map((inv) => ({
-        ...inv,
-        amount: String(inv.amount),
-        payments: paymentsByInvoice.get(inv.id) ?? [],
-      }))
-    );
-  } catch (err) {
-    console.error(err);
-    return NextResponse.json(
-      { error: "Failed to fetch invoices" },
-      { status: 500 }
-    );
-  }
+        <section className="rounded-2xl border bg-card p-5">
+          <p className="text-sm text-muted-foreground">
+            This page is not wired up yet.
+          </p>
+        </section>
+      </div>
+    </main>
+  );
 }

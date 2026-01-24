@@ -36,7 +36,7 @@ function normalizeBaseUrl(raw: unknown) {
 async function getOriginServer() {
   try {
     // Next 14: headers() is sync, Next 15: async — awaiting is safe either way
-    // eslint-disable-next-line @typescript-eslint/await-thenable
+     
     const h = await headers();
     const host = (h.get("x-forwarded-host") || h.get("host") || "").trim();
     if (host) {
