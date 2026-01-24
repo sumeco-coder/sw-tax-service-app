@@ -91,25 +91,49 @@ const YESNO_NA = ["yes", "no", "na"] as const;
 // Page 6 docs
 const RESIDENCY_DOCS = [
   { value: "school_records", label: "School records or statement" },
-  { value: "landlord_statement", label: "Landlord or property management statement" },
-  { value: "healthcare_provider_statement", label: "Healthcare provider statement" },
+  {
+    value: "landlord_statement",
+    label: "Landlord or property management statement",
+  },
+  {
+    value: "healthcare_provider_statement",
+    label: "Healthcare provider statement",
+  },
   { value: "medical_records", label: "Medical records" },
   { value: "childcare_provider_records", label: "Childcare provider records" },
   { value: "placement_agency_statement", label: "Placement agency statement" },
-  { value: "social_services_records", label: "Social services records or statement" },
+  {
+    value: "social_services_records",
+    label: "Social services records or statement",
+  },
   { value: "place_of_worship_statement", label: "Place of worship statement" },
-  { value: "indian_tribal_official_statement", label: "Indian tribal official statement" },
+  {
+    value: "indian_tribal_official_statement",
+    label: "Indian tribal official statement",
+  },
   { value: "employer_statement", label: "Employer statement" },
-  { value: "did_not_rely_notes", label: "Did not rely on any documents, made notes in file" },
+  {
+    value: "did_not_rely_notes",
+    label: "Did not rely on any documents, made notes in file",
+  },
   { value: "did_not_rely", label: "Did not rely on any documents" },
   { value: "other", label: "Other" },
 ] as const;
 
 const DISABILITY_DOCS = [
   { value: "doctor_statement", label: "Doctor statement" },
-  { value: "other_healthcare_provider_statement", label: "Other healthcare provider statement" },
-  { value: "social_services_program_statement", label: "Social services agency or program statement" },
-  { value: "did_not_rely_notes", label: "Did not rely on any documents, made notes in file" },
+  {
+    value: "other_healthcare_provider_statement",
+    label: "Other healthcare provider statement",
+  },
+  {
+    value: "social_services_program_statement",
+    label: "Social services agency or program statement",
+  },
+  {
+    value: "did_not_rely_notes",
+    label: "Did not rely on any documents, made notes in file",
+  },
   { value: "did_not_rely", label: "Did not rely on any documents" },
   { value: "other", label: "Other" },
 ] as const;
@@ -221,7 +245,10 @@ const schema = z
 
     if (data.claimingEicOrCtcForThisDependent !== "yes") return;
 
-    if (data.ddq_couldAnotherPersonClaim === "yes" && !data.ddq_relationshipToOther.trim()) {
+    if (
+      data.ddq_couldAnotherPersonClaim === "yes" &&
+      !data.ddq_relationshipToOther.trim()
+    ) {
       ctx.addIssue({
         code: "custom",
         path: ["ddq_relationshipToOther"],
@@ -229,7 +256,10 @@ const schema = z
       });
     }
 
-    if (data.ddq_residencyDocs.includes("other") && !data.ddq_residencyOtherText.trim()) {
+    if (
+      data.ddq_residencyDocs.includes("other") &&
+      !data.ddq_residencyOtherText.trim()
+    ) {
       ctx.addIssue({
         code: "custom",
         path: ["ddq_residencyOtherText"],
@@ -237,7 +267,10 @@ const schema = z
       });
     }
 
-    if (data.ddq_disabilityDocs.includes("other") && !data.ddq_disabilityOtherText.trim()) {
+    if (
+      data.ddq_disabilityDocs.includes("other") &&
+      !data.ddq_disabilityOtherText.trim()
+    ) {
       ctx.addIssue({
         code: "custom",
         path: ["ddq_disabilityOtherText"],
@@ -313,7 +346,12 @@ function YesNoRadio({
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-4">
       <Label className="text-slate-700">{label}</Label>
-      <RadioGroup className="mt-2 flex gap-6" value={value} onValueChange={onChange} aria-disabled={disabled}>
+      <RadioGroup
+        className="mt-2 flex gap-6"
+        value={value}
+        onValueChange={onChange}
+        aria-disabled={disabled}
+      >
         <div className="flex items-center gap-2">
           <RadioGroupItem value="yes" id={`${label}-yes`} disabled={disabled} />
           <Label htmlFor={`${label}-yes`}>Yes</Label>
@@ -341,7 +379,11 @@ function YesNoNaRadio({
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-4">
       <Label className="text-slate-700">{label}</Label>
-      <RadioGroup className="mt-2 flex gap-6" value={value} onValueChange={onChange}>
+      <RadioGroup
+        className="mt-2 flex gap-6"
+        value={value}
+        onValueChange={onChange}
+      >
         <div className="flex items-center gap-2">
           <RadioGroupItem value="yes" id={`${label}-yes`} disabled={disabled} />
           <Label htmlFor={`${label}-yes`}>Yes</Label>
@@ -369,12 +411,22 @@ export default function DependentQuestionnaire({
   const [saveMsg, setSaveMsg] = React.useState<string | null>(null);
   const [saveErr, setSaveErr] = React.useState<string | null>(null);
 
+  // ✅ autosave UI state
+  const [autoSaving, setAutoSaving] = React.useState(false);
+
+  // ✅ autosave refs
+  const didLoadRef = React.useRef(false);
+  const debounceRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastSavedRef = React.useRef<string>("");
+
   const endpoint = React.useMemo(
     () => `/api/dependents/${dependentId}/questionnaire`,
     [dependentId]
   );
 
-  const resolver: Resolver<DependentQuestionnaireValues> = zodResolver(schema) as unknown as Resolver<DependentQuestionnaireValues>;
+  const resolver: Resolver<DependentQuestionnaireValues> = zodResolver(
+    schema
+  ) as unknown as Resolver<DependentQuestionnaireValues>;
 
   // ✅ create the form FIRST (so reset exists)
   const form = useForm<DependentQuestionnaireValues>({
@@ -390,9 +442,10 @@ export default function DependentQuestionnaire({
     setValue,
     watch,
     reset,
-    formState: { errors, isSubmitting },
+    formState: { errors, isSubmitting, isDirty },
   } = form;
 
+  // ✅ load saved values
   // ✅ load saved values
   React.useEffect(() => {
     let alive = true;
@@ -406,9 +459,25 @@ export default function DependentQuestionnaire({
         if (!alive || !data?.values) return;
 
         const ssnOnFile = Boolean(data?.meta?.ssnOnFile);
-        reset({ ...defaultValues, ...data.values, ssnOnFile });
+
+        // never hydrate SSN into the input
+        const hydrated = {
+          ...defaultValues,
+          ...data.values,
+          ssnOnFile,
+          ssn: "",
+        };
+
+        reset(hydrated);
+
+        // prevent immediate autosave after hydration
+        const { ssnOnFile: _m, ssn: _s, ...snap } = hydrated as any;
+        lastSavedRef.current = JSON.stringify(snap);
       } catch {
         // ignore
+      } finally {
+        // mark load complete no matter what
+        didLoadRef.current = true;
       }
     })();
 
@@ -417,6 +486,92 @@ export default function DependentQuestionnaire({
     };
   }, [endpoint, reset]);
 
+  // ✅ Save BOTH: core + questionnaire (used by manual save + autosave)
+  const saveDraft = React.useCallback(
+    async (values: DependentQuestionnaireValues) => {
+      // 1) save core (SSN encryption + applied-but-not-received)
+      const coreRes = await fetch(`/api/dependents/${dependentId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          firstName: values.firstName,
+          middleName: values.middleName,
+          lastName: values.lastName,
+          dob: values.dob,
+          relationship: values.relationship,
+          monthsInHome: Math.max(
+            0,
+            Math.min(12, Number(values.monthsInHome || 12))
+          ),
+          isStudent: values.isStudent,
+          isDisabled: values.isDisabled,
+          appliedButNotReceived: applied,
+          ...(applied ? {} : values.ssn ? { ssn: values.ssn } : {}),
+        }),
+      });
+
+      if (!coreRes.ok) {
+        const err = await coreRes.json().catch(() => ({}));
+        throw new Error(
+          (err as any)?.error || "Failed to save dependent core info"
+        );
+      }
+
+      // 2) save questionnaire JSON (strip ssn + ssnOnFile meta)
+      const { ssnOnFile: _ssnOnFile, ssn: _ssn, ...payload } = values;
+
+      const qRes = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if (!qRes.ok) {
+        const err = await qRes.json().catch(() => ({}));
+        throw new Error(
+          (err as any)?.error || "Failed to save dependent questionnaire"
+        );
+      }
+    },
+    [dependentId, endpoint]
+  );
+
+  // ✅ autosave: watch whole form
+  const allValues = watch();
+
+  React.useEffect(() => {
+    if (!didLoadRef.current) return;
+    if (!isDirty) return;
+    if (isSubmitting) return;
+
+    // exclude meta + ssn from snapshot key
+    const { ssnOnFile: _ssnOnFile, ssn: _ssn, ...snap } = allValues as any;
+    const key = JSON.stringify(snap);
+
+    if (key === lastSavedRef.current) return;
+
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+
+    debounceRef.current = setTimeout(async () => {
+      setAutoSaving(true);
+      setSaveErr(null);
+
+      try {
+        await saveDraft(allValues as DependentQuestionnaireValues);
+        lastSavedRef.current = key;
+        setSaveMsg("✅ Auto-saved.");
+      } catch (e: any) {
+        setSaveErr(e?.message ?? "Auto-save failed");
+      } finally {
+        setAutoSaving(false);
+      }
+    }, 1000);
+
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, [allValues, isDirty, isSubmitting, saveDraft]);
+  // ----- watches used for UI logic -----
   const applied = watch("appliedButNotReceived");
   const claimingCredits = watch("claimingEicOrCtcForThisDependent");
   const rel = watch("relationship");
@@ -425,11 +580,16 @@ export default function DependentQuestionnaire({
   const notLiveDueToDivorce = watch("notLiveDueToDivorce");
   const ssnOnFile = watch("ssnOnFile");
 
+  // ✅ keep downstream fields consistent
   React.useEffect(() => {
     if (claimingCredits !== "yes") {
-      setValue("ddq_parentNotClaimingAskedAndDocumented", "na", { shouldDirty: false });
+      setValue("ddq_parentNotClaimingAskedAndDocumented", "na", {
+        shouldDirty: false,
+      });
       setValue("ddq_tiebreakerQualifyingChild", "na", { shouldDirty: false });
-      setValue("ddq_explainedNoACTCIfNotLivedHalfYear", "na", { shouldDirty: false });
+      setValue("ddq_explainedNoACTCIfNotLivedHalfYear", "na", {
+        shouldDirty: false,
+      });
       setValue("ddq_explainedDivorce8332Rules", "na", { shouldDirty: false });
       setValue("ddq_relationshipToOther", "", { shouldDirty: false });
 
@@ -440,8 +600,11 @@ export default function DependentQuestionnaire({
       return;
     }
 
-    if (rel === "Child" || rel === "Stepchild") {
-      setValue("ddq_parentNotClaimingAskedAndDocumented", "na", { shouldDirty: false });
+    // ✅ (fix) match your REL_OPTIONS
+    if (rel === "Son" || rel === "Daughter" || rel === "Stepchild") {
+      setValue("ddq_parentNotClaimingAskedAndDocumented", "na", {
+        shouldDirty: false,
+      });
     }
 
     if (couldAnother === "no") {
@@ -450,43 +613,42 @@ export default function DependentQuestionnaire({
     }
 
     if (livedHalf === "yes") {
-      setValue("ddq_explainedNoACTCIfNotLivedHalfYear", "na", { shouldDirty: false });
+      setValue("ddq_explainedNoACTCIfNotLivedHalfYear", "na", {
+        shouldDirty: false,
+      });
     }
 
     if (!notLiveDueToDivorce) {
       setValue("ddq_explainedDivorce8332Rules", "na", { shouldDirty: false });
     }
-  }, [claimingCredits, rel, couldAnother, livedHalf, notLiveDueToDivorce, setValue]);
+  }, [
+    claimingCredits,
+    rel,
+    couldAnother,
+    livedHalf,
+    notLiveDueToDivorce,
+    setValue,
+  ]);
 
-  // ✅ single submit handler
-  const onSubmit: SubmitHandler<DependentQuestionnaireValues> = async (values) => {
+  // ✅ single submit handler (manual save)
+  const onSubmit: SubmitHandler<DependentQuestionnaireValues> = async (
+    values
+  ) => {
     setSaveMsg(null);
     setSaveErr(null);
 
     try {
-      // if parent supplied saver, use it
       if (onSave) {
         await onSave(values);
         setSaveMsg("✅ Saved.");
         return;
       }
 
-      // otherwise save via API (DO NOT send ssnOnFile meta)
-      const { ssnOnFile: _ssnOnFile, ...payload } = values;
-
-      const res = await fetch(endpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        setSaveErr((err as any)?.error || "Failed to save dependent questionnaire");
-        return;
-      }
-
+      await saveDraft(values);
       setSaveMsg("✅ Saved.");
+
+      // optional: clear SSN input after manual save
+      setValue("ssn", "", { shouldDirty: false });
     } catch (e: any) {
       setSaveErr(e?.message ?? "Failed to save dependent questionnaire");
     }
@@ -544,8 +706,13 @@ export default function DependentQuestionnaire({
         <TabsContent value="page1">
           <Card className="border-slate-200">
             <CardHeader>
-              <CardTitle className="text-slate-900">Dependent Details</CardTitle>
-              <div className="mt-2 h-1 w-24 rounded-full" style={brandGradient} />
+              <CardTitle className="text-slate-900">
+                Dependent Details
+              </CardTitle>
+              <div
+                className="mt-2 h-1 w-24 rounded-full"
+                style={brandGradient}
+              />
             </CardHeader>
 
             <CardContent className="space-y-4">
@@ -554,12 +721,16 @@ export default function DependentQuestionnaire({
                   <Label className="text-slate-700">First Name</Label>
                   <Input className="mt-1" {...register("firstName")} />
                   {errors.firstName && (
-                    <p className="mt-1 text-xs text-red-600">{errors.firstName.message}</p>
+                    <p className="mt-1 text-xs text-red-600">
+                      {errors.firstName.message}
+                    </p>
                   )}
                 </div>
 
                 <div>
-                  <Label className="text-slate-700">Middle Name (optional)</Label>
+                  <Label className="text-slate-700">
+                    Middle Name (optional)
+                  </Label>
                   <Input className="mt-1" {...register("middleName")} />
                 </div>
               </FieldRow>
@@ -569,7 +740,9 @@ export default function DependentQuestionnaire({
                   <Label className="text-slate-700">Last Name</Label>
                   <Input className="mt-1" {...register("lastName")} />
                   {errors.lastName && (
-                    <p className="mt-1 text-xs text-red-600">{errors.lastName.message}</p>
+                    <p className="mt-1 text-xs text-red-600">
+                      {errors.lastName.message}
+                    </p>
                   )}
                 </div>
 
@@ -577,7 +750,9 @@ export default function DependentQuestionnaire({
                   <Label className="text-slate-700">Date of Birth</Label>
                   <Input className="mt-1" type="date" {...register("dob")} />
                   {errors.dob && (
-                    <p className="mt-1 text-xs text-red-600">{errors.dob.message}</p>
+                    <p className="mt-1 text-xs text-red-600">
+                      {errors.dob.message}
+                    </p>
                   )}
                 </div>
               </FieldRow>
@@ -591,9 +766,15 @@ export default function DependentQuestionnaire({
                     render={({
                       field,
                     }: {
-                      field: ControllerRenderProps<DependentQuestionnaireValues, "relationship">;
+                      field: ControllerRenderProps<
+                        DependentQuestionnaireValues,
+                        "relationship"
+                      >;
                     }) => (
-                      <Select value={field.value ?? ""} onValueChange={field.onChange}>
+                      <Select
+                        value={field.value ?? ""}
+                        onValueChange={field.onChange}
+                      >
                         <SelectTrigger className="mt-1">
                           <SelectValue placeholder="Select relationship" />
                         </SelectTrigger>
@@ -608,7 +789,9 @@ export default function DependentQuestionnaire({
                     )}
                   />
                   {errors.relationship && (
-                    <p className="mt-1 text-xs text-red-600">{errors.relationship.message}</p>
+                    <p className="mt-1 text-xs text-red-600">
+                      {errors.relationship.message}
+                    </p>
                   )}
                 </div>
 
@@ -620,9 +803,15 @@ export default function DependentQuestionnaire({
                     render={({
                       field,
                     }: {
-                      field: ControllerRenderProps<DependentQuestionnaireValues, "monthsInHome">;
+                      field: ControllerRenderProps<
+                        DependentQuestionnaireValues,
+                        "monthsInHome"
+                      >;
                     }) => (
-                      <Select value={field.value ?? "12"} onValueChange={field.onChange}>
+                      <Select
+                        value={field.value ?? "12"}
+                        onValueChange={field.onChange}
+                      >
                         <SelectTrigger className="mt-1">
                           <SelectValue placeholder="Select months" />
                         </SelectTrigger>
@@ -637,7 +826,9 @@ export default function DependentQuestionnaire({
                     )}
                   />
                   {errors.monthsInHome && (
-                    <p className="mt-1 text-xs text-red-600">{errors.monthsInHome.message}</p>
+                    <p className="mt-1 text-xs text-red-600">
+                      {errors.monthsInHome.message}
+                    </p>
                   )}
                 </div>
               </FieldRow>
@@ -646,8 +837,7 @@ export default function DependentQuestionnaire({
                 <div>
                   <Label className="text-slate-700">SSN (9 digits)</Label>
 
-                  {/* ✅ Use Controller so we don't fight register/onChange */}
-                 <Controller
+                  <Controller
                     control={control}
                     name="ssn"
                     render={({ field }) => (
@@ -659,20 +849,27 @@ export default function DependentQuestionnaire({
                           applied
                             ? "Applied (no SSN yet)"
                             : ssnOnFile
-                            ? "SSN already on file (leave blank unless updating)"
-                            : "9 digits"
+                              ? "SSN already on file (leave blank unless updating)"
+                              : "9 digits"
                         }
                         disabled={applied}
                         value={field.value ?? ""}
-                        onChange={(e) => field.onChange(digitsOnly(e.target.value, 9))}
+                        onChange={(e) =>
+                          field.onChange(digitsOnly(e.target.value, 9))
+                        }
                       />
                     )}
                   />
 
-                   {errors.ssn && <p className="mt-1 text-xs text-red-600">{errors.ssn.message}</p>}
+                  {errors.ssn && (
+                    <p className="mt-1 text-xs text-red-600">
+                      {errors.ssn.message}
+                    </p>
+                  )}
                   {ssnOnFile && !applied ? (
                     <p className="mt-1 text-xs text-slate-500">
-                      SSN is already saved securely. Leave blank unless you need to change it.
+                      SSN is already saved securely. Leave blank unless you need
+                      to change it.
                     </p>
                   ) : null}
                 </div>
@@ -686,7 +883,11 @@ export default function DependentQuestionnaire({
                       checked={field.value}
                       onCheckedChange={(v) => {
                         field.onChange(v);
-                        if (v) setValue("ssn", "", { shouldDirty: true, shouldValidate: true });
+                        if (v)
+                          setValue("ssn", "", {
+                            shouldDirty: true,
+                            shouldValidate: true,
+                          });
                       }}
                     />
                   )}
@@ -699,14 +900,22 @@ export default function DependentQuestionnaire({
                     control={control}
                     name="isStudent"
                     render={({ field }) => (
-                      <SwitchRow label="Student" checked={field.value} onCheckedChange={field.onChange} />
+                      <SwitchRow
+                        label="Student"
+                        checked={field.value}
+                        onCheckedChange={field.onChange}
+                      />
                     )}
                   />
                   <Controller
                     control={control}
                     name="isDisabled"
                     render={({ field }) => (
-                      <SwitchRow label="Disabled" checked={field.value} onCheckedChange={field.onChange} />
+                      <SwitchRow
+                        label="Disabled"
+                        checked={field.value}
+                        onCheckedChange={field.onChange}
+                      />
                     )}
                   />
                 </div>
@@ -720,8 +929,13 @@ export default function DependentQuestionnaire({
         <TabsContent value="page2">
           <Card className="border-slate-200">
             <CardHeader>
-              <CardTitle className="text-slate-900">Eligibility & Notes</CardTitle>
-              <div className="mt-2 h-1 w-24 rounded-full" style={brandGradient} />
+              <CardTitle className="text-slate-900">
+                Eligibility & Notes
+              </CardTitle>
+              <div
+                className="mt-2 h-1 w-24 rounded-full"
+                style={brandGradient}
+              />
             </CardHeader>
 
             <CardContent className="space-y-4">
@@ -791,7 +1005,11 @@ export default function DependentQuestionnaire({
                   control={control}
                   name="notDependent"
                   render={({ field }) => (
-                    <SwitchRow label="Not a dependent" checked={field.value} onCheckedChange={field.onChange} />
+                    <SwitchRow
+                      label="Not a dependent"
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                    />
                   )}
                 />
               </FieldRow>
@@ -859,12 +1077,18 @@ export default function DependentQuestionnaire({
                       maxLength={6}
                       placeholder="Optional"
                       value={field.value ?? ""}
-                      onChange={(e) => field.onChange(digitsOnly(e.target.value, 6))}
+                      onChange={(e) =>
+                        field.onChange(digitsOnly(e.target.value, 6))
+                      }
                     />
                   )}
                 />
 
-                {errors.ipPin && <p className="mt-1 text-xs text-red-600">{errors.ipPin.message}</p>}
+                {errors.ipPin && (
+                  <p className="mt-1 text-xs text-red-600">
+                    {errors.ipPin.message}
+                  </p>
+                )}
               </div>
             </CardContent>
           </Card>
@@ -874,8 +1098,13 @@ export default function DependentQuestionnaire({
         <TabsContent value="page3">
           <Card className="border-slate-200">
             <CardHeader>
-              <CardTitle className="text-slate-900">Childcare & Form 2441</CardTitle>
-              <div className="mt-2 h-1 w-24 rounded-full" style={brandGradient} />
+              <CardTitle className="text-slate-900">
+                Childcare & Form 2441
+              </CardTitle>
+              <div
+                className="mt-2 h-1 w-24 rounded-full"
+                style={brandGradient}
+              />
             </CardHeader>
 
             <CardContent className="space-y-4">
@@ -893,10 +1122,16 @@ export default function DependentQuestionnaire({
         <TabsContent value="page4">
           <Card className="border-slate-200">
             <CardHeader>
-              <CardTitle className="text-slate-900">EIC / CTC Due Diligence</CardTitle>
-              <div className="mt-2 h-1 w-24 rounded-full" style={brandGradient} />
+              <CardTitle className="text-slate-900">
+                EIC / CTC Due Diligence
+              </CardTitle>
+              <div
+                className="mt-2 h-1 w-24 rounded-full"
+                style={brandGradient}
+              />
               <p className="mt-3 text-sm text-slate-600">
-                If either EIC or Child Tax Credit is claimed for this dependent, complete this section.
+                If either EIC or Child Tax Credit is claimed for this dependent,
+                complete this section.
               </p>
             </CardHeader>
 
@@ -966,8 +1201,12 @@ export default function DependentQuestionnaire({
                       onChange={(v) => {
                         field.onChange(v);
                         if (v === "no") {
-                          setValue("ddq_relationshipToOther", "", { shouldDirty: true });
-                          setValue("ddq_tiebreakerQualifyingChild", "na", { shouldDirty: true });
+                          setValue("ddq_relationshipToOther", "", {
+                            shouldDirty: true,
+                          });
+                          setValue("ddq_tiebreakerQualifyingChild", "na", {
+                            shouldDirty: true,
+                          });
                         }
                       }}
                     />
@@ -976,10 +1215,17 @@ export default function DependentQuestionnaire({
 
                 {couldAnother === "yes" && (
                   <div className="rounded-xl border border-slate-200 bg-white p-4">
-                    <Label className="text-slate-700">If Yes: Dependent’s relationship to the other person</Label>
-                    <Input className="mt-1" {...register("ddq_relationshipToOther")} />
+                    <Label className="text-slate-700">
+                      If Yes: Dependent’s relationship to the other person
+                    </Label>
+                    <Input
+                      className="mt-1"
+                      {...register("ddq_relationshipToOther")}
+                    />
                     {errors.ddq_relationshipToOther && (
-                      <p className="mt-1 text-xs text-red-600">{errors.ddq_relationshipToOther.message}</p>
+                      <p className="mt-1 text-xs text-red-600">
+                        {errors.ddq_relationshipToOther.message}
+                      </p>
                     )}
                   </div>
                 )}
@@ -1043,10 +1289,16 @@ export default function DependentQuestionnaire({
         <TabsContent value="page6">
           <Card className="border-slate-200">
             <CardHeader>
-              <CardTitle className="text-slate-900">Documents (EIC / CTC)</CardTitle>
-              <div className="mt-2 h-1 w-24 rounded-full" style={brandGradient} />
+              <CardTitle className="text-slate-900">
+                Documents (EIC / CTC)
+              </CardTitle>
+              <div
+                className="mt-2 h-1 w-24 rounded-full"
+                style={brandGradient}
+              />
               <p className="mt-3 text-sm text-slate-600">
-                Which documents (if any) do you have to determine eligibility? Check all that apply.
+                Which documents (if any) do you have to determine eligibility?
+                Check all that apply.
               </p>
             </CardHeader>
 
@@ -1060,13 +1312,17 @@ export default function DependentQuestionnaire({
               >
                 {/* Residency docs */}
                 <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                  <p className="text-sm font-semibold text-slate-900">Residency of Qualifying Child</p>
+                  <p className="text-sm font-semibold text-slate-900">
+                    Residency of Qualifying Child
+                  </p>
 
                   <Controller
                     control={control}
                     name="ddq_residencyDocs"
                     render={({ field }) => {
-                      const current = Array.isArray(field.value) ? field.value : [];
+                      const current = Array.isArray(field.value)
+                        ? field.value
+                        : [];
                       const hasOther = current.includes("other");
 
                       return (
@@ -1078,7 +1334,9 @@ export default function DependentQuestionnaire({
                                 <label
                                   key={opt.value}
                                   className={`flex items-start gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-800 hover:bg-slate-100 ${
-                                    checked ? "ring-1 ring-[#E72B69]/25 bg-white" : ""
+                                    checked
+                                      ? "ring-1 ring-[#E72B69]/25 bg-white"
+                                      : ""
                                   }`}
                                 >
                                   <input
@@ -1086,11 +1344,19 @@ export default function DependentQuestionnaire({
                                     className="mt-1 h-4 w-4 accent-[#E72B69]"
                                     checked={checked}
                                     onChange={() => {
-                                      const next = toggleMulti(current, opt.value);
+                                      const next = toggleMulti(
+                                        current,
+                                        opt.value
+                                      );
                                       field.onChange(next);
 
-                                      if ((opt.value === "other" && checked) || (EXCLUSIVE.has(opt.value) && !checked)) {
-                                        setValue("ddq_residencyOtherText", "", { shouldDirty: true });
+                                      if (
+                                        (opt.value === "other" && checked) ||
+                                        (EXCLUSIVE.has(opt.value) && !checked)
+                                      ) {
+                                        setValue("ddq_residencyOtherText", "", {
+                                          shouldDirty: true,
+                                        });
                                       }
                                     }}
                                   />
@@ -1102,8 +1368,13 @@ export default function DependentQuestionnaire({
 
                           {hasOther && (
                             <div>
-                              <Label className="text-slate-700">Other (describe)</Label>
-                              <Input className="mt-1" {...register("ddq_residencyOtherText")} />
+                              <Label className="text-slate-700">
+                                Other (describe)
+                              </Label>
+                              <Input
+                                className="mt-1"
+                                {...register("ddq_residencyOtherText")}
+                              />
                               {errors.ddq_residencyOtherText && (
                                 <p className="mt-1 text-xs text-red-600">
                                   {errors.ddq_residencyOtherText.message}
@@ -1119,13 +1390,17 @@ export default function DependentQuestionnaire({
 
                 {/* Disability docs */}
                 <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                  <p className="text-sm font-semibold text-slate-900">Disability of Qualifying Child</p>
+                  <p className="text-sm font-semibold text-slate-900">
+                    Disability of Qualifying Child
+                  </p>
 
                   <Controller
                     control={control}
                     name="ddq_disabilityDocs"
                     render={({ field }) => {
-                      const current = Array.isArray(field.value) ? field.value : [];
+                      const current = Array.isArray(field.value)
+                        ? field.value
+                        : [];
                       const hasOther = current.includes("other");
 
                       return (
@@ -1137,7 +1412,9 @@ export default function DependentQuestionnaire({
                                 <label
                                   key={opt.value}
                                   className={`flex items-start gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-800 hover:bg-slate-100 ${
-                                    checked ? "ring-1 ring-[#E72B69]/25 bg-white" : ""
+                                    checked
+                                      ? "ring-1 ring-[#E72B69]/25 bg-white"
+                                      : ""
                                   }`}
                                 >
                                   <input
@@ -1145,11 +1422,21 @@ export default function DependentQuestionnaire({
                                     className="mt-1 h-4 w-4 accent-[#E72B69]"
                                     checked={checked}
                                     onChange={() => {
-                                      const next = toggleMulti(current, opt.value);
+                                      const next = toggleMulti(
+                                        current,
+                                        opt.value
+                                      );
                                       field.onChange(next);
 
-                                      if ((opt.value === "other" && checked) || (EXCLUSIVE.has(opt.value) && !checked)) {
-                                        setValue("ddq_disabilityOtherText", "", { shouldDirty: true });
+                                      if (
+                                        (opt.value === "other" && checked) ||
+                                        (EXCLUSIVE.has(opt.value) && !checked)
+                                      ) {
+                                        setValue(
+                                          "ddq_disabilityOtherText",
+                                          "",
+                                          { shouldDirty: true }
+                                        );
                                       }
                                     }}
                                   />
@@ -1161,8 +1448,13 @@ export default function DependentQuestionnaire({
 
                           {hasOther && (
                             <div>
-                              <Label className="text-slate-700">Other (describe)</Label>
-                              <Input className="mt-1" {...register("ddq_disabilityOtherText")} />
+                              <Label className="text-slate-700">
+                                Other (describe)
+                              </Label>
+                              <Input
+                                className="mt-1"
+                                {...register("ddq_disabilityOtherText")}
+                              />
                               {errors.ddq_disabilityOtherText && (
                                 <p className="mt-1 text-xs text-red-600">
                                   {errors.ddq_disabilityOtherText.message}
@@ -1177,7 +1469,8 @@ export default function DependentQuestionnaire({
                 </div>
 
                 <p className="text-xs text-slate-500">
-                  Selecting “Did not rely…” clears other selections in that section.
+                  Selecting “Did not rely…” clears other selections in that
+                  section.
                 </p>
               </div>
             </CardContent>
@@ -1191,7 +1484,7 @@ export default function DependentQuestionnaire({
             type="reset"
             variant="outline"
             onClick={() => {
-              reset(defaultValues);
+              reset({ ...defaultValues, ssnOnFile, ssn: "" });
               setSaveMsg(null);
               setSaveErr(null);
             }}
@@ -1210,6 +1503,9 @@ export default function DependentQuestionnaire({
           </Button>
         </div>
 
+        {autoSaving ? (
+          <div className="text-xs text-slate-500">Auto-saving…</div>
+        ) : null}
         {saveErr ? <div className="text-sm text-red-600">{saveErr}</div> : null}
         {saveMsg ? <div className="text-sm">{saveMsg}</div> : null}
       </div>

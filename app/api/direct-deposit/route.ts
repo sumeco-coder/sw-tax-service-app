@@ -186,6 +186,23 @@ export async function POST(req: NextRequest) {
     const account = digitsOnly(raw.accountNumber, 17);
     const confirm = digitsOnly(raw.confirmAccountNumber, 17);
 
+    // ✅ Enable-only toggle:
+    // If useDirectDeposit is true but no numbers were provided,
+    // just flip the flag to true (keep whatever is already on file).
+    const enablingOnly = raw.useDirectDeposit && !routing && !account && !confirm;
+    if (enablingOnly) {
+      await db.execute(sql`
+        INSERT INTO direct_deposit (user_id, use_direct_deposit, created_at, updated_at)
+        VALUES (${u.id}, true, NOW(), NOW())
+        ON CONFLICT (user_id) DO UPDATE SET
+          use_direct_deposit = true,
+          updated_at = NOW()
+      `);
+
+      return NextResponse.json({ ok: true });
+    }
+
+    // ✅ Toggle OFF (or user chose not to use direct deposit)
     if (!raw.useDirectDeposit) {
       await db.execute(sql`
         INSERT INTO direct_deposit (
@@ -208,6 +225,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true });
     }
 
+    // ✅ Full save (requires details)
     if (!raw.accountHolderName.trim()) {
       return NextResponse.json({ error: "Account holder name is required" }, { status: 400 });
     }
@@ -227,7 +245,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Account numbers do not match" }, { status: 400 });
     }
 
-    // ✅ now supports your base64url key
     const key = getDirectDepositKey();
 
     const routingLast4 = routing.slice(-4);
@@ -272,3 +289,4 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: err?.message ?? "Server error" }, { status: 500 });
   }
 }
+

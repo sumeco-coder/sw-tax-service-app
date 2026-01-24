@@ -1,4 +1,3 @@
-// app/(client)/questionnaire/_components/DirectDepositInformation.tsx
 "use client";
 
 import * as React from "react";
@@ -43,13 +42,11 @@ const inputBase =
   `placeholder:text-slate-400 transition ${focusRing}`;
 
 function digitsOnly(v: unknown, maxLen: number) {
-  return String(v ?? "").replace(/\D/g, "").slice(0, maxLen);
+  return String(v ?? "")
+    .replace(/\D/g, "")
+    .slice(0, maxLen);
 }
 
-/**
- * ABA routing number checksum:
- * (3*(d1+d4+d7) + 7*(d2+d5+d8) + (d3+d6+d9)) % 10 === 0
- */
 function isValidAbaRouting(routing: string) {
   if (!/^\d{9}$/.test(routing)) return false;
   const d = routing.split("").map((x) => Number(x));
@@ -65,18 +62,16 @@ const ACCOUNT_TYPES = ["checking", "savings"] as const;
 const schema = z
   .object({
     useDirectDeposit: z.boolean().default(true),
-
     accountHolderName: z.string().trim().default(""),
     bankName: z.string().trim().default(""),
-
     accountType: z.enum(ACCOUNT_TYPES).default("checking"),
-
     routingNumber: z
       .string()
       .default("")
       .transform((v) => digitsOnly(v, 9))
-      .refine((v) => v === "" || v.length === 9, { message: "Routing must be 9 digits" }),
-
+      .refine((v) => v === "" || v.length === 9, {
+        message: "Routing must be 9 digits",
+      }),
     accountNumber: z
       .string()
       .default("")
@@ -84,7 +79,6 @@ const schema = z
       .refine((v) => v === "" || (v.length >= 4 && v.length <= 17), {
         message: "Account number must be 4–17 digits",
       }),
-
     confirmAccountNumber: z
       .string()
       .default("")
@@ -100,7 +94,6 @@ const schema = z
         message: "Account holder name is required",
       });
     }
-
     if (!data.bankName.trim()) {
       ctx.addIssue({
         code: "custom",
@@ -131,7 +124,10 @@ const schema = z
       });
     }
 
-    if (data.accountNumber && data.confirmAccountNumber !== data.accountNumber) {
+    if (
+      data.accountNumber &&
+      data.confirmAccountNumber !== data.accountNumber
+    ) {
       ctx.addIssue({
         code: "custom",
         path: ["confirmAccountNumber"],
@@ -152,23 +148,38 @@ const defaultValues: DirectDepositValues = {
   confirmAccountNumber: "",
 };
 
+type OnFile = {
+  routingLast4: string;
+  accountLast4: string;
+  updatedAt: string | null;
+};
+
 export default function DirectDepositInformation({
   initialValues,
   onSave,
   onBack,
   saveLabel = "Save",
+  autoLoad = true, // ✅ new: load saved values like Education & Credits does
 }: {
   initialValues?: Partial<DirectDepositValues>;
   onSave?: (values: DirectDepositValues) => Promise<void> | void;
   onBack?: () => void;
   saveLabel?: string;
+  autoLoad?: boolean;
 }) {
   const [showNumbers, setShowNumbers] = React.useState(false);
   const [msg, setMsg] = React.useState<string>("");
+  const [toggleSaving, setToggleSaving] = React.useState(false);
+  const [loading, setLoading] = React.useState<boolean>(false);
+  const [onFile, setOnFile] = React.useState<OnFile>({
+    routingLast4: "",
+    accountLast4: "",
+    updatedAt: null,
+  });
 
-  // ✅ Fix RHF/Zod resolver typing mismatch (defaults make input optional)
-  const resolver: Resolver<DirectDepositValues> =
-    zodResolver(schema) as unknown as Resolver<DirectDepositValues>;
+  const resolver: Resolver<DirectDepositValues> = zodResolver(
+    schema
+  ) as unknown as Resolver<DirectDepositValues>;
 
   const form = useForm<DirectDepositValues>({
     resolver,
@@ -182,32 +193,33 @@ export default function DirectDepositInformation({
     handleSubmit,
     setValue,
     watch,
+    reset,
     formState: { errors, isSubmitting },
   } = form;
 
   const useDirectDeposit = watch("useDirectDeposit");
 
-  const submit: SubmitHandler<DirectDepositValues> = async (values) => {
-    setMsg("");
+  async function saveToggle(nextUseDirectDeposit: boolean) {
+    // NOTE:
+    // - Turning ON: send minimal payload so API "enable-only" branch can flip the flag
+    //   without requiring routing/account yet.
+    // - Turning OFF: scrub everything immediately.
 
-    // If they choose not to use direct deposit, scrub sensitive fields before sending/storing
-    const payload: DirectDepositValues = values.useDirectDeposit
-      ? values
+    const payload: Partial<DirectDepositValues> = nextUseDirectDeposit
+      ? { useDirectDeposit: true }
       : {
-          ...values,
+          useDirectDeposit: false,
           accountHolderName: "",
           bankName: "",
           routingNumber: "",
           accountNumber: "",
           confirmAccountNumber: "",
+          accountType: "checking",
         };
 
+    // If you passed an onSave prop, use it; otherwise call API directly
     if (onSave) {
-      await onSave(payload);
-      setMsg("Saved.");
-      // reduce exposure: clear account numbers after success (optional)
-      setValue("accountNumber", "");
-      setValue("confirmAccountNumber", "");
+      await onSave(payload as DirectDepositValues);
       return;
     }
 
@@ -219,12 +231,109 @@ export default function DirectDepositInformation({
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      throw new Error(err?.error || "Failed to save direct deposit info");
+      throw new Error(err?.error || "Failed to save toggle");
     }
+  }
 
-    setValue("accountNumber", "");
-    setValue("confirmAccountNumber", "");
-    setMsg("Saved.");
+  // ✅ If parent passes initialValues later, apply them (RHF defaultValues won't update after first render)
+  React.useEffect(() => {
+    if (!initialValues) return;
+    reset({
+      ...defaultValues,
+      ...initialValues,
+      // never rehydrate full account numbers
+      routingNumber: "",
+      accountNumber: "",
+      confirmAccountNumber: "",
+    });
+  }, [initialValues, reset]);
+
+  const loadSaved = React.useCallback(async () => {
+    setLoading(true);
+    setMsg("");
+    try {
+      const res = await fetch("/api/direct-deposit", {
+        method: "GET",
+        cache: "no-store",
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err?.error || "Failed to load direct deposit info");
+      }
+      const data = await res.json();
+
+      setOnFile({
+        routingLast4: String(data?.routingLast4 ?? ""),
+        accountLast4: String(data?.accountLast4 ?? ""),
+        updatedAt: data?.updatedAt ? String(data.updatedAt) : null,
+      });
+
+      // ✅ hydrate safe fields only (no full routing/account)
+      reset({
+        ...defaultValues,
+        useDirectDeposit: Boolean(data?.useDirectDeposit),
+        accountHolderName: String(data?.accountHolderName ?? ""),
+        bankName: String(data?.bankName ?? ""),
+        accountType: data?.accountType === "savings" ? "savings" : "checking",
+        routingNumber: "",
+        accountNumber: "",
+        confirmAccountNumber: "",
+      });
+    } finally {
+      setLoading(false);
+    }
+  }, [reset]);
+
+  // ✅ Auto-load on mount (Education & Credits behavior)
+  React.useEffect(() => {
+    if (!autoLoad) return;
+    // If parent already provided initialValues, skip auto-load
+    if (initialValues) return;
+    void loadSaved();
+  }, [autoLoad, initialValues, loadSaved]);
+
+  const submit: SubmitHandler<DirectDepositValues> = async (values) => {
+    setMsg("");
+
+    const payload: DirectDepositValues = values.useDirectDeposit
+      ? values
+      : {
+          ...values,
+          accountHolderName: "",
+          bankName: "",
+          routingNumber: "",
+          accountNumber: "",
+          confirmAccountNumber: "",
+        };
+
+    try {
+      if (onSave) {
+        await onSave(payload);
+        setMsg("✅ Saved.");
+      } else {
+        const res = await fetch("/api/direct-deposit", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err?.error || "Failed to save direct deposit info");
+        }
+
+        setMsg("✅ Saved.");
+      }
+
+      // reduce exposure: clear account numbers after success
+      setValue("accountNumber", "");
+      setValue("confirmAccountNumber", "");
+
+      // ✅ refresh last4 + safe fields after save
+      await loadSaved();
+    } catch (e: any) {
+      setMsg(`❌ ${e?.message ?? "Save failed"}`);
+    }
   };
 
   return (
@@ -233,11 +342,29 @@ export default function DirectDepositInformation({
         <CardHeader>
           <div className="flex items-start justify-between gap-4">
             <div>
-              <CardTitle className="text-slate-900">Direct Deposit Information</CardTitle>
-              <div className="mt-2 h-1 w-28 rounded-full" style={brandGradient} />
+              <CardTitle className="text-slate-900">
+                Direct Deposit Information
+              </CardTitle>
+              <div
+                className="mt-2 h-1 w-28 rounded-full"
+                style={brandGradient}
+              />
               <p className="mt-3 text-sm text-slate-600">
                 Provide bank details for refund direct deposit (optional).
               </p>
+
+              {(onFile.routingLast4 || onFile.accountLast4) && (
+                <p className="mt-2 text-xs text-slate-600">
+                  On file:{" "}
+                  {onFile.routingLast4
+                    ? `Routing ****${onFile.routingLast4}`
+                    : ""}
+                  {onFile.routingLast4 && onFile.accountLast4 ? " • " : ""}
+                  {onFile.accountLast4
+                    ? `Account ****${onFile.accountLast4}`
+                    : ""}
+                </p>
+              )}
             </div>
 
             <div className="hidden sm:flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
@@ -259,9 +386,12 @@ export default function DirectDepositInformation({
                 <Landmark className="h-4 w-4" />
               </div>
               <div>
-                <p className="text-sm font-semibold text-slate-900">Use Direct Deposit</p>
+                <p className="text-sm font-semibold text-slate-900">
+                  Use Direct Deposit
+                </p>
                 <p className="text-xs text-slate-600">
-                  Turn off if you want a paper check or you don’t have a bank account.
+                  Turn off if you want a paper check or you don’t have a bank
+                  account.
                 </p>
               </div>
             </div>
@@ -272,34 +402,80 @@ export default function DirectDepositInformation({
               render={({ field }) => (
                 <Switch
                   checked={!!field.value}
-                  onCheckedChange={(v) => {
-                    field.onChange(v);
-                    if (!v) {
-                      setValue("accountHolderName", "");
-                      setValue("bankName", "");
-                      setValue("routingNumber", "");
+                  disabled={toggleSaving || isSubmitting || loading}
+                  onCheckedChange={async (v) => {
+                    const prev = !!field.value;
+
+                    setMsg("");
+                    setToggleSaving(true);
+
+                    try {
+                      // update UI immediately
+                      field.onChange(v);
+
+                      if (!v) {
+                        setValue("accountHolderName", "");
+                        setValue("bankName", "");
+                        setValue("routingNumber", "");
+                        setValue("accountNumber", "");
+                        setValue("confirmAccountNumber", "");
+                        setValue("accountType", "checking");
+
+                        // clear "on file" display immediately
+                        setOnFile({
+                          routingLast4: "",
+                          accountLast4: "",
+                          updatedAt: null,
+                        });
+                      }
+
+                      // ✅ autosave the toggle immediately
+                      await saveToggle(v);
+
+                      // reduce exposure
                       setValue("accountNumber", "");
                       setValue("confirmAccountNumber", "");
-                      setValue("accountType", "checking");
+
+                      setMsg("✅ Saved.");
+                    } catch (e: any) {
+                      // revert UI if save fails
+                      field.onChange(prev);
+                      setMsg(`❌ ${e?.message ?? "Save failed"}`);
+                    } finally {
+                      setToggleSaving(false);
                     }
                   }}
                 />
               )}
             />
           </div>
+          {useDirectDeposit && !onFile.routingLast4 && !onFile.accountLast4 && (
+            <p className="text-xs text-slate-600">
+              To get your refund by direct deposit, enter your bank details and
+              tap <span className="font-semibold">Save</span>.
+            </p>
+          )}
 
-          <form onSubmit={handleSubmit(submit)} className="space-y-5" noValidate>
-            <div className={`grid grid-cols-1 gap-4 ${useDirectDeposit ? "md:grid-cols-2" : ""}`}>
+          <form
+            onSubmit={handleSubmit(submit)}
+            className="space-y-5"
+            noValidate
+          >
+            <div
+              className={`grid grid-cols-1 gap-4 ${useDirectDeposit ? "md:grid-cols-2" : ""}`}
+            >
               <div>
                 <Label className="text-slate-700">Account Holder Name</Label>
                 <Input
                   className="mt-1"
-                  disabled={!useDirectDeposit}
+                  disabled={!useDirectDeposit || loading}
                   placeholder="Name on the account"
                   {...register("accountHolderName")}
                 />
                 {errors.accountHolderName && (
-                  <p className="mt-1 text-xs text-red-600">{errors.accountHolderName.message}</p>
+                  <p className="mt-1 text-xs text-red-600">
+                    {errors.accountHolderName.message}
+                  </p>
                 )}
               </div>
 
@@ -307,12 +483,14 @@ export default function DirectDepositInformation({
                 <Label className="text-slate-700">Bank Name</Label>
                 <Input
                   className="mt-1"
-                  disabled={!useDirectDeposit}
+                  disabled={!useDirectDeposit || loading}
                   placeholder="Bank / Credit Union"
                   {...register("bankName")}
                 />
                 {errors.bankName && (
-                  <p className="mt-1 text-xs text-red-600">{errors.bankName.message}</p>
+                  <p className="mt-1 text-xs text-red-600">
+                    {errors.bankName.message}
+                  </p>
                 )}
               </div>
 
@@ -322,7 +500,11 @@ export default function DirectDepositInformation({
                   control={control}
                   name="accountType"
                   render={({ field }) => (
-                    <Select value={field.value} onValueChange={field.onChange} disabled={!useDirectDeposit}>
+                    <Select
+                      value={field.value}
+                      onValueChange={field.onChange}
+                      disabled={!useDirectDeposit || loading}
+                    >
                       <SelectTrigger className="mt-1">
                         <SelectValue placeholder="Select type" />
                       </SelectTrigger>
@@ -336,21 +518,28 @@ export default function DirectDepositInformation({
               </div>
 
               <div>
-                <Label className="text-slate-700">Routing Number (9 digits)</Label>
+                <Label className="text-slate-700">
+                  Routing Number (9 digits)
+                </Label>
                 <Input
                   className="mt-1"
-                  disabled={!useDirectDeposit}
+                  disabled={!useDirectDeposit || loading}
                   inputMode="numeric"
                   maxLength={9}
                   placeholder="#########"
                   {...register("routingNumber")}
                   onChange={(e) => {
                     const v = digitsOnly(e.target.value, 9);
-                    setValue("routingNumber", v, { shouldDirty: true, shouldValidate: true });
+                    setValue("routingNumber", v, {
+                      shouldDirty: true,
+                      shouldValidate: true,
+                    });
                   }}
                 />
                 {errors.routingNumber && (
-                  <p className="mt-1 text-xs text-red-600">{errors.routingNumber.message}</p>
+                  <p className="mt-1 text-xs text-red-600">
+                    {errors.routingNumber.message}
+                  </p>
                 )}
               </div>
 
@@ -361,16 +550,20 @@ export default function DirectDepositInformation({
                     type="button"
                     className="inline-flex items-center gap-2 text-xs font-semibold text-slate-600 hover:text-slate-900"
                     onClick={() => setShowNumbers((s) => !s)}
-                    disabled={!useDirectDeposit}
+                    disabled={!useDirectDeposit || loading}
                   >
-                    {showNumbers ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    {showNumbers ? (
+                      <EyeOff className="h-4 w-4" />
+                    ) : (
+                      <Eye className="h-4 w-4" />
+                    )}
                     {showNumbers ? "Hide" : "Show"}
                   </button>
                 </div>
 
                 <input
                   className={`${inputBase} mt-1`}
-                  disabled={!useDirectDeposit}
+                  disabled={!useDirectDeposit || loading}
                   inputMode="numeric"
                   maxLength={17}
                   placeholder="Account number"
@@ -378,11 +571,16 @@ export default function DirectDepositInformation({
                   {...register("accountNumber")}
                   onChange={(e) => {
                     const v = digitsOnly(e.target.value, 17);
-                    setValue("accountNumber", v, { shouldDirty: true, shouldValidate: true });
+                    setValue("accountNumber", v, {
+                      shouldDirty: true,
+                      shouldValidate: true,
+                    });
                   }}
                 />
                 {errors.accountNumber && (
-                  <p className="mt-1 text-xs text-red-600">{errors.accountNumber.message}</p>
+                  <p className="mt-1 text-xs text-red-600">
+                    {errors.accountNumber.message}
+                  </p>
                 )}
               </div>
 
@@ -390,7 +588,7 @@ export default function DirectDepositInformation({
                 <Label className="text-slate-700">Confirm Account Number</Label>
                 <input
                   className={`${inputBase} mt-1`}
-                  disabled={!useDirectDeposit}
+                  disabled={!useDirectDeposit || loading}
                   inputMode="numeric"
                   maxLength={17}
                   placeholder="Re-enter account number"
@@ -398,18 +596,28 @@ export default function DirectDepositInformation({
                   {...register("confirmAccountNumber")}
                   onChange={(e) => {
                     const v = digitsOnly(e.target.value, 17);
-                    setValue("confirmAccountNumber", v, { shouldDirty: true, shouldValidate: true });
+                    setValue("confirmAccountNumber", v, {
+                      shouldDirty: true,
+                      shouldValidate: true,
+                    });
                   }}
                 />
                 {errors.confirmAccountNumber && (
-                  <p className="mt-1 text-xs text-red-600">{errors.confirmAccountNumber.message}</p>
+                  <p className="mt-1 text-xs text-red-600">
+                    {errors.confirmAccountNumber.message}
+                  </p>
                 )}
               </div>
             </div>
 
             <div className="flex flex-wrap items-center justify-end gap-2 pt-1">
               {onBack && (
-                <Button type="button" variant="outline" onClick={onBack} disabled={isSubmitting}>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={onBack}
+                  disabled={isSubmitting || loading}
+                >
                   Back
                 </Button>
               )}
@@ -418,15 +626,15 @@ export default function DirectDepositInformation({
                 type="submit"
                 className="text-white hover:opacity-90"
                 style={brandGradient}
-                disabled={isSubmitting}
+                disabled={isSubmitting || loading}
               >
                 {isSubmitting ? "Saving…" : saveLabel}
               </Button>
             </div>
 
             <p className="text-xs text-slate-500">
-              Tip: Double-check routing/account numbers. If you’re unsure, use a voided check or your
-              bank app to verify.
+              Tip: Double-check routing/account numbers. If you’re unsure, use a
+              voided check or your bank app to verify.
             </p>
           </form>
         </CardContent>
