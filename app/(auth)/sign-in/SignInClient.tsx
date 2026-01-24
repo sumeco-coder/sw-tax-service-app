@@ -84,6 +84,12 @@ export default function SigninClient() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [showPassword, setShowPassword] = useState(false);
+  const [view, setView] = useState<View>("signin");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [code, setCode] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [msg, setMsg] = useState("");
 
   useEffect(() => {
     configureAmplify();
@@ -107,6 +113,17 @@ export default function SigninClient() {
     [searchParams]
   );
 
+   const emailParam = useMemo(
+    () => (searchParams.get("email") ?? "").trim(),
+    [searchParams]
+  );
+
+ useEffect(() => {
+  if (!emailParam) return;
+  setEmail((prev) => (prev ? prev : emailParam));
+}, [emailParam, setEmail]);
+
+
   // ✅ This is the destination AFTER onboarding is complete
   const intendedAfterOnboarding = useMemo(() => {
     const safe = safeInternalPath(nextParam, "/dashboard");
@@ -126,12 +143,7 @@ export default function SigninClient() {
     return `${base}${qs ? `?${qs}` : ""}`;
   }, [invite, intendedAfterOnboarding]);
 
-  const [view, setView] = useState<View>("signin");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [code, setCode] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [msg, setMsg] = useState("");
+  
 
   const [checkingSession, setCheckingSession] = useState(true);
 

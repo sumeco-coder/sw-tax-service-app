@@ -428,6 +428,8 @@ export const users = pgTable(
     lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
     hasPaidForPlan: boolean("has_paid_for_plan").notNull().default(false),
 
+    role: userRoleEnum("role").notNull().default("TAXPAYER"),
+    agencyId: uuid("agency_id"),
     filingClient: boolean("filing_client").notNull().default(false),
 
     onboardingStep: onboardingStepEnum("onboarding_step")
@@ -813,6 +815,34 @@ export const dependents = pgTable(
     userIdx: index("dependents_user_idx").on(t.userId),
     livedCheck: index("dependents_months_check").on(t.monthsInHome),
   }) // placeholder to allow inline check below if you use SQL
+);
+
+export const dependentQuestionnaires = pgTable(
+  "dependent_questionnaires",
+  {
+    dependentId: uuid("dependent_id")
+      .notNull()
+      .references(() => dependents.id, { onDelete: "cascade" })
+      .primaryKey(), // ✅ best
+
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+
+    payload: jsonb("payload").notNull().default({}),
+
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (t) => ({
+    userIdx: index("dependent_questionnaires_user_idx").on(t.userId),
+  })
 );
 
 export const clientAgreements = pgTable("client_agreements", {

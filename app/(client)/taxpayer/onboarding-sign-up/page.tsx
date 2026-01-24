@@ -14,6 +14,14 @@ function oneParam(v: string | string[] | undefined) {
   return Array.isArray(v) ? v[0] : v;
 }
 
+
+function buildUrl(path: string, params: Record<string, string | undefined>) {
+  const sp = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) if (v) sp.set(k, v);
+  const qs = sp.toString();
+  return `${path}${qs ? `?${qs}` : ""}`;
+}
+
 function normalizeBaseUrl(raw: unknown) {
   let s = String(raw ?? "").trim();
   if (!s) return "";
@@ -28,7 +36,7 @@ function normalizeBaseUrl(raw: unknown) {
  */
 async function getOriginFromRequest() {
   try {
-    const h = await headers(); // ✅ Next 15
+    const h = await headers();
     const host = (h.get("x-forwarded-host") || h.get("host") || "").trim();
     if (host) {
       const protoRaw = (h.get("x-forwarded-proto") || "").trim();
@@ -39,20 +47,13 @@ async function getOriginFromRequest() {
     // ignore
   }
 
-  const normalizeBaseUrl = (raw: unknown) => {
-    let s = String(raw ?? "").trim();
-    if (!s) return "";
-    if (!/^https?:\/\//i.test(s)) s = `https://${s}`;
-    s = s.replace(/\/+$/, "");
-    return s;
-  };
-
   return (
     normalizeBaseUrl(process.env.APP_ORIGIN) ||
     normalizeBaseUrl(process.env.SITE_URL) ||
     "http://localhost:3000"
   );
 }
+
 
 interface PageProps {
   searchParams:

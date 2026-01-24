@@ -5,7 +5,10 @@ import { db } from "@/drizzle/db";
 import { users, documents, taxReturns } from "@/drizzle/schema";
 import { getServerRole } from "@/lib/auth/roleServer";
 import { desc, eq, sql } from "drizzle-orm";
-import { adminCreateClientAndRedirect } from "./actions";
+import {
+  adminCreateClientAndRedirect,
+  adminResendClientInviteFromForm,
+} from "./actions";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,12 +20,25 @@ function daysAgo(n: number) {
   return new Date(Date.now() - n * 24 * 60 * 60 * 1000);
 }
 
-export default async function ClientActivityReportPage() {
+function getStr(v: unknown) {
+  return typeof v === "string" ? v : "";
+}
+
+export default async function ClientActivityReportPage({
+  searchParams,
+}: {
+  searchParams?: Record<string, string | string[] | undefined>;
+}) {
   // ✅ Admin-only gate
   const me = await getServerRole();
   if (!me?.sub) redirect("/admin/sign-in");
   const role = String(me?.role ?? "").toLowerCase();
   if (!(role === "admin" || role === "superadmin")) redirect("/not-authorized");
+
+  const toast = getStr(searchParams?.toast);
+  const msg = getStr(searchParams?.msg);
+  const mode = getStr(searchParams?.mode);
+  const fallback = getStr(searchParams?.fallback);
 
   const since7 = daysAgo(7);
   const since30 = daysAgo(30);
@@ -37,31 +53,38 @@ export default async function ClientActivityReportPage() {
     returnsByStatusThisYear,
     newestClients,
   ] = await Promise.all([
-    db.select({ c: sql<number>`count(*)`.mapWith(Number) }).from(users).then(r => r[0]?.c ?? 0),
+    db
+      .select({ c: sql<number>`count(*)`.mapWith(Number) })
+      .from(users)
+      .then((r) => r[0]?.c ?? 0),
 
     db
       .select({ c: sql<number>`count(*)`.mapWith(Number) })
       .from(users)
       .where(sql`${users.createdAt} >= ${since7}`)
-      .then(r => r[0]?.c ?? 0),
+      .then((r) => r[0]?.c ?? 0),
 
     db
       .select({ c: sql<number>`count(*)`.mapWith(Number) })
       .from(users)
-      .where(sql`${users.lastSeenAt} is not null and ${users.lastSeenAt} >= ${since7}`)
-      .then(r => r[0]?.c ?? 0),
+      .where(
+        sql`${users.lastSeenAt} is not null and ${users.lastSeenAt} >= ${since7}`
+      )
+      .then((r) => r[0]?.c ?? 0),
 
     db
       .select({ c: sql<number>`count(*)`.mapWith(Number) })
       .from(users)
-      .where(sql`${users.lastSeenAt} is not null and ${users.lastSeenAt} >= ${since30}`)
-      .then(r => r[0]?.c ?? 0),
+      .where(
+        sql`${users.lastSeenAt} is not null and ${users.lastSeenAt} >= ${since30}`
+      )
+      .then((r) => r[0]?.c ?? 0),
 
     db
       .select({ c: sql<number>`count(*)`.mapWith(Number) })
       .from(documents)
       .where(sql`${documents.uploadedAt} >= ${since7}`)
-      .then(r => r[0]?.c ?? 0),
+      .then((r) => r[0]?.c ?? 0),
 
     db
       .select({
@@ -84,6 +107,9 @@ export default async function ClientActivityReportPage() {
       .select({
         id: users.id,
         email: users.email,
+        firstName: users.firstName,
+        role: users.role,
+        agencyId: users.agencyId,
         name: users.name,
         onboardingStep: users.onboardingStep,
         createdAt: users.createdAt,
@@ -96,6 +122,19 @@ export default async function ClientActivityReportPage() {
 
   const onboardingMap = new Map<string, number>();
   for (const r of onboardingCounts) onboardingMap.set(String(r.step), r.c ?? 0);
+
+  const toastText =
+    toast === "create_ok"
+      ? `Invite sent (${mode || "branded"}).`
+      : toast === "create_failed"
+        ? `Create failed: ${msg || "Unknown error"}`
+        : toast === "resend_ok"
+          ? `Invite resent (${mode || "branded"}${
+              fallback ? `, fallback=${fallback}` : ""
+            }).`
+          : toast === "resend_failed"
+            ? `Resend failed: ${msg || "Unknown error"}`
+            : "";
 
   return (
     <div className="p-6 space-y-6">
@@ -123,7 +162,13 @@ export default async function ClientActivityReportPage() {
         </div>
       </div>
 
-        {/* ✅ Create Client (Invite) */}
+      {toastText ? (
+        <div className="rounded-2xl border bg-background/80 px-4 py-3 text-sm">
+          {toastText}
+        </div>
+      ) : null}
+
+      {/* ✅ Create Client (Invite) */}
       <details className="rounded-2xl border bg-background/80 shadow-sm">
         <summary className="cursor-pointer select-none p-4 font-medium">
           Create client (send invite)
@@ -164,27 +209,34 @@ export default async function ClientActivityReportPage() {
           </div>
 
           <div className="grid gap-1">
-            <label className="text-xs text-muted-foreground">Role (optional)</label>
-            <input
+            <label className="text-xs text-muted-foreground">User role</label>
+            <select
               name="role"
+              defaultValue="TAXPAYER"
               className="h-10 rounded-md border px-3 bg-background"
-              placeholder="client"
-            />
+            >
+              <option value="TAXPAYER">TAXPAYER</option>
+              <option value="LMS_PREPARER">LMS_PREPARER</option>
+            </select>
           </div>
 
           <div className="grid gap-1">
             <label className="text-xs text-muted-foreground">AgencyId (optional)</label>
-            <input name="agencyId" className="h-10 rounded-md border px-3 bg-background" />
+            <input
+              name="agencyId"
+              className="h-10 rounded-md border px-3 bg-background"
+              placeholder="UUID (optional)"
+            />
           </div>
 
-           <div className="grid gap-1 sm:col-span-2">
+          <div className="grid gap-1 sm:col-span-2">
             <label className="text-xs text-muted-foreground">Invite method</label>
             <select
               name="inviteMode"
               defaultValue="branded"
               className="h-10 rounded-md border px-3 bg-background"
             >
-              <option value="branded">Branded email (Resend) + Forgot password</option>
+              <option value="branded">Branded email (Resend)</option>
               <option value="cognito">Cognito invite (temp password email)</option>
             </select>
           </div>
@@ -253,27 +305,47 @@ export default async function ClientActivityReportPage() {
 
       <div className="rounded-2xl border bg-background/80 shadow-sm overflow-x-auto">
         <div className="border-b p-4">
-          <h2 className="font-semibold">Newest clients</h2>
+          <h2 className="font-semibold">Newest clients (quick resend)</h2>
         </div>
         <table className="w-full text-sm">
           <thead className="border-b bg-muted/30">
             <tr>
               <th className="p-3 text-left">Email</th>
-              <th className="p-3 text-left">Name</th>
+              <th className="p-3 text-left">Role</th>
               <th className="p-3 text-left">Onboarding</th>
               <th className="p-3 text-left">Created</th>
-              <th className="p-3 text-left">Last seen</th>
+              <th className="p-3 text-left">Resend invite</th>
             </tr>
           </thead>
           <tbody>
             {newestClients.map((u) => (
               <tr key={u.id} className="border-b last:border-0">
                 <td className="p-3">{u.email}</td>
-                <td className="p-3">{u.name ?? "—"}</td>
+                <td className="p-3">{String(u.role ?? "TAXPAYER")}</td>
                 <td className="p-3">{String(u.onboardingStep)}</td>
-                <td className="p-3">{new Date(u.createdAt as any).toLocaleString("en-US")}</td>
                 <td className="p-3">
-                  {u.lastSeenAt ? new Date(u.lastSeenAt as any).toLocaleString("en-US") : "—"}
+                  {new Date(u.createdAt as any).toLocaleString("en-US")}
+                </td>
+                <td className="p-3">
+                  <form action={adminResendClientInviteFromForm} className="flex items-center gap-2">
+                    <input type="hidden" name="email" value={String(u.email)} />
+                    <input type="hidden" name="firstName" value={String(u.firstName ?? "")} />
+                    <input type="hidden" name="role" value={String(u.role ?? "TAXPAYER")} />
+                    <input type="hidden" name="agencyId" value={String(u.agencyId ?? "")} />
+
+                    <select
+                      name="inviteMode"
+                      defaultValue="branded"
+                      className="h-9 rounded-md border px-2 bg-background text-xs"
+                    >
+                      <option value="branded">Branded</option>
+                      <option value="cognito">Cognito</option>
+                    </select>
+
+                    <button className="h-9 rounded-md border px-3 text-xs font-medium">
+                      Resend
+                    </button>
+                  </form>
                 </td>
               </tr>
             ))}
