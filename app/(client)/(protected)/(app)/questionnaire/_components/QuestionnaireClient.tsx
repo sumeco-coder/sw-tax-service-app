@@ -1,4 +1,3 @@
-// app/(client)/(protected)/(app)/questionnaire/_components/QuestionnaireClient.tsx
 "use client";
 
 import React, { useMemo, useState } from "react";
@@ -11,9 +10,8 @@ import DirectDepositInformation, {
   type DirectDepositValues,
 } from "./DirectDepositInformation";
 
-import EducationCreditsAndDeductions, {
-  type EducationCreditsAndDeductionsValues,
-} from "./EducationCreditsAndDeductions";
+import EducationCreditsAndDeductions from "./EducationCreditsAndDeductions";
+
 
 import HeadOfHouseholdDocumentation, {
   type HeadOfHouseholdDocumentationValues,
@@ -54,13 +52,6 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
 
 const BRAND = {
   pink: "#E72B69",
@@ -98,10 +89,32 @@ type DepItem = {
 
 type Props = {
   prefill: QuestionnairePrefill;
-  initialStep?: string; // optional deep link
+  initialStep?: string;
 };
 
-export default function QuestionnaireClient({ prefill, initialStep }: Props) {
+const REL_OPTIONS = [
+  "Son",
+  "Daughter",
+  "Foster child",
+  "Grandchild",
+  "Stepchild",
+  "Grandparent",
+  "Parent",
+  "Brother",
+  "Half-brother",
+  "Stepbrother",
+  "Sister",
+  "Half-sister",
+  "Stepsister",
+  "Aunt",
+  "Uncle",
+  "Nephew",
+  "Niece",
+  "Sibling",
+  "Other",
+] as const;
+
+export default function QuestionnaireClient({ prefill }: Props) {
   const [activeTab, setActiveTab] = useState<TabKey>("dependent");
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<{
@@ -109,51 +122,29 @@ export default function QuestionnaireClient({ prefill, initialStep }: Props) {
     msg: string;
   } | null>(null);
 
-  // ---------------- Dependents: normalize to a stable shape ----------------
-  const initialDeps = useMemo<DepItem[]>(() => {
-    const raw = (prefill as any)?.dependents;
-    if (!Array.isArray(raw)) return [];
-    return raw.map((d: any) => ({
-      dependentId: d.dependentId ?? d.id,
-      values: d.values ?? d,
-      meta: d.meta ?? { ssnOnFile: false, ssnLast4: null },
-    }));
+  const initialDeps: DepItem[] = useMemo(() => {
+    const raw = Array.isArray((prefill as any)?.dependents)
+      ? (prefill as any).dependents
+      : [];
+    return raw
+      .map((d: any) => ({
+        dependentId: String(d.dependentId ?? d.id ?? ""),
+        values: d.values ?? d,
+        meta: d.meta ?? {
+          ssnOnFile: Boolean(d?.hasSsn),
+          ssnLast4: d?.ssnLast4 ?? null,
+        },
+      }))
+      .filter((x: DepItem) => !!x.dependentId);
   }, [prefill]);
 
   const [depsList, setDepsList] = useState<DepItem[]>(initialDeps);
   const [activeDependentId, setActiveDependentId] = useState<string>(
-    initialDeps[0]?.dependentId ?? ""
+    initialDeps[0]?.dependentId ?? "",
   );
 
-  // keep client state in sync if prefill changes
-  React.useEffect(() => {
-    setDepsList(initialDeps);
-    setActiveDependentId((prev) => prev || initialDeps[0]?.dependentId || "");
-  }, [initialDeps]);
+  const selectedDependentId = activeDependentId;
 
-  // optional: support deep links like ?step=IDENTIFICATION (map to a tab)
-  React.useEffect(() => {
-    if (!initialStep) return;
-    const s = String(initialStep).toUpperCase();
-    const map: Record<string, TabKey> = {
-      DEPENDENTS: "dependent",
-      DEPENDENT: "dependent",
-      DIRECT_DEPOSIT: "directDeposit",
-      EDUCATION: "education",
-      HOH: "hoh",
-      HEAD_OF_HOUSEHOLD: "hoh",
-      IDENTIFICATION: "identification",
-      ESTIMATED: "estimated",
-      ESTIMATED_STATE: "estimatedState",
-      INCOME_DOCS: "incomeDocs",
-      QUAL_CHILD: "qualChild",
-      FOREIGN_ASSETS: "foreignAssets",
-    };
-    if (map[s]) setActiveTab(map[s]);
-  }, [initialStep]);
-
-  // ---------------- Add dependent on same page ----------------
-  const [addOpen, setAddOpen] = useState(false);
   const [newDep, setNewDep] = useState({
     firstName: "",
     lastName: "",
@@ -161,7 +152,116 @@ export default function QuestionnaireClient({ prefill, initialStep }: Props) {
     relationship: "",
   });
 
-  async function createDependentOnSamePage() {
+  const tabs = useMemo(
+    () =>
+      [
+        { key: "dependent", label: "Dependents" },
+        { key: "directDeposit", label: "Direct Deposit" },
+        { key: "education", label: "Education Credits" },
+        { key: "hoh", label: "HOH Docs" },
+        { key: "identification", label: "ID (Taxpayer/Spouse)" },
+        { key: "estimated", label: "Estimated Taxes" },
+        { key: "estimatedState", label: "Estimated State" },
+        { key: "incomeDocs", label: "Income Docs" },
+        { key: "qualChild", label: "Qualifying Child" },
+        { key: "foreignAssets", label: "Foreign / Digital Assets" },
+      ] as const,
+    [],
+  );
+
+  async function postJson<T>(url: string, values: T, fallbackMsg: string) {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(values),
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}) as any);
+      throw new Error(err?.error || fallbackMsg);
+    }
+  }
+
+  // --- Save handlers ---
+  const handleSaveDirectDeposit = async (values: DirectDepositValues) =>
+    postJson("/api/direct-deposit", values, "Failed to save direct deposit");
+
+  const handleSaveHOH = async (values: HeadOfHouseholdDocumentationValues) =>
+    postJson(
+      "/api/head-of-household-documentation",
+      values,
+      "Failed to save HOH documentation",
+    );
+
+  const handleSaveIdentification = async (
+    values: IdentificationForTaxpayerAndSpouseValues,
+  ) =>
+    postJson(
+      "/api/identification",
+      values,
+      "Failed to save identification info",
+    );
+
+  const handleSaveEstimated = async (
+    values: EstimatedFederalTaxPaymentsValues,
+  ) =>
+    postJson(
+      "/api/estimated-tax-payments",
+      values,
+      "Failed to save estimated tax payments",
+    );
+
+  const handleSaveEstimatedState = async (
+    values: EstimatedStateTaxPaymentsValues,
+  ) =>
+    postJson(
+      "/api/estimated-state-tax-payments",
+      values,
+      "Failed to save estimated state tax payments",
+    );
+
+  const handleSaveIncomeDocs = async (
+    values: IncomeDocumentationAssistanceValues,
+  ) =>
+    postJson(
+      "/api/income-documentation",
+      values,
+      "Failed to save income documentation",
+    );
+
+  const handleSaveQualChild = async (values: QualifyingChildAssistanceValues) =>
+    postJson(
+      "/api/qualifying-children",
+      values,
+      "Failed to save qualifying child info",
+    );
+
+  const handleSaveForeignAccountAndDigital = async (
+    values: ForeignAccountAndDigitalAssetsValues,
+  ) =>
+    postJson(
+      "/api/foreign-accounts-digital-assets",
+      values,
+      "Failed to save foreign account/digital asset info",
+    );
+
+  function wrapSave<T>(fn: (values: T) => Promise<void>) {
+    return async (values: T) => {
+      setToast(null);
+      setSaving(true);
+      try {
+        await fn(values);
+        setToast({ type: "success", msg: "Saved successfully." });
+      } catch (e: any) {
+        setToast({ type: "error", msg: e?.message ?? "Failed to save." });
+        throw e;
+      } finally {
+        setSaving(false);
+      }
+    };
+  }
+
+  async function createDependentInline() {
     setToast(null);
     setSaving(true);
 
@@ -171,11 +271,12 @@ export default function QuestionnaireClient({ prefill, initialStep }: Props) {
         middleName: "",
         lastName: newDep.lastName.trim(),
         dob: newDep.dob, // YYYY-MM-DD
-        relationship: newDep.relationship.trim(),
-        monthsInHome: 12,
+        relationship: newDep.relationship,
+        monthsLived: 12,
         isStudent: false,
         isDisabled: false,
         appliedButNotReceived: false,
+        // ✅ omit ssn (they will enter it in DependentQuestionnaire)
       };
 
       const res = await fetch("/api/dependents", {
@@ -184,15 +285,10 @@ export default function QuestionnaireClient({ prefill, initialStep }: Props) {
         body: JSON.stringify(payload),
       });
 
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({} as any));
-        throw new Error(err?.error || "Failed to add dependent.");
-      }
+      const body = await res.json().catch(() => ({}) as any);
+      if (!res.ok) throw new Error(body?.error || "Failed to add dependent.");
 
-      const data = await res.json().catch(() => ({} as any));
-      // handle a few possible response shapes
-      const created = data?.dependent ?? data?.value ?? data;
-      const newId = created?.id ?? created?.dependentId;
+      const newId = String(body?.id ?? body?.dependentId ?? "");
       if (!newId) throw new Error("Dependent created, but no id returned.");
 
       const entry: DepItem = {
@@ -213,114 +309,23 @@ export default function QuestionnaireClient({ prefill, initialStep }: Props) {
         },
       };
 
-      setDepsList((prev) => [...prev, entry]);
+      setDepsList((prev) => [entry, ...prev]);
       setActiveDependentId(newId);
 
       setNewDep({ firstName: "", lastName: "", dob: "", relationship: "" });
-      setAddOpen(false);
-      setToast({ type: "success", msg: "Dependent added." });
+
+      setToast({
+        type: "success",
+        msg: "Dependent added. Fill out their questionnaire below (including SSN).",
+      });
     } catch (e: any) {
-      setToast({ type: "error", msg: e?.message ?? "Failed to add dependent." });
+      setToast({
+        type: "error",
+        msg: e?.message ?? "Failed to add dependent.",
+      });
     } finally {
       setSaving(false);
     }
-  }
-
-  async function postJson<T>(url: string, values: T, fallbackMsg: string) {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(values),
-    });
-
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({} as any));
-      throw new Error(err?.error || fallbackMsg);
-    }
-  }
-
-  // --- Save handlers (each calls the right API) ---
-  const handleSaveDirectDeposit = async (values: DirectDepositValues) =>
-    postJson("/api/direct-deposit", values, "Failed to save direct deposit");
-
-  const handleSaveEducation = async (
-    values: EducationCreditsAndDeductionsValues
-  ) =>
-    postJson(
-      "/api/education-credits",
-      values,
-      "Failed to save education credit info"
-    );
-
-  const handleSaveHOH = async (values: HeadOfHouseholdDocumentationValues) =>
-    postJson(
-      "/api/head-of-household-documentation",
-      values,
-      "Failed to save HOH documentation"
-    );
-
-  const handleSaveIdentification = async (
-    values: IdentificationForTaxpayerAndSpouseValues
-  ) =>
-    postJson("/api/identification", values, "Failed to save identification info");
-
-  const handleSaveEstimated = async (
-    values: EstimatedFederalTaxPaymentsValues
-  ) =>
-    postJson(
-      "/api/estimated-tax-payments",
-      values,
-      "Failed to save estimated tax payments"
-    );
-
-  const handleSaveEstimatedState = async (
-    values: EstimatedStateTaxPaymentsValues
-  ) =>
-    postJson(
-      "/api/estimated-state-tax-payments",
-      values,
-      "Failed to save estimated state tax payments"
-    );
-
-  const handleSaveIncomeDocs = async (
-    values: IncomeDocumentationAssistanceValues
-  ) =>
-    postJson(
-      "/api/income-documentation",
-      values,
-      "Failed to save income documentation"
-    );
-
-  const handleSaveQualChild = async (values: QualifyingChildAssistanceValues) =>
-    postJson(
-      "/api/qualifying-children",
-      values,
-      "Failed to save qualifying child info"
-    );
-
-  const handleSaveForeignAccountAndDigital = async (
-    values: ForeignAccountAndDigitalAssetsValues
-  ) =>
-    postJson(
-      "/api/foreign-accounts-digital-assets",
-      values,
-      "Failed to save foreign account/digital asset info"
-    );
-
-  function wrapSave<T>(fn: (values: T) => Promise<void>) {
-    return async (values: T) => {
-      setToast(null);
-      setSaving(true);
-      try {
-        await fn(values);
-        setToast({ type: "success", msg: "Saved successfully." });
-      } catch (e: any) {
-        setToast({ type: "error", msg: e?.message ?? "Failed to save." });
-        throw e;
-      } finally {
-        setSaving(false);
-      }
-    };
   }
 
   return (
@@ -374,7 +379,10 @@ export default function QuestionnaireClient({ prefill, initialStep }: Props) {
 
         {/* Tabs Card */}
         <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as TabKey)}>
+          <Tabs
+            value={activeTab}
+            onValueChange={(v) => setActiveTab(v as TabKey)}
+          >
             <TabsList
               className="
                 h-auto w-full
@@ -383,19 +391,12 @@ export default function QuestionnaireClient({ prefill, initialStep }: Props) {
                 rounded-xl bg-white p-1 ring-1 ring-slate-200
               "
             >
-              {[
-                { key: "dependent", label: "Dependents" },
-                { key: "directDeposit", label: "Direct Deposit" },
-                { key: "education", label: "Education Credits" },
-                { key: "hoh", label: "HOH Docs" },
-                { key: "identification", label: "ID (Taxpayer/Spouse)" },
-                { key: "estimated", label: "Estimated Taxes" },
-                { key: "estimatedState", label: "Estimated State" },
-                { key: "incomeDocs", label: "Income Docs" },
-                { key: "qualChild", label: "Qualifying Child" },
-                { key: "foreignAssets", label: "Foreign / Digital Assets" },
-              ].map((t) => (
-                <TabsTrigger key={t.key} value={t.key} className={tabTriggerClass}>
+              {tabs.map((t) => (
+                <TabsTrigger
+                  key={t.key}
+                  value={t.key}
+                  className={tabTriggerClass}
+                >
                   {t.label}
                 </TabsTrigger>
               ))}
@@ -403,108 +404,98 @@ export default function QuestionnaireClient({ prefill, initialStep }: Props) {
 
             {/* ---------------- Dependents ---------------- */}
             <TabsContent value="dependent" className="mt-5 space-y-4">
+              {/* Inline add form (no popup) */}
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <div className="text-sm font-semibold text-slate-800">
+                  Add a dependent
+                </div>
+
+                <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div className="space-y-1">
+                    <Label>First name</Label>
+                    <Input
+                      value={newDep.firstName}
+                      onChange={(e) =>
+                        setNewDep((p) => ({ ...p, firstName: e.target.value }))
+                      }
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <Label>Last name</Label>
+                    <Input
+                      value={newDep.lastName}
+                      onChange={(e) =>
+                        setNewDep((p) => ({ ...p, lastName: e.target.value }))
+                      }
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <Label>Date of birth</Label>
+                    <Input
+                      type="date"
+                      value={newDep.dob}
+                      onChange={(e) =>
+                        setNewDep((p) => ({ ...p, dob: e.target.value }))
+                      }
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <Label>Relationship</Label>
+
+                    <Select
+                      value={newDep.relationship}
+                      onValueChange={(v) =>
+                        setNewDep((p) => ({ ...p, relationship: v }))
+                      }
+                    >
+                      <SelectTrigger className="bg-white">
+                        <SelectValue placeholder="Select relationship" />
+                      </SelectTrigger>
+
+                      <SelectContent>
+                        {REL_OPTIONS.map((opt) => (
+                          <SelectItem key={opt} value={opt}>
+                            {opt}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                <div className="mt-3 flex items-center justify-between gap-3">
+                  <p className="text-xs text-slate-600">
+                    SSN is entered inside the dependent questionnaire after you
+                    add them.
+                  </p>
+
+                  <Button
+                    type="button"
+                    className="rounded-xl text-white hover:opacity-90"
+                    style={brandBar}
+                    disabled={
+                      saving ||
+                      !newDep.firstName.trim() ||
+                      !newDep.lastName.trim() ||
+                      !newDep.dob ||
+                      !newDep.relationship.trim()
+                    }
+                    onClick={createDependentInline}
+                  >
+                    Add dependent
+                  </Button>
+                </div>
+              </div>
+
+              {/* Selector + questionnaire */}
               {depsList.length ? (
                 <>
-                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="text-sm font-semibold text-slate-800">
-                        Select dependent
-                      </div>
-
-                      <Dialog open={addOpen} onOpenChange={setAddOpen}>
-                        <DialogTrigger asChild>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            className="rounded-xl"
-                            disabled={saving}
-                          >
-                            Add dependent
-                          </Button>
-                        </DialogTrigger>
-
-                        <DialogContent className="rounded-2xl">
-                          <DialogHeader>
-                            <DialogTitle>Add a dependent</DialogTitle>
-                          </DialogHeader>
-
-                          <div className="space-y-3">
-                            <div className="grid grid-cols-2 gap-3">
-                              <div className="space-y-1">
-                                <Label>First name</Label>
-                                <Input
-                                  value={newDep.firstName}
-                                  onChange={(e) =>
-                                    setNewDep((p) => ({
-                                      ...p,
-                                      firstName: e.target.value,
-                                    }))
-                                  }
-                                />
-                              </div>
-
-                              <div className="space-y-1">
-                                <Label>Last name</Label>
-                                <Input
-                                  value={newDep.lastName}
-                                  onChange={(e) =>
-                                    setNewDep((p) => ({
-                                      ...p,
-                                      lastName: e.target.value,
-                                    }))
-                                  }
-                                />
-                              </div>
-                            </div>
-
-                            <div className="grid grid-cols-2 gap-3">
-                              <div className="space-y-1">
-                                <Label>Date of birth</Label>
-                                <Input
-                                  type="date"
-                                  value={newDep.dob}
-                                  onChange={(e) =>
-                                    setNewDep((p) => ({
-                                      ...p,
-                                      dob: e.target.value,
-                                    }))
-                                  }
-                                />
-                              </div>
-
-                              <div className="space-y-1">
-                                <Label>Relationship</Label>
-                                <Input
-                                  placeholder="Child, stepchild, etc."
-                                  value={newDep.relationship}
-                                  onChange={(e) =>
-                                    setNewDep((p) => ({
-                                      ...p,
-                                      relationship: e.target.value,
-                                    }))
-                                  }
-                                />
-                              </div>
-                            </div>
-
-                            <Button
-                              type="button"
-                              className="w-full rounded-xl text-white hover:opacity-90"
-                              style={brandBar}
-                              disabled={
-                                saving ||
-                                !newDep.firstName.trim() ||
-                                !newDep.lastName.trim() ||
-                                !newDep.dob ||
-                                !newDep.relationship.trim()
-                              }
-                              onClick={createDependentOnSamePage}
-                            >
-                              Create dependent
-                            </Button>
-                          </div>
-                        </DialogContent>
-                      </Dialog>
+                  <div className="rounded-xl border border-slate-200 bg-white p-3">
+                    <div className="text-sm font-semibold text-slate-800">
+                      Select dependent
                     </div>
 
                     <div className="mt-2 max-w-md">
@@ -517,7 +508,10 @@ export default function QuestionnaireClient({ prefill, initialStep }: Props) {
                         </SelectTrigger>
                         <SelectContent>
                           {depsList.map((d) => (
-                            <SelectItem key={d.dependentId} value={d.dependentId}>
+                            <SelectItem
+                              key={d.dependentId}
+                              value={d.dependentId}
+                            >
                               {d.values?.firstName} {d.values?.lastName} (
                               {String(d.values?.dob ?? "").slice(0, 10)})
                             </SelectItem>
@@ -527,94 +521,17 @@ export default function QuestionnaireClient({ prefill, initialStep }: Props) {
                     </div>
                   </div>
 
-                  <DependentQuestionnaire dependentId={activeDependentId} />
+                  {activeDependentId ? (
+                    <DependentQuestionnaire dependentId={activeDependentId} />
+                  ) : (
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
+                      Select a dependent to start their questionnaire.
+                    </div>
+                  )}
                 </>
               ) : (
                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
-                  <div>No dependents found yet. Add a dependent to begin.</div>
-
-                  <div className="mt-3">
-                    <Dialog open={addOpen} onOpenChange={setAddOpen}>
-                      <DialogTrigger asChild>
-                        <Button type="button" variant="outline" className="rounded-xl" disabled={saving}>
-                          Add dependent
-                        </Button>
-                      </DialogTrigger>
-
-                      <DialogContent className="rounded-2xl">
-                        <DialogHeader>
-                          <DialogTitle>Add a dependent</DialogTitle>
-                        </DialogHeader>
-
-                        <div className="space-y-3">
-                          <div className="grid grid-cols-2 gap-3">
-                            <div className="space-y-1">
-                              <Label>First name</Label>
-                              <Input
-                                value={newDep.firstName}
-                                onChange={(e) =>
-                                  setNewDep((p) => ({ ...p, firstName: e.target.value }))
-                                }
-                              />
-                            </div>
-
-                            <div className="space-y-1">
-                              <Label>Last name</Label>
-                              <Input
-                                value={newDep.lastName}
-                                onChange={(e) =>
-                                  setNewDep((p) => ({ ...p, lastName: e.target.value }))
-                                }
-                              />
-                            </div>
-                          </div>
-
-                          <div className="grid grid-cols-2 gap-3">
-                            <div className="space-y-1">
-                              <Label>Date of birth</Label>
-                              <Input
-                                type="date"
-                                value={newDep.dob}
-                                onChange={(e) =>
-                                  setNewDep((p) => ({ ...p, dob: e.target.value }))
-                                }
-                              />
-                            </div>
-
-                            <div className="space-y-1">
-                              <Label>Relationship</Label>
-                              <Input
-                                placeholder="Child, stepchild, etc."
-                                value={newDep.relationship}
-                                onChange={(e) =>
-                                  setNewDep((p) => ({
-                                    ...p,
-                                    relationship: e.target.value,
-                                  }))
-                                }
-                              />
-                            </div>
-                          </div>
-
-                          <Button
-                            type="button"
-                            className="w-full rounded-xl text-white hover:opacity-90"
-                            style={brandBar}
-                            disabled={
-                              saving ||
-                              !newDep.firstName.trim() ||
-                              !newDep.lastName.trim() ||
-                              !newDep.dob ||
-                              !newDep.relationship.trim()
-                            }
-                            onClick={createDependentOnSamePage}
-                          >
-                            Create dependent
-                          </Button>
-                        </div>
-                      </DialogContent>
-                    </Dialog>
-                  </div>
+                  No dependents yet. Add one above to begin.
                 </div>
               )}
             </TabsContent>
@@ -626,8 +543,10 @@ export default function QuestionnaireClient({ prefill, initialStep }: Props) {
                 initialValues={
                   prefill.directDeposit
                     ? {
-                        useDirectDeposit: prefill.directDeposit.useDirectDeposit,
-                        accountHolderName: prefill.directDeposit.accountHolderName,
+                        useDirectDeposit:
+                          prefill.directDeposit.useDirectDeposit,
+                        accountHolderName:
+                          prefill.directDeposit.accountHolderName,
                         bankName: prefill.directDeposit.bankName,
                         accountType: prefill.directDeposit.accountType,
                         routingNumber: "",
@@ -639,15 +558,18 @@ export default function QuestionnaireClient({ prefill, initialStep }: Props) {
               />
             </TabsContent>
 
-            {/* ---------------- Education ---------------- */}
             <TabsContent value="education" className="mt-5">
-              <EducationCreditsAndDeductions
-                onSave={wrapSave(handleSaveEducation)}
-                initialValues={prefill.educationCredits ?? undefined}
-              />
+              {selectedDependentId ? (
+                <EducationCreditsAndDeductions
+                  dependentId={selectedDependentId}
+                />
+              ) : (
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
+                  Select a dependent to start Education Credits.
+                </div>
+              )}
             </TabsContent>
 
-            {/* ---------------- HOH ---------------- */}
             <TabsContent value="hoh" className="mt-5">
               <HeadOfHouseholdDocumentation
                 onSave={wrapSave(handleSaveHOH)}
@@ -655,7 +577,6 @@ export default function QuestionnaireClient({ prefill, initialStep }: Props) {
               />
             </TabsContent>
 
-            {/* ---------------- Identification ---------------- */}
             <TabsContent value="identification" className="mt-5">
               <IdentificationForTaxpayerAndSpouse
                 onSave={wrapSave(handleSaveIdentification)}
@@ -663,7 +584,6 @@ export default function QuestionnaireClient({ prefill, initialStep }: Props) {
               />
             </TabsContent>
 
-            {/* ---------------- Estimated Federal ---------------- */}
             <TabsContent value="estimated" className="mt-5">
               <EstimatedFederalTaxPayments
                 onSave={wrapSave(handleSaveEstimated)}
@@ -671,7 +591,6 @@ export default function QuestionnaireClient({ prefill, initialStep }: Props) {
               />
             </TabsContent>
 
-            {/* ---------------- Estimated State ---------------- */}
             <TabsContent value="estimatedState" className="mt-5">
               <EstimatedStateTaxPayments
                 onSave={wrapSave(handleSaveEstimatedState)}
@@ -679,7 +598,6 @@ export default function QuestionnaireClient({ prefill, initialStep }: Props) {
               />
             </TabsContent>
 
-            {/* ---------------- Income Docs ---------------- */}
             <TabsContent value="incomeDocs" className="mt-5">
               <IncomeDocumentationAssistance
                 onSave={wrapSave(handleSaveIncomeDocs)}
@@ -687,7 +605,6 @@ export default function QuestionnaireClient({ prefill, initialStep }: Props) {
               />
             </TabsContent>
 
-            {/* ---------------- Qualifying Child ---------------- */}
             <TabsContent value="qualChild" className="mt-5">
               <QualifyingChildAssistance
                 onSave={wrapSave(handleSaveQualChild)}
@@ -695,11 +612,12 @@ export default function QuestionnaireClient({ prefill, initialStep }: Props) {
               />
             </TabsContent>
 
-            {/* ---------------- Foreign / Digital Assets ---------------- */}
             <TabsContent value="foreignAssets" className="mt-5">
               <ForeignAccountAndDigitalAssets
                 onSave={wrapSave(handleSaveForeignAccountAndDigital)}
-                initialValues={prefill.foreignAccountsDigitalAssets ?? undefined}
+                initialValues={
+                  prefill.foreignAccountsDigitalAssets ?? undefined
+                }
               />
             </TabsContent>
           </Tabs>
