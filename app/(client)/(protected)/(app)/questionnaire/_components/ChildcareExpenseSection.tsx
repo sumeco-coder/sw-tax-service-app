@@ -1,7 +1,13 @@
 "use client";
 
 import * as React from "react";
-import { Controller, type Control, type FieldErrors } from "react-hook-form";
+import {
+  Controller,
+  type Control,
+  type FieldErrors,
+  type UseFormRegister,
+  type UseFormSetValue,
+} from "react-hook-form";
 
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -14,36 +20,36 @@ export type ChildcareFields = {
 };
 
 function moneyOnly(v: string) {
-  // allow digits + one decimal point
+  // digits + one dot, max 2 decimals
   const cleaned = v.replace(/[^\d.]/g, "");
   const parts = cleaned.split(".");
   if (parts.length <= 1) return cleaned;
   return `${parts[0]}.${parts.slice(1).join("").slice(0, 2)}`;
 }
 
+type Props<T extends ChildcareFields> = {
+  control: Control<T>;
+  register: UseFormRegister<T>;
+  setValue: UseFormSetValue<T>;
+  errors: FieldErrors<T>;
+};
+
 export default function ChildcareExpenseSection<T extends ChildcareFields>({
   control,
   register,
   setValue,
   errors,
-}: {
-  control: Control<T>;
-  register: any;
-  setValue: (name: any, value: any, opts?: any) => void;
-  errors: FieldErrors<T>;
-}) {
+}: Props<T>) {
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-4 space-y-4">
+    <div className="space-y-4 rounded-xl border border-slate-200 bg-white p-4">
       <div>
         <h3 className="text-base font-semibold text-slate-900">
           Childcare Expense Information
         </h3>
-        <p className="text-xs text-slate-600">
-          Only fill this out if applicable.
-        </p>
+        <p className="text-xs text-slate-600">Only fill this out if applicable.</p>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <div>
           <Label className="text-slate-700">
             Qualifying childcare expenses incurred and paid this year
@@ -52,11 +58,15 @@ export default function ChildcareExpenseSection<T extends ChildcareFields>({
             className="mt-1"
             inputMode="decimal"
             placeholder="0.00"
-            {...register("childcareExpensesPaid")}
-            onChange={(e) => {
-              const v = moneyOnly(e.target.value);
-              setValue("childcareExpensesPaid", v, { shouldDirty: true });
-            }}
+            {...register("childcareExpensesPaid" as any, {
+              onChange: (e) => {
+                const v = moneyOnly(e.target.value);
+                setValue("childcareExpensesPaid" as any, v as any, {
+                  shouldDirty: true,
+                  shouldValidate: true,
+                });
+              },
+            })}
           />
           {errors?.childcareExpensesPaid && (
             <p className="mt-1 text-xs text-red-600">
@@ -73,11 +83,15 @@ export default function ChildcareExpenseSection<T extends ChildcareFields>({
             className="mt-1"
             inputMode="decimal"
             placeholder="0.00"
-            {...register("childcareProvidedByEmployer")}
-            onChange={(e) => {
-              const v = moneyOnly(e.target.value);
-              setValue("childcareProvidedByEmployer", v, { shouldDirty: true });
-            }}
+            {...register("childcareProvidedByEmployer" as any, {
+              onChange: (e) => {
+                const v = moneyOnly(e.target.value);
+                setValue("childcareProvidedByEmployer" as any, v as any, {
+                  shouldDirty: true,
+                  shouldValidate: true,
+                });
+              },
+            })}
           />
           {errors?.childcareProvidedByEmployer && (
             <p className="mt-1 text-xs text-red-600">

@@ -27,7 +27,6 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 
-
 const BRAND = {
   pink: "#E72B69",
   copper: "#BA4A26",
@@ -99,12 +98,17 @@ const US_STATES = [
 const YESNO = ["yes", "no"] as const;
 
 function digitsOnly(v: string, maxLen: number) {
-  return String(v ?? "").replace(/\D/g, "").slice(0, maxLen);
+  return String(v ?? "")
+    .replace(/\D/g, "")
+    .slice(0, maxLen);
 }
 function moneyOnly(v: string) {
   const raw = String(v ?? "").replace(/[^\d.]/g, "");
   const [a, b] = raw.split(".");
-  return [a ?? "", b ?? ""].filter((_, i) => i === 0 || b !== undefined).join(".").slice(0, 20);
+  return [a ?? "", b ?? ""]
+    .filter((_, i) => i === 0 || b !== undefined)
+    .join(".")
+    .slice(0, 20);
 }
 
 const DOCS_OPTIONS = [
@@ -147,7 +151,9 @@ const schema = z
       .trim()
       .default("")
       .transform((v) => digitsOnly(v, 9))
-      .refine((v) => v === "" || v.length === 9, { message: "EIN must be 9 digits" }),
+      .refine((v) => v === "" || v.length === 9, {
+        message: "EIN must be 9 digits",
+      }),
 
     institutionName: z.string().trim().default(""),
 
@@ -156,7 +162,11 @@ const schema = z
     instStreet: z.string().trim().default(""),
     instCity: z.string().trim().default(""),
     instState: z.string().trim().default(""),
-    instZip: z.string().trim().default("").transform((v) => digitsOnly(v, 10)),
+    instZip: z
+      .string()
+      .trim()
+      .default("")
+      .transform((v) => digitsOnly(v, 10)),
 
     instProvince: z.string().trim().default(""),
     instCountry: z.string().trim().default(""),
@@ -215,16 +225,32 @@ const schema = z
 
       if (started) {
         if (!data.instStreet.trim()) {
-          ctx.addIssue({ code: "custom", path: ["instStreet"], message: "Street is required" });
+          ctx.addIssue({
+            code: "custom",
+            path: ["instStreet"],
+            message: "Street is required",
+          });
         }
         if (!data.instCity.trim()) {
-          ctx.addIssue({ code: "custom", path: ["instCity"], message: "City is required" });
+          ctx.addIssue({
+            code: "custom",
+            path: ["instCity"],
+            message: "City is required",
+          });
         }
         if (!data.instState.trim()) {
-          ctx.addIssue({ code: "custom", path: ["instState"], message: "State is required" });
+          ctx.addIssue({
+            code: "custom",
+            path: ["instState"],
+            message: "State is required",
+          });
         }
         if (!data.instZip.trim() || data.instZip.length < 5) {
-          ctx.addIssue({ code: "custom", path: ["instZip"], message: "ZIP is required" });
+          ctx.addIssue({
+            code: "custom",
+            path: ["instZip"],
+            message: "ZIP is required",
+          });
         }
       }
     }
@@ -343,22 +369,31 @@ function CheckboxRow({
       />
       <div>
         <div className="text-sm font-medium text-slate-800">{label}</div>
-        {hint ? <div className="mt-1 text-xs text-slate-600">{hint}</div> : null}
+        {hint ? (
+          <div className="mt-1 text-xs text-slate-600">{hint}</div>
+        ) : null}
       </div>
     </label>
   );
 }
 
+type Props = {
+  onSave?: (
+    values: EducationCreditsAndDeductionsValues,
+  ) => Promise<void> | void;
+  initialValues?: Partial<EducationCreditsAndDeductionsValues>;
+};
+
 export default function EducationCreditsAndDeductions({
   onSave,
-}: {
-  onSave?: (values: EducationCreditsAndDeductionsValues) => Promise<void> | void;
-}) {
+  initialValues,
+}: Props) {
   const [saveMsg, setSaveMsg] = React.useState<string | null>(null);
   const [saveErr, setSaveErr] = React.useState<string | null>(null);
 
-  const resolver: Resolver<EducationCreditsAndDeductionsValues> =
-    zodResolver(schema) as unknown as Resolver<EducationCreditsAndDeductionsValues>;
+  const resolver: Resolver<EducationCreditsAndDeductionsValues> = zodResolver(
+    schema,
+  ) as unknown as Resolver<EducationCreditsAndDeductionsValues>;
 
   const form = useForm<EducationCreditsAndDeductionsValues>({
     resolver,
@@ -379,37 +414,70 @@ export default function EducationCreditsAndDeductions({
   const instIsForeign = watch("instIsForeign");
   const docsReliedOn = watch("docsReliedOn");
 
-  // ✅ Load saved values (optional but recommended)
+  const didHydrateRef = React.useRef(false);
+
   React.useEffect(() => {
     let alive = true;
+
     (async () => {
       try {
+        if (didHydrateRef.current) return;
+
+        // ✅ 1) Prefer parent-provided initialValues (server prefill)
+        if (initialValues) {
+          didHydrateRef.current = true;
+          reset({
+            ...defaultValues,
+            ...initialValues,
+            // ✅ never hydrate SSN
+            studentSsn: "",
+          });
+          return;
+        }
+
+        // ✅ 2) Fallback to GET if no initialValues provided
         const res = await fetch("/api/education-credits", { method: "GET" });
         if (!res.ok) return;
+
         const data = await res.json().catch(() => null);
         if (!alive) return;
+
         if (data?.values) {
-          reset({ ...defaultValues, ...data.values });
+          didHydrateRef.current = true;
+          reset({
+            ...defaultValues,
+            ...data.values,
+            // ✅ never hydrate SSN
+            studentSsn: "",
+          });
         }
       } catch {
         // ignore
       }
     })();
+
     return () => {
       alive = false;
     };
-  }, [reset]);
+  }, [initialValues, reset]);
 
   const toggleDoc = (doc: (typeof DOCS_OPTIONS)[number]) => {
     const cur = Array.isArray(docsReliedOn) ? docsReliedOn : [];
-    const next = cur.includes(doc) ? cur.filter((x) => x !== doc) : [...cur, doc];
-    setValue("docsReliedOn", next as any, { shouldDirty: true, shouldValidate: true });
+    const next = cur.includes(doc)
+      ? cur.filter((x) => x !== doc)
+      : [...cur, doc];
+    setValue("docsReliedOn", next as any, {
+      shouldDirty: true,
+      shouldValidate: true,
+    });
     if (doc === "Other" && !next.includes("Other")) {
       setValue("docsOtherText", "", { shouldDirty: true });
     }
   };
 
-  const onSubmit: SubmitHandler<EducationCreditsAndDeductionsValues> = async (values) => {
+  const onSubmit: SubmitHandler<EducationCreditsAndDeductionsValues> = async (
+    values,
+  ) => {
     setSaveMsg(null);
     setSaveErr(null);
 
@@ -426,7 +494,7 @@ export default function EducationCreditsAndDeductions({
     });
 
     if (!res.ok) {
-      const err = await res.json().catch(() => ({} as any));
+      const err = await res.json().catch(() => ({}) as any);
       setSaveErr(err?.error || "Failed to save education credits");
       return;
     }
@@ -465,8 +533,13 @@ export default function EducationCreditsAndDeductions({
         <TabsContent value="page1">
           <Card className="border-slate-200">
             <CardHeader>
-              <CardTitle className="text-slate-900">Education Credits & Deductions</CardTitle>
-              <div className="mt-2 h-1 w-36 rounded-full" style={brandGradient} />
+              <CardTitle className="text-slate-900">
+                Education Credits & Deductions
+              </CardTitle>
+              <div
+                className="mt-2 h-1 w-36 rounded-full"
+                style={brandGradient}
+              />
               <p className="mt-3 text-sm text-slate-600">
                 Student + American Opportunity / Hope Scholarship details.
               </p>
@@ -478,7 +551,9 @@ export default function EducationCreditsAndDeductions({
                   <Label className="text-slate-700">Student’s First Name</Label>
                   <Input className="mt-1" {...register("studentFirstName")} />
                   {errors.studentFirstName && (
-                    <p className="mt-1 text-xs text-red-600">{errors.studentFirstName.message}</p>
+                    <p className="mt-1 text-xs text-red-600">
+                      {errors.studentFirstName.message}
+                    </p>
                   )}
                 </div>
 
@@ -486,14 +561,18 @@ export default function EducationCreditsAndDeductions({
                   <Label className="text-slate-700">Student’s Last Name</Label>
                   <Input className="mt-1" {...register("studentLastName")} />
                   {errors.studentLastName && (
-                    <p className="mt-1 text-xs text-red-600">{errors.studentLastName.message}</p>
+                    <p className="mt-1 text-xs text-red-600">
+                      {errors.studentLastName.message}
+                    </p>
                   )}
                 </div>
               </FieldRow>
 
               <FieldRow>
                 <div>
-                  <Label className="text-slate-700">Student SSN (9 digits)</Label>
+                  <Label className="text-slate-700">
+                    Student SSN (9 digits)
+                  </Label>
                   <Input
                     className="mt-1"
                     inputMode="numeric"
@@ -502,11 +581,16 @@ export default function EducationCreditsAndDeductions({
                     {...register("studentSsn")}
                     onChange={(e) => {
                       const v = digitsOnly(e.target.value, 9);
-                      setValue("studentSsn", v, { shouldDirty: true, shouldValidate: true });
+                      setValue("studentSsn", v, {
+                        shouldDirty: true,
+                        shouldValidate: true,
+                      });
                     }}
                   />
                   {errors.studentSsn && (
-                    <p className="mt-1 text-xs text-red-600">{errors.studentSsn.message}</p>
+                    <p className="mt-1 text-xs text-red-600">
+                      {errors.studentSsn.message}
+                    </p>
                   )}
                 </div>
 
@@ -515,8 +599,18 @@ export default function EducationCreditsAndDeductions({
                   <Controller
                     control={control}
                     name="studentState"
-                    render={({ field }: { field: ControllerRenderProps<EducationCreditsAndDeductionsValues, "studentState"> }) => (
-                      <Select value={field.value ?? ""} onValueChange={field.onChange}>
+                    render={({
+                      field,
+                    }: {
+                      field: ControllerRenderProps<
+                        EducationCreditsAndDeductionsValues,
+                        "studentState"
+                      >;
+                    }) => (
+                      <Select
+                        value={field.value ?? ""}
+                        onValueChange={field.onChange}
+                      >
                         <SelectTrigger className="mt-1">
                           <SelectValue placeholder="Select state" />
                         </SelectTrigger>
@@ -531,13 +625,17 @@ export default function EducationCreditsAndDeductions({
                     )}
                   />
                   {errors.studentState && (
-                    <p className="mt-1 text-xs text-red-600">{errors.studentState.message}</p>
+                    <p className="mt-1 text-xs text-red-600">
+                      {errors.studentState.message}
+                    </p>
                   )}
                 </div>
               </FieldRow>
 
               <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                <p className="text-sm font-semibold text-slate-900">Yes / No Questions</p>
+                <p className="text-sm font-semibold text-slate-900">
+                  Yes / No Questions
+                </p>
                 <p className="mt-1 text-xs text-slate-600">
                   Answer the following for AOTC / Hope Scholarship evaluation.
                 </p>
@@ -568,12 +666,24 @@ export default function EducationCreditsAndDeductions({
 
               <FieldRow>
                 <div>
-                  <Label className="text-slate-700">How many years has AOTC been claimed for this student?</Label>
+                  <Label className="text-slate-700">
+                    How many years has AOTC been claimed for this student?
+                  </Label>
                   <Controller
                     control={control}
                     name="aotcYearsClaimed"
-                    render={({ field }: { field: ControllerRenderProps<EducationCreditsAndDeductionsValues, "aotcYearsClaimed"> }) => (
-                      <Select value={field.value ?? "0"} onValueChange={field.onChange}>
+                    render={({
+                      field,
+                    }: {
+                      field: ControllerRenderProps<
+                        EducationCreditsAndDeductionsValues,
+                        "aotcYearsClaimed"
+                      >;
+                    }) => (
+                      <Select
+                        value={field.value ?? "0"}
+                        onValueChange={field.onChange}
+                      >
                         <SelectTrigger className="mt-1">
                           <SelectValue placeholder="Select" />
                         </SelectTrigger>
@@ -590,11 +700,20 @@ export default function EducationCreditsAndDeductions({
                 </div>
 
                 <div className="rounded-xl border border-slate-200 bg-white p-4">
-                  <Label className="text-sm font-medium text-slate-800">Is this student pursuing a degree?</Label>
+                  <Label className="text-sm font-medium text-slate-800">
+                    Is this student pursuing a degree?
+                  </Label>
                   <Controller
                     control={control}
                     name="pursuingDegree"
-                    render={({ field }: { field: ControllerRenderProps<EducationCreditsAndDeductionsValues, "pursuingDegree"> }) => (
+                    render={({
+                      field,
+                    }: {
+                      field: ControllerRenderProps<
+                        EducationCreditsAndDeductionsValues,
+                        "pursuingDegree"
+                      >;
+                    }) => (
                       <RadioGroup
                         className="mt-3 flex gap-6"
                         value={field.value}
@@ -615,13 +734,18 @@ export default function EducationCreditsAndDeductions({
               </FieldRow>
 
               <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                <p className="text-sm font-semibold text-slate-900">Qualified Education Expenses</p>
-                <p className="mt-1 text-xs text-slate-600">Enter amounts (optional). Use dollars and cents.</p>
+                <p className="text-sm font-semibold text-slate-900">
+                  Qualified Education Expenses
+                </p>
+                <p className="mt-1 text-xs text-slate-600">
+                  Enter amounts (optional). Use dollars and cents.
+                </p>
 
                 <div className="mt-4 grid grid-cols-1 gap-4">
                   <div>
                     <Label className="text-slate-700">
-                      Total qualified education expenses REQUIRED to be paid directly to the educational institution
+                      Total qualified education expenses REQUIRED to be paid
+                      directly to the educational institution
                     </Label>
                     <Input
                       className="mt-1"
@@ -630,17 +754,23 @@ export default function EducationCreditsAndDeductions({
                       {...register("reqPaidToInstitutionExpenses")}
                       onChange={(e) => {
                         const v = moneyOnly(e.target.value);
-                        setValue("reqPaidToInstitutionExpenses", v, { shouldDirty: true, shouldValidate: true });
+                        setValue("reqPaidToInstitutionExpenses", v, {
+                          shouldDirty: true,
+                          shouldValidate: true,
+                        });
                       }}
                     />
                     {errors.reqPaidToInstitutionExpenses && (
-                      <p className="mt-1 text-xs text-red-600">{errors.reqPaidToInstitutionExpenses.message}</p>
+                      <p className="mt-1 text-xs text-red-600">
+                        {errors.reqPaidToInstitutionExpenses.message}
+                      </p>
                     )}
                   </div>
 
                   <div>
                     <Label className="text-slate-700">
-                      ADDITIONAL qualified education expenses NOT required to be paid directly to the educational institution
+                      ADDITIONAL qualified education expenses NOT required to be
+                      paid directly to the educational institution
                     </Label>
                     <Input
                       className="mt-1"
@@ -649,17 +779,23 @@ export default function EducationCreditsAndDeductions({
                       {...register("addlNotRequiredExpenses")}
                       onChange={(e) => {
                         const v = moneyOnly(e.target.value);
-                        setValue("addlNotRequiredExpenses", v, { shouldDirty: true, shouldValidate: true });
+                        setValue("addlNotRequiredExpenses", v, {
+                          shouldDirty: true,
+                          shouldValidate: true,
+                        });
                       }}
                     />
                     {errors.addlNotRequiredExpenses && (
-                      <p className="mt-1 text-xs text-red-600">{errors.addlNotRequiredExpenses.message}</p>
+                      <p className="mt-1 text-xs text-red-600">
+                        {errors.addlNotRequiredExpenses.message}
+                      </p>
                     )}
                   </div>
 
                   <div>
                     <Label className="text-slate-700">
-                      Tax-free education assistance received this year (allocable to the academic period)
+                      Tax-free education assistance received this year
+                      (allocable to the academic period)
                     </Label>
                     <Input
                       className="mt-1"
@@ -668,17 +804,24 @@ export default function EducationCreditsAndDeductions({
                       {...register("taxFreeAssistThisYear")}
                       onChange={(e) => {
                         const v = moneyOnly(e.target.value);
-                        setValue("taxFreeAssistThisYear", v, { shouldDirty: true, shouldValidate: true });
+                        setValue("taxFreeAssistThisYear", v, {
+                          shouldDirty: true,
+                          shouldValidate: true,
+                        });
                       }}
                     />
                     {errors.taxFreeAssistThisYear && (
-                      <p className="mt-1 text-xs text-red-600">{errors.taxFreeAssistThisYear.message}</p>
+                      <p className="mt-1 text-xs text-red-600">
+                        {errors.taxFreeAssistThisYear.message}
+                      </p>
                     )}
                   </div>
 
                   <div>
                     <Label className="text-slate-700">
-                      Tax-free education assistance received AFTER the tax year (and before the return is filed) allocable to the academic period
+                      Tax-free education assistance received AFTER the tax year
+                      (and before the return is filed) allocable to the academic
+                      period
                     </Label>
                     <Input
                       className="mt-1"
@@ -687,17 +830,23 @@ export default function EducationCreditsAndDeductions({
                       {...register("taxFreeAssistAfterYearBeforeFiled")}
                       onChange={(e) => {
                         const v = moneyOnly(e.target.value);
-                        setValue("taxFreeAssistAfterYearBeforeFiled", v, { shouldDirty: true, shouldValidate: true });
+                        setValue("taxFreeAssistAfterYearBeforeFiled", v, {
+                          shouldDirty: true,
+                          shouldValidate: true,
+                        });
                       }}
                     />
                     {errors.taxFreeAssistAfterYearBeforeFiled && (
-                      <p className="mt-1 text-xs text-red-600">{errors.taxFreeAssistAfterYearBeforeFiled.message}</p>
+                      <p className="mt-1 text-xs text-red-600">
+                        {errors.taxFreeAssistAfterYearBeforeFiled.message}
+                      </p>
                     )}
                   </div>
 
                   <div>
                     <Label className="text-slate-700">
-                      Refunds of qualified education expenses paid this year (if refund received before last year’s return is filed)
+                      Refunds of qualified education expenses paid this year (if
+                      refund received before last year’s return is filed)
                     </Label>
                     <Input
                       className="mt-1"
@@ -706,11 +855,16 @@ export default function EducationCreditsAndDeductions({
                       {...register("refundsBeforePriorReturnFiled")}
                       onChange={(e) => {
                         const v = moneyOnly(e.target.value);
-                        setValue("refundsBeforePriorReturnFiled", v, { shouldDirty: true, shouldValidate: true });
+                        setValue("refundsBeforePriorReturnFiled", v, {
+                          shouldDirty: true,
+                          shouldValidate: true,
+                        });
                       }}
                     />
                     {errors.refundsBeforePriorReturnFiled && (
-                      <p className="mt-1 text-xs text-red-600">{errors.refundsBeforePriorReturnFiled.message}</p>
+                      <p className="mt-1 text-xs text-red-600">
+                        {errors.refundsBeforePriorReturnFiled.message}
+                      </p>
                     )}
                   </div>
                 </div>
@@ -723,14 +877,21 @@ export default function EducationCreditsAndDeductions({
         <TabsContent value="page2">
           <Card className="border-slate-200">
             <CardHeader>
-              <CardTitle className="text-slate-900">Educational Institution + 8867 Due Diligence</CardTitle>
-              <div className="mt-2 h-1 w-36 rounded-full" style={brandGradient} />
+              <CardTitle className="text-slate-900">
+                Educational Institution + 8867 Due Diligence
+              </CardTitle>
+              <div
+                className="mt-2 h-1 w-36 rounded-full"
+                style={brandGradient}
+              />
             </CardHeader>
 
             <CardContent className="space-y-4">
               <FieldRow>
                 <div>
-                  <Label className="text-slate-700">Educational Institution EIN</Label>
+                  <Label className="text-slate-700">
+                    Educational Institution EIN
+                  </Label>
                   <Input
                     className="mt-1"
                     inputMode="numeric"
@@ -739,30 +900,44 @@ export default function EducationCreditsAndDeductions({
                     {...register("institutionEin")}
                     onChange={(e) => {
                       const v = digitsOnly(e.target.value, 9);
-                      setValue("institutionEin", v, { shouldDirty: true, shouldValidate: true });
+                      setValue("institutionEin", v, {
+                        shouldDirty: true,
+                        shouldValidate: true,
+                      });
                     }}
                   />
                   {errors.institutionEin && (
-                    <p className="mt-1 text-xs text-red-600">{errors.institutionEin.message}</p>
+                    <p className="mt-1 text-xs text-red-600">
+                      {errors.institutionEin.message}
+                    </p>
                   )}
                 </div>
 
                 <div>
-                  <Label className="text-slate-700">Educational Institution Name</Label>
+                  <Label className="text-slate-700">
+                    Educational Institution Name
+                  </Label>
                   <Input className="mt-1" {...register("institutionName")} />
                 </div>
               </FieldRow>
 
               <div className="flex items-start justify-between rounded-xl border border-slate-200 bg-white p-4">
                 <div>
-                  <Label className="text-sm font-medium text-slate-800">Foreign institution?</Label>
-                  <p className="mt-1 text-xs text-slate-600">Toggle on for foreign address fields.</p>
+                  <Label className="text-sm font-medium text-slate-800">
+                    Foreign institution?
+                  </Label>
+                  <p className="mt-1 text-xs text-slate-600">
+                    Toggle on for foreign address fields.
+                  </p>
                 </div>
                 <Controller
                   control={control}
                   name="instIsForeign"
                   render={({ field }) => (
-                    <Switch checked={!!field.value} onCheckedChange={field.onChange} />
+                    <Switch
+                      checked={!!field.value}
+                      onCheckedChange={field.onChange}
+                    />
                   )}
                 />
               </div>
@@ -774,26 +949,42 @@ export default function EducationCreditsAndDeductions({
                       <Label className="text-slate-700">Street</Label>
                       <Input className="mt-1" {...register("instStreet")} />
                       {errors.instStreet && (
-                        <p className="mt-1 text-xs text-red-600">{errors.instStreet.message}</p>
+                        <p className="mt-1 text-xs text-red-600">
+                          {errors.instStreet.message}
+                        </p>
                       )}
                     </div>
                     <div>
                       <Label className="text-slate-700">City</Label>
                       <Input className="mt-1" {...register("instCity")} />
                       {errors.instCity && (
-                        <p className="mt-1 text-xs text-red-600">{errors.instCity.message}</p>
+                        <p className="mt-1 text-xs text-red-600">
+                          {errors.instCity.message}
+                        </p>
                       )}
                     </div>
                   </FieldRow>
 
                   <FieldRow>
                     <div>
-                      <Label className="text-slate-700">State (U.S. only)</Label>
+                      <Label className="text-slate-700">
+                        State (U.S. only)
+                      </Label>
                       <Controller
                         control={control}
                         name="instState"
-                        render={({ field }: { field: ControllerRenderProps<EducationCreditsAndDeductionsValues, "instState"> }) => (
-                          <Select value={field.value ?? ""} onValueChange={field.onChange}>
+                        render={({
+                          field,
+                        }: {
+                          field: ControllerRenderProps<
+                            EducationCreditsAndDeductionsValues,
+                            "instState"
+                          >;
+                        }) => (
+                          <Select
+                            value={field.value ?? ""}
+                            onValueChange={field.onChange}
+                          >
                             <SelectTrigger className="mt-1">
                               <SelectValue placeholder="Select state" />
                             </SelectTrigger>
@@ -808,7 +999,9 @@ export default function EducationCreditsAndDeductions({
                         )}
                       />
                       {errors.instState && (
-                        <p className="mt-1 text-xs text-red-600">{errors.instState.message}</p>
+                        <p className="mt-1 text-xs text-red-600">
+                          {errors.instState.message}
+                        </p>
                       )}
                     </div>
 
@@ -822,11 +1015,16 @@ export default function EducationCreditsAndDeductions({
                         {...register("instZip")}
                         onChange={(e) => {
                           const v = digitsOnly(e.target.value, 10);
-                          setValue("instZip", v, { shouldDirty: true, shouldValidate: true });
+                          setValue("instZip", v, {
+                            shouldDirty: true,
+                            shouldValidate: true,
+                          });
                         }}
                       />
                       {errors.instZip && (
-                        <p className="mt-1 text-xs text-red-600">{errors.instZip.message}</p>
+                        <p className="mt-1 text-xs text-red-600">
+                          {errors.instZip.message}
+                        </p>
                       )}
                     </div>
                   </FieldRow>
@@ -835,27 +1033,41 @@ export default function EducationCreditsAndDeductions({
                 <>
                   <FieldRow>
                     <div>
-                      <Label className="text-slate-700">Province/State (Foreign only)</Label>
+                      <Label className="text-slate-700">
+                        Province/State (Foreign only)
+                      </Label>
                       <Input className="mt-1" {...register("instProvince")} />
                     </div>
                     <div>
-                      <Label className="text-slate-700">Country (Foreign only)</Label>
-                      <Input className="mt-1" placeholder="Country" {...register("instCountry")} />
+                      <Label className="text-slate-700">
+                        Country (Foreign only)
+                      </Label>
+                      <Input
+                        className="mt-1"
+                        placeholder="Country"
+                        {...register("instCountry")}
+                      />
                       {errors.instCountry && (
-                        <p className="mt-1 text-xs text-red-600">{errors.instCountry.message}</p>
+                        <p className="mt-1 text-xs text-red-600">
+                          {errors.instCountry.message}
+                        </p>
                       )}
                     </div>
                   </FieldRow>
 
                   <div>
-                    <Label className="text-slate-700">Postal Code (Foreign only)</Label>
+                    <Label className="text-slate-700">
+                      Postal Code (Foreign only)
+                    </Label>
                     <Input className="mt-1" {...register("instPostalCode")} />
                   </div>
                 </>
               )}
 
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <p className="text-sm font-semibold text-slate-900">Form 1098-T</p>
+                <p className="text-sm font-semibold text-slate-900">
+                  Form 1098-T
+                </p>
                 <div className="mt-4 grid grid-cols-1 gap-4">
                   <YesNoField<EducationCreditsAndDeductionsValues>
                     label="Did the student receive Form 1098-T from this institution for this year?"
@@ -871,7 +1083,9 @@ export default function EducationCreditsAndDeductions({
               </div>
 
               <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                <p className="text-sm font-semibold text-slate-900">8867 Due Diligence</p>
+                <p className="text-sm font-semibold text-slate-900">
+                  8867 Due Diligence
+                </p>
                 <p className="mt-1 text-xs text-slate-600">
                   In addition to your notes, list any documents you relied on.
                 </p>
@@ -898,7 +1112,9 @@ export default function EducationCreditsAndDeductions({
                     <Label className="text-slate-700">Other (describe)</Label>
                     <Input className="mt-1" {...register("docsOtherText")} />
                     {errors.docsOtherText && (
-                      <p className="mt-1 text-xs text-red-600">{errors.docsOtherText.message}</p>
+                      <p className="mt-1 text-xs text-red-600">
+                        {errors.docsOtherText.message}
+                      </p>
                     )}
                   </div>
                 )}
@@ -913,7 +1129,9 @@ export default function EducationCreditsAndDeductions({
               </div>
 
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <p className="text-sm font-semibold text-slate-900">Other Flags</p>
+                <p className="text-sm font-semibold text-slate-900">
+                  Other Flags
+                </p>
                 <div className="mt-4 grid grid-cols-1 gap-3">
                   <Controller
                     control={control}
@@ -972,7 +1190,11 @@ export default function EducationCreditsAndDeductions({
             type="reset"
             variant="outline"
             onClick={() => {
-              reset(defaultValues);
+              reset({
+                ...defaultValues,
+                ...(initialValues ?? {}),
+                studentSsn: "",
+              });
               setSaveMsg(null);
               setSaveErr(null);
             }}
