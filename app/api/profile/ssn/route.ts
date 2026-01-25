@@ -42,13 +42,15 @@ function getKey(): Buffer {
   throw new Error("SSN_ENCRYPTION_KEY must decode to 32 bytes (AES-256).");
 }
 
-
 function encryptSsn(plain: string) {
   const key = getKey();
   const iv = crypto.randomBytes(12);
   const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
 
-  const ciphertext = Buffer.concat([cipher.update(plain, "utf8"), cipher.final()]);
+  const ciphertext = Buffer.concat([
+    cipher.update(plain, "utf8"),
+    cipher.final(),
+  ]);
   const tag = cipher.getAuthTag();
 
   // v1:<iv_b64>:<ct_b64>:<tag_b64>
@@ -70,7 +72,10 @@ function decryptSsn(payload: string) {
   const decipher = crypto.createDecipheriv("aes-256-gcm", key, iv);
   decipher.setAuthTag(tag);
 
-  const plaintext = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+  const plaintext = Buffer.concat([
+    decipher.update(ciphertext),
+    decipher.final(),
+  ]);
   return plaintext.toString("utf8");
 }
 
@@ -84,7 +89,6 @@ async function requireAuth() {
   const me = await getServerRole();
   if (!me) return null;
 
-  // ✅ Cognito user id is `sub` in your auth helper
   const sub = String((me as any)?.sub ?? "").trim();
   if (!sub) return null;
 
@@ -100,7 +104,8 @@ async function requireAuth() {
 export async function GET(req: Request) {
   try {
     const auth = await requireAuth();
-    if (!auth) return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
+    if (!auth)
+      return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
 
     const url = new URL(req.url);
     const reveal = url.searchParams.get("reveal") === "1";
@@ -115,8 +120,7 @@ export async function GET(req: Request) {
       .limit(1);
 
     const last4 = String(row?.ssnLast4 ?? "");
-    const hasSsn = Boolean(row?.ssnEncrypted) || Boolean(row?.ssnLast4);
-
+    const hasSsn = Boolean(last4);
 
     if (!reveal) {
       return NextResponse.json({ ok: true, hasSsn, last4 });
@@ -133,7 +137,7 @@ export async function GET(req: Request) {
   } catch (e: unknown) {
     return NextResponse.json(
       { message: e instanceof Error ? e.message : "Server error" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
@@ -147,12 +151,16 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   try {
     const auth = await requireAuth();
-    if (!auth) return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
+    if (!auth)
+      return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
 
     const body = await req.json().catch(() => ({}));
     const ssn = String(body?.ssn ?? "").replace(/\D/g, "");
     if (ssn.length !== 9) {
-      return NextResponse.json({ message: "SSN must be 9 digits." }, { status: 400 });
+      return NextResponse.json(
+        { message: "SSN must be 9 digits." },
+        { status: 400 },
+      );
     }
 
     const [row] = await db
@@ -164,13 +172,16 @@ export async function POST(req: Request) {
       .where(eq(users.cognitoSub, auth.sub))
       .limit(1);
 
-    if (!row) return NextResponse.json({ message: "User not found." }, { status: 404 });
+    if (!row)
+      return NextResponse.json({ message: "User not found." }, { status: 404 });
 
-    // ✅ prevent updates once set
     if (row.ssnEncrypted || row.ssnLast4) {
       return NextResponse.json(
-        { message: "SSN is already on file and cannot be changed in the portal." },
-        { status: 409 }
+        {
+          message:
+            "SSN is already on file and cannot be changed in the portal.",
+        },
+        { status: 409 },
       );
     }
 
@@ -191,7 +202,7 @@ export async function POST(req: Request) {
   } catch (e: unknown) {
     return NextResponse.json(
       { message: e instanceof Error ? e.message : "Server error" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

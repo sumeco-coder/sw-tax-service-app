@@ -2,7 +2,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { db } from "@/drizzle/db";
-import { users, documents, taxReturns } from "@/drizzle/schema";
+import { users, documents, taxReturns, dependents } from "@/drizzle/schema";
 import { getServerRole } from "@/lib/auth/roleServer";
 import { desc, eq, sql } from "drizzle-orm";
 import {
@@ -29,7 +29,6 @@ export default async function ClientActivityReportPage({
 }: {
   searchParams?: Record<string, string | string[] | undefined>;
 }) {
-  // ✅ Admin-only gate
   const me = await getServerRole();
   if (!me?.sub) redirect("/admin/sign-in");
   const role = String(me?.role ?? "").toLowerCase();
@@ -67,17 +66,13 @@ export default async function ClientActivityReportPage({
     db
       .select({ c: sql<number>`count(*)`.mapWith(Number) })
       .from(users)
-      .where(
-        sql`${users.lastSeenAt} is not null and ${users.lastSeenAt} >= ${since7}`
-      )
+      .where(sql`${users.lastSeenAt} is not null and ${users.lastSeenAt} >= ${since7}`)
       .then((r) => r[0]?.c ?? 0),
 
     db
       .select({ c: sql<number>`count(*)`.mapWith(Number) })
       .from(users)
-      .where(
-        sql`${users.lastSeenAt} is not null and ${users.lastSeenAt} >= ${since30}`
-      )
+      .where(sql`${users.lastSeenAt} is not null and ${users.lastSeenAt} >= ${since30}`)
       .then((r) => r[0]?.c ?? 0),
 
     db
@@ -114,6 +109,12 @@ export default async function ClientActivityReportPage({
         onboardingStep: users.onboardingStep,
         createdAt: users.createdAt,
         lastSeenAt: users.lastSeenAt,
+
+        dependentsCount: sql<number>`
+          (select count(*)
+           from ${dependents}
+           where ${dependents.userId} = ${users.id})
+        `.mapWith(Number),
       })
       .from(users)
       .orderBy(desc(users.createdAt))
@@ -129,9 +130,7 @@ export default async function ClientActivityReportPage({
       : toast === "create_failed"
         ? `Create failed: ${msg || "Unknown error"}`
         : toast === "resend_ok"
-          ? `Invite resent (${mode || "branded"}${
-              fallback ? `, fallback=${fallback}` : ""
-            }).`
+          ? `Invite resent (${mode || "branded"}${fallback ? `, fallback=${fallback}` : ""}).`
           : toast === "resend_failed"
             ? `Resend failed: ${msg || "Unknown error"}`
             : "";
@@ -168,7 +167,6 @@ export default async function ClientActivityReportPage({
         </div>
       ) : null}
 
-      {/* ✅ Create Client (Invite) */}
       <details className="rounded-2xl border bg-background/80 shadow-sm">
         <summary className="cursor-pointer select-none p-4 font-medium">
           Create client (send invite)
@@ -243,7 +241,7 @@ export default async function ClientActivityReportPage({
 
           <div className="sm:col-span-2 flex justify-end">
             <button className="inline-flex h-10 items-center justify-center rounded-md border px-4 text-sm font-medium">
-              Create & Send Invite
+              Create &amp; Send Invite
             </button>
           </div>
         </form>
@@ -307,6 +305,7 @@ export default async function ClientActivityReportPage({
         <div className="border-b p-4">
           <h2 className="font-semibold">Newest clients (quick resend)</h2>
         </div>
+
         <table className="w-full text-sm">
           <thead className="border-b bg-muted/30">
             <tr>
@@ -314,18 +313,38 @@ export default async function ClientActivityReportPage({
               <th className="p-3 text-left">Role</th>
               <th className="p-3 text-left">Onboarding</th>
               <th className="p-3 text-left">Created</th>
+              <th className="p-3 text-left">Dependents</th>
+              <th className="p-3 text-left">Sensitive</th>
               <th className="p-3 text-left">Resend invite</th>
             </tr>
           </thead>
+
           <tbody>
             {newestClients.map((u) => (
               <tr key={u.id} className="border-b last:border-0">
                 <td className="p-3">{u.email}</td>
                 <td className="p-3">{String(u.role ?? "TAXPAYER")}</td>
                 <td className="p-3">{String(u.onboardingStep)}</td>
+                <td className="p-3">{new Date(u.createdAt as any).toLocaleString("en-US")}</td>
+
                 <td className="p-3">
-                  {new Date(u.createdAt as any).toLocaleString("en-US")}
+                  <Link
+                    className="text-xs font-medium underline underline-offset-4"
+                    href={`/admin/clients/${u.id}/dependents`}
+                  >
+                    View ({Number((u as any).dependentsCount ?? 0)})
+                  </Link>
                 </td>
+
+                <td className="p-3">
+                  <Link
+                    className="text-xs font-medium underline underline-offset-4"
+                    href={`/admin/clients/${u.id}/sensitive`}
+                  >
+                    View SSN/Bank
+                  </Link>
+                </td>
+
                 <td className="p-3">
                   <form action={adminResendClientInviteFromForm} className="flex items-center gap-2">
                     <input type="hidden" name="email" value={String(u.email)} />
@@ -342,16 +361,15 @@ export default async function ClientActivityReportPage({
                       <option value="cognito">Cognito</option>
                     </select>
 
-                    <button className="h-9 rounded-md border px-3 text-xs font-medium">
-                      Resend
-                    </button>
+                    <button className="h-9 rounded-md border px-3 text-xs font-medium">Resend</button>
                   </form>
                 </td>
               </tr>
             ))}
+
             {!newestClients.length ? (
               <tr>
-                <td className="p-3 text-muted-foreground" colSpan={5}>
+                <td className="p-3 text-muted-foreground" colSpan={7}>
                   No clients yet.
                 </td>
               </tr>

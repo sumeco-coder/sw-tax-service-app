@@ -1,20 +1,60 @@
-import { listDependents, addDependent, updateDependent, deleteDependent } from "./actions";
+// app/(admin)/admin/(protected)/clients/[userId]/dependents/page.tsx
+import { redirect } from "next/navigation";
+import { getServerRole } from "@/lib/auth/roleServer";
+
+import {
+  listDependents,
+  addDependent,
+  updateDependent,
+  deleteDependent,
+} from "./actions";
+
+import DependentSsnReveal from "./DependentSsnReveal";
 
 const RELATIONSHIP_OPTIONS = [
-  "Child",
+  "Daughter",
+  "Son",
+  "Stepsister",
+  "Stepbrother",
   "Stepchild",
+  "Brother",
+  "Sister",
+  "Halfbrother",
+  "Halfsister",
+  "Aunt",
+  "Uncle",
+  "Nephew",
+  "Niece",
   "Foster child",
   "Grandchild",
   "Sibling",
   "Parent",
+  "Grandmother",
+  "Grandfather",
+  "Grandmother-InLaw",
+  "Grandfather-InLaw",
   "Other",
 ] as const;
+
+function requireAdmin(auth: any) {
+  const role = String(auth?.role ?? "");
+  return (
+    role === "ADMIN" ||
+    role === "SUPERADMIN" ||
+    role === "LMS_ADMIN" ||
+    role === "LMS_PREPARER"
+  );
+}
 
 export default async function DependentsPage({
   params,
 }: {
   params: { userId: string };
 }) {
+  const me = await getServerRole();
+  if (!me?.sub) redirect("/admin/sign-in");
+  if (!requireAdmin(me)) redirect("/not-authorized");
+
   const userId = params.userId;
   const rows = await listDependents(userId);
 
@@ -24,12 +64,11 @@ export default async function DependentsPage({
         <div>
           <h1 className="text-xl font-bold">Dependents</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Add/edit dependents (DOB, relationship, months in home).
+            Add/edit dependents (DOB, relationship, months in home). SSN is reveal-on-click.
           </p>
         </div>
       </header>
 
-      {/* Add Dependent */}
       <section className="rounded-2xl border bg-card p-4">
         <h2 className="text-sm font-semibold">Add dependent</h2>
 
@@ -113,7 +152,6 @@ export default async function DependentsPage({
         </form>
       </section>
 
-      {/* List */}
       <section className="rounded-2xl border bg-card">
         <div className="border-b px-4 py-3 text-sm font-semibold">
           Dependents ({rows.length})
@@ -125,7 +163,7 @@ export default async function DependentsPage({
           </div>
         ) : (
           <ul className="divide-y">
-            {rows.map((d) => (
+            {rows.map((d: any) => (
               <li key={d.id} className="px-4 py-4">
                 <div className="flex items-start justify-between gap-4">
                   <div>
@@ -133,12 +171,25 @@ export default async function DependentsPage({
                       {d.firstName} {d.middleName ? d.middleName + " " : ""}
                       {d.lastName}
                     </div>
-                    <div className="mt-1 text-xs text-muted-foreground">
-                      DOB: {String(d.dob)} • {String(d.relationship)} • Months in home:{" "}
-                      {d.monthsInHome}
-                      {d.isStudent ? " • Student" : ""}
-                      {d.isDisabled ? " • Disabled" : ""}
-                      {d.appliedButNotReceived ? " • SSN pending" : ""}
+
+                    <div className="mt-1 text-xs text-muted-foreground flex flex-wrap items-center gap-2">
+                      <span>DOB: {String(d.dob)}</span>
+                      <span>•</span>
+                      <span>{String(d.relationship)}</span>
+                      <span>•</span>
+                      <span>Months in home: {Number(d.monthsInHome ?? 12)}</span>
+                      {d.isStudent ? <span>• Student</span> : null}
+                      {d.isDisabled ? <span>• Disabled</span> : null}
+                      {d.appliedButNotReceived ? <span>• SSN pending</span> : null}
+
+                      <span>• SSN:</span>
+                      <DependentSsnReveal
+                        userId={userId}
+                        dependentId={String(d.id)}
+                        appliedButNotReceived={Boolean(d.appliedButNotReceived)}
+                        hasSsn={Boolean(d.hasSsn)}
+                        last4={d.ssnLast4 ? String(d.ssnLast4) : null}
+                      />
                     </div>
                   </div>
 
@@ -154,7 +205,6 @@ export default async function DependentsPage({
                   </form>
                 </div>
 
-                {/* Edit */}
                 <details className="mt-3">
                   <summary className="cursor-pointer text-xs font-semibold text-muted-foreground hover:text-foreground">
                     Edit dependent
