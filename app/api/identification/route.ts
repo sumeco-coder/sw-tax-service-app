@@ -18,11 +18,30 @@ const STATES = [
   "WV","WI","WY",
 ] as const;
 
+// UI display values (keep your curly apostrophe)
 const ID_TYPES_UI = ["Driver’s License", "State ID", "Passport", "Military ID", "Other"] as const;
 const ID_TYPES_DB = ["DRIVERS_LICENSE", "STATE_ID", "PASSPORT", "OTHER"] as const;
 
 type UiIdType = (typeof ID_TYPES_UI)[number];
 type DbIdType = (typeof ID_TYPES_DB)[number];
+
+// Normalize input so POST accepts multiple variants safely
+function normalizeUiIdType(input: unknown): unknown {
+  if (typeof input !== "string") return input;
+  const s = input.trim();
+
+  // Convert curly apostrophe to straight for comparisons
+  const ascii = s.replace(/[’]/g, "'");
+
+  // Accept common variants
+  if (ascii === "Driver's License" || ascii === "Drivers License" || ascii === "DRIVERS_LICENSE") {
+    return "Driver’s License";
+  }
+  if (ascii === "STATE_ID") return "State ID";
+  if (ascii === "PASSPORT") return "Passport";
+
+  return s; // keep original if already matches enum
+}
 
 function uiToDbType(v: UiIdType): DbIdType {
   switch (v) {
@@ -64,9 +83,12 @@ function isIsoDate(s: string) {
  * - must decode to 32 bytes
  */
 function readAes256KeyFromEnv(): Buffer {
-  const raw =
+  const raw0 =
     (process.env.IDENTIFICATION_ENCRYPTION_KEY ?? "").trim() ||
     (process.env.SSN_ENCRYPTION_KEY ?? "").trim();
+
+  // ✅ important: strip accidental wrapping quotes
+  const raw = raw0.replace(/^"|"$/g, "").trim();
 
   if (!raw) {
     throw new Error("Missing IDENTIFICATION_ENCRYPTION_KEY (or SSN_ENCRYPTION_KEY) env var.");
@@ -108,7 +130,8 @@ const PersonSchema = z.object({
   hasNoId: z.boolean().default(false),
   doesNotWantToProvide: z.boolean().default(false),
 
-  type: z.enum(ID_TYPES_UI).default("Driver’s License"),
+  // ✅ accept curly/straight apostrophe + db enum strings
+  type: z.preprocess(normalizeUiIdType, z.enum(ID_TYPES_UI)).default("Driver’s License"),
 
   // UI calls it number/state/issueDate/expirationDate
   number: z.string().trim().default(""),
@@ -120,13 +143,23 @@ const PersonSchema = z.object({
   backKey: z.string().trim().optional().default(""),
 });
 
+const SpouseSchema = PersonSchema.extend({
+  enabled: z.boolean().default(false),
+});
+
 const IdentificationSchema = z
-  .object({
+  .preprocess((v) => {
+    // ✅ allow spouse missing from body
+    if (!v || typeof v !== "object") return v;
+    const obj = v as any;
+    return {
+      ...obj,
+      spouse: obj.spouse ?? { enabled: false },
+    };
+  }, z.object({
     taxpayer: PersonSchema,
-    spouse: PersonSchema.extend({
-      enabled: z.boolean().default(false),
-    }),
-  })
+    spouse: SpouseSchema,
+  }))
   .superRefine((data, ctx) => {
     const validate = (path: "taxpayer" | "spouse", enabled: boolean, p: any) => {
       if (!enabled) return;
@@ -150,12 +183,11 @@ const IdentificationSchema = z
       }
     };
 
-    validate("taxpayer", true, data.taxpayer);
-    validate("spouse", data.spouse.enabled, data.spouse);
+    validate("taxpayer", true, (data as any).taxpayer);
+    validate("spouse", Boolean((data as any).spouse?.enabled), (data as any).spouse);
   });
 
 function last4OfIdNumber(v: string) {
-  // keep letters/numbers only for last4
   const cleaned = String(v ?? "").replace(/[^a-zA-Z0-9]/g, "");
   if (!cleaned) return "";
   return cleaned.slice(-4);
@@ -184,12 +216,13 @@ async function upsertPerson(args: {
   const { userId, person } = args;
 
   const cleaned = scrubIfOptedOut(args.p);
-
   const optedOut = Boolean(cleaned.hasNoId || cleaned.doesNotWantToProvide);
 
   const idNumber = String(cleaned.number ?? "").trim();
-  const idLast4 = optedOut ? "" : last4OfIdNumber(idNumber);
-  const idNumberEncrypted = optedOut ? null : encryptIdNumberV1(idNumber);
+  const hasNumber = !!idNumber;
+
+  const idLast4 = optedOut || !hasNumber ? "" : last4OfIdNumber(idNumber);
+  const idNumberEncrypted = optedOut || !hasNumber ? null : encryptIdNumberV1(idNumber);
 
   const issuingState = optedOut ? null : (cleaned.state || "CA");
   const issueDate = optedOut ? null : (cleaned.issueDate || null);
@@ -213,11 +246,9 @@ async function upsertPerson(args: {
     frontKey: optedOut ? null : (cleaned.frontKey || null),
     backKey: optedOut ? null : (cleaned.backKey || null),
 
-    // keep notes untouched (unless you want to set it from UI later)
     updatedAt: new Date(),
   };
 
-  // Unique index exists: (userId, person)
   await db
     .insert(identification)
     .values({
@@ -233,67 +264,77 @@ async function upsertPerson(args: {
 /* ---------------- handlers ---------------- */
 
 export async function GET() {
-  const { user } = await requireClientUser();
+  try {
+    const { user } = await requireClientUser();
 
-  const rows = await db
-    .select()
-    .from(identification)
-    .where(eq(identification.userId, user.id));
+    const rows = await db
+      .select()
+      .from(identification)
+      .where(eq(identification.userId, user.id));
 
-  const taxpayerRow = rows.find((r: any) => r.person === "TAXPAYER");
-  const spouseRow = rows.find((r: any) => r.person === "SPOUSE");
+    const taxpayerRow = rows.find((r: any) => r.person === "TAXPAYER");
+    const spouseRow = rows.find((r: any) => r.person === "SPOUSE");
 
-  const toClient = (r: any) => ({
-    hasNoId: Boolean(r?.hasNoId),
-    doesNotWantToProvide: Boolean(r?.doesNotWantToProvide),
+    const toClient = (r: any) => ({
+      hasNoId: Boolean(r?.hasNoId),
+      doesNotWantToProvide: Boolean(r?.doesNotWantToProvide),
 
-    type: dbToUiType(String(r?.type ?? "OTHER")),
+      type: dbToUiType(String(r?.type ?? "OTHER")),
 
-    // IMPORTANT: don't return full ID number; show last4 + hasNumber
-    number: "",
-    last4: String(r?.idLast4 ?? ""),
-    hasNumber: Boolean(r?.idNumberEncrypted),
+      // IMPORTANT: don't return full ID number; show last4 + hasNumber
+      number: "",
+      last4: String(r?.idLast4 ?? ""),
+      hasNumber: Boolean(r?.idNumberEncrypted),
 
-    state: String(r?.issuingState ?? "CA"),
-    issueDate: r?.issueDate ? String(r.issueDate).slice(0, 10) : "",
-    expirationDate: r?.expiresOn ? String(r.expiresOn).slice(0, 10) : "",
+      state: String(r?.issuingState ?? "CA"),
+      issueDate: r?.issueDate ? String(r.issueDate).slice(0, 10) : "",
+      expirationDate: r?.expiresOn ? String(r.expiresOn).slice(0, 10) : "",
 
-    frontKey: String(r?.frontKey ?? ""),
-    backKey: String(r?.backKey ?? ""),
-  });
+      frontKey: String(r?.frontKey ?? ""),
+      backKey: String(r?.backKey ?? ""),
+    });
 
-  return NextResponse.json({
-    ok: true,
-    data: {
-      taxpayer: taxpayerRow ? toClient(taxpayerRow) : null,
-      spouse: spouseRow ? { enabled: true, ...toClient(spouseRow) } : { enabled: false },
-    },
-  });
+    return NextResponse.json({
+      ok: true,
+      data: {
+        taxpayer: taxpayerRow ? toClient(taxpayerRow) : null,
+        spouse: spouseRow ? { enabled: true, ...toClient(spouseRow) } : { enabled: false },
+      },
+    });
+  } catch (err) {
+    console.error("GET /api/identification failed:", err);
+    return NextResponse.json({ ok: false, error: "Internal Server Error" }, { status: 500 });
+  }
 }
 
 export async function POST(req: NextRequest) {
-  const { user } = await requireClientUser();
+  try {
+    const { user } = await requireClientUser();
 
-  const body = await req.json().catch(() => null);
-  const parsed = IdentificationSchema.safeParse(body);
-  if (!parsed.success) {
-    return NextResponse.json(
-      { ok: false, error: parsed.error.flatten() },
-      { status: 400 }
-    );
+    const body = await req.json().catch(() => null);
+    const parsed = IdentificationSchema.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json(
+        { ok: false, error: parsed.error.flatten() },
+        { status: 400 }
+      );
+    }
+
+    // taxpayer always saved
+    await upsertPerson({ userId: user.id, person: "TAXPAYER", p: parsed.data.taxpayer });
+
+    if (parsed.data.spouse.enabled) {
+      await upsertPerson({ userId: user.id, person: "SPOUSE", p: parsed.data.spouse });
+    } else {
+      // spouse disabled -> delete spouse row if exists
+      await db
+        .delete(identification)
+        .where(and(eq(identification.userId, user.id), eq(identification.person, "SPOUSE")));
+    }
+
+    return NextResponse.json({ ok: true });
+  } catch (err) {
+    console.error("POST /api/identification failed:", err);
+    return NextResponse.json({ ok: false, error: "Internal Server Error" }, { status: 500 });
   }
-
-  // taxpayer always saved
-  await upsertPerson({ userId: user.id, person: "TAXPAYER", p: parsed.data.taxpayer });
-
-  if (parsed.data.spouse.enabled) {
-    await upsertPerson({ userId: user.id, person: "SPOUSE", p: parsed.data.spouse });
-  } else {
-    // spouse disabled -> delete spouse row if exists
-    await db
-      .delete(identification)
-      .where(and(eq(identification.userId, user.id), eq(identification.person, "SPOUSE")));
-  }
-
-  return NextResponse.json({ ok: true });
 }
