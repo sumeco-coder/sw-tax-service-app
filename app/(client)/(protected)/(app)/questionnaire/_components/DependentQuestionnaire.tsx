@@ -410,6 +410,7 @@ export default function DependentQuestionnaire({
 }) {
   const [saveMsg, setSaveMsg] = React.useState<string | null>(null);
   const [saveErr, setSaveErr] = React.useState<string | null>(null);
+  const [ssnLast4, setSsnLast4] = React.useState<string | null>(null);
 
   // ✅ autosave UI state
   const [autoSaving, setAutoSaving] = React.useState(false);
@@ -421,11 +422,11 @@ export default function DependentQuestionnaire({
 
   const endpoint = React.useMemo(
     () => `/api/dependents/${dependentId}/questionnaire`,
-    [dependentId]
+    [dependentId],
   );
 
   const resolver: Resolver<DependentQuestionnaireValues> = zodResolver(
-    schema
+    schema,
   ) as unknown as Resolver<DependentQuestionnaireValues>;
 
   // ✅ create the form FIRST (so reset exists)
@@ -446,7 +447,6 @@ export default function DependentQuestionnaire({
   } = form;
 
   // ✅ load saved values
-  // ✅ load saved values
   React.useEffect(() => {
     let alive = true;
 
@@ -459,6 +459,9 @@ export default function DependentQuestionnaire({
         if (!alive || !data?.values) return;
 
         const ssnOnFile = Boolean(data?.meta?.ssnOnFile);
+        const last4 = (data?.meta?.ssnLast4 ?? null) as string | null;
+
+        setSsnLast4(last4);
 
         // never hydrate SSN into the input
         const hydrated = {
@@ -489,51 +492,37 @@ export default function DependentQuestionnaire({
   // ✅ Save BOTH: core + questionnaire (used by manual save + autosave)
   const saveDraft = React.useCallback(
     async (values: DependentQuestionnaireValues) => {
-      // 1) save core (SSN encryption + applied-but-not-received)
-      const coreRes = await fetch(`/api/dependents/${dependentId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          firstName: values.firstName,
-          middleName: values.middleName,
-          lastName: values.lastName,
-          dob: values.dob,
-          relationship: values.relationship,
-          monthsInHome: Math.max(
-            0,
-            Math.min(12, Number(values.monthsInHome || 12))
-          ),
-          isStudent: values.isStudent,
-          isDisabled: values.isDisabled,
-          appliedButNotReceived: applied,
-          ...(applied ? {} : values.ssn ? { ssn: values.ssn } : {}),
-        }),
-      });
+      const ssnDigits = digitsOnly(String(values.ssn ?? ""), 9);
 
-      if (!coreRes.ok) {
-        const err = await coreRes.json().catch(() => ({}));
-        throw new Error(
-          (err as any)?.error || "Failed to save dependent core info"
-        );
-      }
+      // Never send SSN when applied=true (server will throw)
+      const payload: DependentQuestionnaireValues = {
+        ...values,
+        ssn: values.appliedButNotReceived ? "" : ssnDigits,
+      };
 
-      // 2) save questionnaire JSON (strip ssn + ssnOnFile meta)
-      const { ssnOnFile: _ssnOnFile, ssn: _ssn, ...payload } = values;
-
-      const qRes = await fetch(endpoint, {
+      const res = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
 
-      if (!qRes.ok) {
-        const err = await qRes.json().catch(() => ({}));
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
         throw new Error(
-          (err as any)?.error || "Failed to save dependent questionnaire"
+          (err as any)?.error || "Failed to save dependent questionnaire",
         );
       }
+
+      // ✅ keep meta accurate + clear ssn input after successful save
+      if (payload.appliedButNotReceived) {
+        setValue("ssnOnFile", false, { shouldDirty: false });
+        setValue("ssn", "", { shouldDirty: false });
+      } else if (payload.ssn && payload.ssn.length === 9) {
+        setValue("ssnOnFile", true, { shouldDirty: false });
+        setValue("ssn", "", { shouldDirty: false });
+      }
     },
-    [dependentId, endpoint]
+    [endpoint, setValue],
   );
 
   // ✅ autosave: watch whole form
@@ -548,7 +537,12 @@ export default function DependentQuestionnaire({
     const { ssnOnFile: _ssnOnFile, ssn: _ssn, ...snap } = allValues as any;
     const key = JSON.stringify(snap);
 
-    if (key === lastSavedRef.current) return;
+    // ✅ SSN typing should trigger autosave even though it's excluded from key
+    const ssnDigits = digitsOnly(String(allValues.ssn ?? ""), 9);
+    const shouldSaveSsn =
+      !allValues.appliedButNotReceived && ssnDigits.length === 9;
+
+    if (key === lastSavedRef.current && !shouldSaveSsn) return;
 
     if (debounceRef.current) clearTimeout(debounceRef.current);
 
@@ -558,7 +552,10 @@ export default function DependentQuestionnaire({
 
       try {
         await saveDraft(allValues as DependentQuestionnaireValues);
+
+        // ✅ IMPORTANT: only update snapshot key from snap (not including SSN)
         lastSavedRef.current = key;
+
         setSaveMsg("✅ Auto-saved.");
       } catch (e: any) {
         setSaveErr(e?.message ?? "Auto-save failed");
@@ -571,6 +568,7 @@ export default function DependentQuestionnaire({
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
   }, [allValues, isDirty, isSubmitting, saveDraft]);
+
   // ----- watches used for UI logic -----
   const applied = watch("appliedButNotReceived");
   const claimingCredits = watch("claimingEicOrCtcForThisDependent");
@@ -632,7 +630,7 @@ export default function DependentQuestionnaire({
 
   // ✅ single submit handler (manual save)
   const onSubmit: SubmitHandler<DependentQuestionnaireValues> = async (
-    values
+    values,
   ) => {
     setSaveMsg(null);
     setSaveErr(null);
@@ -849,7 +847,9 @@ export default function DependentQuestionnaire({
                           applied
                             ? "Applied (no SSN yet)"
                             : ssnOnFile
-                              ? "SSN already on file (leave blank unless updating)"
+                              ? ssnLast4
+                                ? `SSN on file (ending ${ssnLast4}) — leave blank unless updating`
+                                : "SSN already on file (leave blank unless updating)"
                               : "9 digits"
                         }
                         disabled={applied}
@@ -1346,7 +1346,7 @@ export default function DependentQuestionnaire({
                                     onChange={() => {
                                       const next = toggleMulti(
                                         current,
-                                        opt.value
+                                        opt.value,
                                       );
                                       field.onChange(next);
 
@@ -1424,7 +1424,7 @@ export default function DependentQuestionnaire({
                                     onChange={() => {
                                       const next = toggleMulti(
                                         current,
-                                        opt.value
+                                        opt.value,
                                       );
                                       field.onChange(next);
 
@@ -1435,7 +1435,7 @@ export default function DependentQuestionnaire({
                                         setValue(
                                           "ddq_disabilityOtherText",
                                           "",
-                                          { shouldDirty: true }
+                                          { shouldDirty: true },
                                         );
                                       }
                                     }}

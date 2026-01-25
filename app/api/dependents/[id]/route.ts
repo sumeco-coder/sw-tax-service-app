@@ -8,6 +8,7 @@ import { users, dependents } from "@/drizzle/schema";
 import { getServerRole } from "@/lib/auth/roleServer";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 // ---------- helpers ----------
 function clean(v: unknown, max = 255) {
@@ -24,9 +25,7 @@ function isIsoDate(v: string) {
   return /^\d{4}-\d{2}-\d{2}$/.test(v);
 }
 function isUuid(v: string) {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
-    v
-  );
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
 }
 
 function readAes256Key(envName: string): Buffer {
@@ -34,7 +33,6 @@ function readAes256Key(envName: string): Buffer {
   if (!raw) throw new Error(`Missing ${envName} env var.`);
 
   const isHex = /^[0-9a-fA-F]+$/.test(raw) && raw.length >= 64;
-
   const key = isHex
     ? Buffer.from(raw, "hex")
     : Buffer.from(
@@ -110,7 +108,11 @@ const depCols = {
   isStudent: dependents.isStudent,
   isDisabled: dependents.isDisabled,
   appliedButNotReceived: dependents.appliedButNotReceived,
+
   ssnEncrypted: dependents.ssnEncrypted,
+  ssnLast4: (dependents as any).ssnLast4,
+  ssnSetAt: (dependents as any).ssnSetAt,
+
   createdAt: dependents.createdAt,
   updatedAt: dependents.updatedAt,
 };
@@ -121,15 +123,16 @@ function toSafeDependent(r: any) {
     dob: r?.dob ? String(r.dob).slice(0, 10) : "",
     monthsLived: r?.monthsInHome ?? 12,
     hasSsn: !!r?.ssnEncrypted,
-    ssnEncrypted: "", // never leak encrypted value
+
+    ssnLast4: r?.ssnLast4 ?? null,
+    ssnSetAt: r?.ssnSetAt ?? null,
+
+    ssnEncrypted: "",
   };
 }
 
 // GET /api/dependents/[id]
-export async function GET(
-  _request: NextRequest,
-  { params }: { params: { id: string } }
-) {
+export async function GET(_request: NextRequest, { params }: { params: { id: string } }) {
   try {
     const { id } = params;
     if (!isUuid(id)) return NextResponse.json({ error: "Invalid id" }, { status: 400 });
@@ -155,10 +158,7 @@ export async function GET(
 }
 
 // PATCH /api/dependents/[id]
-export async function PATCH(
-  request: NextRequest,
-  { params }: { params: { id: string } }
-) {
+export async function PATCH(request: NextRequest, { params }: { params: { id: string } }) {
   try {
     const { id } = params;
     if (!isUuid(id)) return NextResponse.json({ error: "Invalid id" }, { status: 400 });
@@ -176,7 +176,6 @@ export async function PATCH(
       if (!v) return NextResponse.json({ error: "First name required" }, { status: 400 });
       set.firstName = v;
     }
-
     if (typeof b.middleName === "string") set.middleName = clean(b.middleName, 80);
 
     if (typeof b.lastName === "string") {
@@ -222,7 +221,12 @@ export async function PATCH(
 
     if (appliedIncoming != null) {
       set.appliedButNotReceived = appliedIncoming;
-      if (appliedIncoming === true) set.ssnEncrypted = null;
+
+      if (appliedIncoming === true) {
+        set.ssnEncrypted = null;
+        set.ssnLast4 = null;
+        set.ssnSetAt = null;
+      }
     }
 
     if (ssnIncoming) {
@@ -230,6 +234,8 @@ export async function PATCH(
         return NextResponse.json({ error: "SSN must be 9 digits" }, { status: 400 });
       }
       set.ssnEncrypted = encryptSsn(ssnIncoming);
+      set.ssnLast4 = ssnIncoming.slice(-4);
+      set.ssnSetAt = new Date();
       set.appliedButNotReceived = false;
     }
 
@@ -253,10 +259,7 @@ export async function PATCH(
 }
 
 // DELETE /api/dependents/[id]
-export async function DELETE(
-  _request: NextRequest,
-  { params }: { params: { id: string } }
-) {
+export async function DELETE(_request: NextRequest, { params }: { params: { id: string } }) {
   try {
     const { id } = params;
     if (!isUuid(id)) return NextResponse.json({ error: "Invalid id" }, { status: 400 });

@@ -9,6 +9,7 @@ import { users, dependents } from "@/drizzle/schema";
 import { getServerRole } from "@/lib/auth/roleServer";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 // -------- helpers --------
 function clean(v: unknown, max = 255) {
@@ -26,10 +27,7 @@ function digitsOnly(v: unknown, maxLen: number) {
 
 /**
  * Reads a 32-byte AES key from env.
- * Accepts:
- *  - hex (64+ chars)
- *  - base64
- *  - base64url (generated via toString("base64url"))
+ * Accepts: hex (64+ chars) | base64 | base64url
  */
 function readAes256Key(envName: string): Buffer {
   const raw = (process.env[envName] ?? "").trim();
@@ -58,10 +56,7 @@ function encryptSsn(ssn9: string) {
   const iv = crypto.randomBytes(12);
   const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
 
-  const ciphertext = Buffer.concat([
-    cipher.update(ssn9, "utf8"),
-    cipher.final(),
-  ]);
+  const ciphertext = Buffer.concat([cipher.update(ssn9, "utf8"), cipher.final()]);
   const tag = cipher.getAuthTag();
 
   return `v1.${iv.toString("base64url")}.${tag.toString("base64url")}.${ciphertext.toString("base64url")}`;
@@ -115,25 +110,43 @@ const depCols = {
   id: dependents.id,
   userId: dependents.userId,
   firstName: dependents.firstName,
-  middleName: (dependents as any).middleName,
+  middleName: dependents.middleName,
   lastName: dependents.lastName,
   dob: dependents.dob,
   relationship: dependents.relationship,
   monthsInHome: dependents.monthsInHome,
   isStudent: dependents.isStudent,
   isDisabled: dependents.isDisabled,
-  appliedButNotReceived: (dependents as any).appliedButNotReceived,
-  ssnEncrypted: (dependents as any).ssnEncrypted,
+  appliedButNotReceived: dependents.appliedButNotReceived,
+
+  // SSN storage (never return encrypted)
+  ssnEncrypted: dependents.ssnEncrypted,
+  ssnLast4: (dependents as any).ssnLast4,
+  ssnSetAt: (dependents as any).ssnSetAt,
+
   createdAt: dependents.createdAt,
   updatedAt: dependents.updatedAt,
 };
+
+function toSafeDependent(r: any) {
+  return {
+    ...r,
+    dob: r?.dob ? String(r.dob).slice(0, 10) : "",
+    monthsLived: r?.monthsInHome ?? 12,
+    hasSsn: !!r?.ssnEncrypted,
+
+    ssnLast4: r?.ssnLast4 ?? null,
+    ssnSetAt: r?.ssnSetAt ?? null,
+
+    ssnEncrypted: "", // never leak encrypted value
+  };
+}
 
 // GET /api/dependents -> list
 export async function GET() {
   try {
     const auth = await requireAuth();
-    if (!auth)
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (!auth) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const u = await getOrCreateUserBySub(auth.sub, auth.email);
 
@@ -143,24 +156,10 @@ export async function GET() {
       .where(eq(dependents.userId, u.id))
       .orderBy(desc(dependents.createdAt));
 
-    const safe = rows.map((r: any) => ({
-      ...r,
-      dob: r.dob ? String(r.dob).slice(0, 10) : "",
-      monthsLived: r.monthsInHome ?? 12,
-      hasSsn: !!r.ssnEncrypted,
-      ssnEncrypted: "", // never leak encrypted value
-    }));
-
-    safe.forEach((d: any) => delete d.ssnEncrypted);
-    const normalized = safe.map((d: any) => ({ ...d, ssnEncrypted: "" }));
-
-    return NextResponse.json(normalized);
+    return NextResponse.json(rows.map(toSafeDependent));
   } catch (e: any) {
     console.error(e);
-    return NextResponse.json(
-      { error: e?.message ?? "Server error" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: e?.message ?? "Server error" }, { status: 500 });
   }
 }
 
@@ -168,8 +167,7 @@ export async function GET() {
 export async function POST(req: Request) {
   try {
     const auth = await requireAuth();
-    if (!auth)
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (!auth) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const u = await getOrCreateUserBySub(auth.sub, auth.email);
     const b = await req.json().catch(() => ({}));
@@ -190,8 +188,12 @@ export async function POST(req: Request) {
     const isDisabled = !!b.isDisabled;
 
     if (!firstName || !lastName || !dobStr || !relationship) {
+      return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
+    }
+
+    if (applied && ssn9) {
       return NextResponse.json(
-        { error: "Missing required fields" },
+        { error: "Do not send SSN when marked applied-but-not-received." },
         { status: 400 }
       );
     }
@@ -199,23 +201,14 @@ export async function POST(req: Request) {
     // If they DIDN'T mark applied, require full ssn9
     if (!applied && ssn9.length !== 9) {
       return NextResponse.json(
-        {
-          error:
-            "Full 9-digit SSN is required unless marked applied-but-not-received.",
-        },
+        { error: "Full 9-digit SSN is required unless marked applied-but-not-received." },
         { status: 400 }
       );
     }
 
-    console.log(
-      "SSN_ENCRYPTION_KEY loaded?",
-      !!process.env.SSN_ENCRYPTION_KEY,
-      "len",
-      process.env.SSN_ENCRYPTION_KEY?.length
-    );
-
-    // If applied=true, do NOT store SSN
-    const ssnEncrypted = ssn9.length === 9 ? encryptSsn(ssn9) : null;
+    const ssnEncrypted = !applied && ssn9.length === 9 ? encryptSsn(ssn9) : null;
+    const ssnLast4 = !applied && ssn9.length === 9 ? ssn9.slice(-4) : null;
+    const ssnSetAt = !applied && ssn9.length === 9 ? new Date() : null;
 
     const row: any = {
       id: randomUUID(),
@@ -229,7 +222,11 @@ export async function POST(req: Request) {
       isStudent,
       isDisabled,
       appliedButNotReceived: applied,
+
       ssnEncrypted,
+      ssnLast4,
+      ssnSetAt,
+
       updatedAt: new Date(),
     };
 
@@ -238,20 +235,9 @@ export async function POST(req: Request) {
       .values(row)
       .returning(depCols as any);
 
-    const safe = {
-      ...created,
-      dob: created?.dob ? String(created.dob).slice(0, 10) : "",
-      monthsLived: created?.monthsInHome ?? 12,
-      hasSsn: !!created?.ssnEncrypted,
-      ssnEncrypted: "",
-    };
-
-    return NextResponse.json(safe, { status: 201 });
+    return NextResponse.json(toSafeDependent(created), { status: 201 });
   } catch (e: any) {
     console.error(e);
-    return NextResponse.json(
-      { error: e?.message ?? "Server error" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: e?.message ?? "Server error" }, { status: 500 });
   }
 }

@@ -28,7 +28,7 @@ function digitsOnly(v: unknown, maxLen: number) {
 }
 function isUuid(v: string) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
-    v
+    v,
   );
 }
 function isIsoDate(v: string) {
@@ -49,7 +49,9 @@ function readAes256Key(envName: string): Buffer {
     ? Buffer.from(raw, "hex")
     : Buffer.from(
         raw,
-        raw.includes("-") || raw.includes("_") ? ("base64url" as any) : "base64"
+        raw.includes("-") || raw.includes("_")
+          ? ("base64url" as any)
+          : "base64",
       );
 
   if (key.length !== 32)
@@ -72,7 +74,9 @@ function encryptSsn(ssn9: string) {
   ]);
   const tag = cipher.getAuthTag();
 
-  return `v1.${iv.toString("base64url")}.${tag.toString("base64url")}.${ciphertext.toString("base64url")}`;
+  return `v1.${iv.toString("base64url")}.${tag.toString(
+    "base64url",
+  )}.${ciphertext.toString("base64url")}`;
 }
 
 async function requireAuth() {
@@ -120,8 +124,8 @@ async function getOrCreateUserBySub(cognitoSub: string, email?: string) {
 }
 
 function stripSensitiveFromPayload(body: any) {
-  // do NOT store SSN inside questionnaire JSON
-  const { ssn, ssnEncrypted, ...rest } = body ?? {};
+  // do NOT store SSN or meta flags inside questionnaire JSON
+  const { ssn, ssnEncrypted, ssnOnFile, ...rest } = body ?? {};
   return rest;
 }
 
@@ -174,12 +178,20 @@ function coreDependentUpdateFromBody(body: any) {
 
   if (appliedIncoming != null) {
     set.appliedButNotReceived = appliedIncoming;
-    if (appliedIncoming === true) set.ssnEncrypted = null;
+
+    if (appliedIncoming === true) {
+      // applied-but-not-received => wipe stored SSN info
+      set.ssnEncrypted = null;
+      set.ssnLast4 = null;
+      set.ssnSetAt = null;
+    }
   }
 
   if (ssnIncoming) {
     if (ssnIncoming.length !== 9) throw new Error("SSN must be 9 digits");
     set.ssnEncrypted = encryptSsn(ssnIncoming);
+    set.ssnLast4 = ssnIncoming.slice(-4);
+    set.ssnSetAt = new Date();
     set.appliedButNotReceived = false;
   }
 
@@ -198,12 +210,12 @@ export async function GET(
     }
 
     const auth = await requireAuth();
-    if (!auth)
+    if (!auth) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
 
     const u = await getOrCreateUserBySub(auth.sub, auth.email);
 
-    // confirm dependent belongs to user + get core fields
     const [dep] = await db
       .select({
         id: dependents.id,
@@ -217,12 +229,18 @@ export async function GET(
         isDisabled: dependents.isDisabled,
         appliedButNotReceived: dependents.appliedButNotReceived,
         ssnEncrypted: dependents.ssnEncrypted,
+        ssnLast4: (dependents as any).ssnLast4, // or dependents.ssnLast4 if typed
       })
       .from(dependents)
       .where(and(eq(dependents.id, dependentId), eq(dependents.userId, u.id)))
       .limit(1);
 
-    if (!dep) return NextResponse.json({ error: "Not found" }, { status: 404 });
+    if (!dep) {
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
+    }
+
+    const ssnOnFile = !!dep.ssnEncrypted;
+    const ssnLast4 = (dep as any).ssnLast4 ?? null;
 
     const [q] = await db
       .select({ payload: dependentQuestionnaires.payload })
@@ -234,8 +252,6 @@ export async function GET(
         )
       )
       .limit(1);
-
-    const ssnOnFile = !!dep.ssnEncrypted;
 
     const values = {
       ...(q?.payload ?? {}),
@@ -249,10 +265,12 @@ export async function GET(
       isStudent: !!dep.isStudent,
       isDisabled: !!dep.isDisabled,
       appliedButNotReceived: !!dep.appliedButNotReceived,
+
+      // never hydrate SSN into the input
       ssn: "",
     };
 
-    return NextResponse.json({ ok: true, values, meta: { ssnOnFile } });
+    return NextResponse.json({ ok: true, values, meta: { ssnOnFile, ssnLast4 } });
   } catch (e: any) {
     console.error(e);
     return NextResponse.json(
@@ -265,7 +283,7 @@ export async function GET(
 // POST /api/dependents/[id]/questionnaire
 export async function POST(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: { id: string } },
 ) {
   try {
     const dependentId = String(params.id ?? "");
@@ -288,7 +306,6 @@ export async function POST(
       return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
     }
 
-    // confirm dependent belongs to user
     const [dep] = await db
       .select({ id: dependents.id })
       .from(dependents)
@@ -299,7 +316,7 @@ export async function POST(
 
     const body: any = parsed.data;
 
-    // 1) update core dependent fields if present
+    // 1) update core dependent fields
     const coreSet = coreDependentUpdateFromBody(body);
     if (Object.keys(coreSet).length) {
       coreSet.updatedAt = new Date();
@@ -307,11 +324,11 @@ export async function POST(
         .update(dependents)
         .set(coreSet)
         .where(
-          and(eq(dependents.id, dependentId), eq(dependents.userId, u.id))
+          and(eq(dependents.id, dependentId), eq(dependents.userId, u.id)),
         );
     }
 
-    // 2) upsert questionnaire payload
+    // 2) upsert questionnaire payload (no SSN, no ssnOnFile)
     const payload = stripSensitiveFromPayload(body);
 
     await db
@@ -323,7 +340,7 @@ export async function POST(
         updatedAt: new Date(),
       } as any)
       .onConflictDoUpdate({
-        target: [dependentQuestionnaires.dependentId], // ✅ matches your unique index
+        target: [dependentQuestionnaires.dependentId],
         set: { payload, updatedAt: new Date() },
       });
 
@@ -332,7 +349,7 @@ export async function POST(
     console.error(e);
     return NextResponse.json(
       { error: e?.message ?? "Server error" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
