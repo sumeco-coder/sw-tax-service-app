@@ -2,7 +2,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-import { Pencil, Check, X, Plus, Trash2 } from "lucide-react";
+import { Pencil, Check, X, Plus, Trash2, Eye, EyeOff } from "lucide-react";
 
 type Dep = {
   id: string;
@@ -80,7 +80,7 @@ function normalizeDep(d: any): Dep {
 async function fetchJson<T>(
   url: string,
   init?: RequestInit,
-  fallback = "Request failed"
+  fallback = "Request failed",
 ) {
   const res = await fetch(url, init);
   const data = await res.json().catch(() => ({}));
@@ -98,6 +98,10 @@ export default function DependentsPage() {
   const [editId, setEditId] = useState<string | null>(null);
   const [draft, setDraft] = useState<DepDraft>({});
   const [showAdd, setShowAdd] = useState(false);
+
+  // ✅ eye toggles for SSN inputs
+  const [showEditSsn, setShowEditSsn] = useState(false);
+  const [showAddSsn, setShowAddSsn] = useState(false);
 
   const [addForm, setAddForm] = useState<{
     firstName: string;
@@ -130,7 +134,7 @@ export default function DependentsPage() {
       const data = await fetchJson<any[]>(
         "/api/dependents",
         { cache: "no-store" },
-        "Failed to load dependents"
+        "Failed to load dependents",
       );
       const safe = Array.isArray(data) ? data.map(normalizeDep) : [];
       setRows(safe);
@@ -144,16 +148,16 @@ export default function DependentsPage() {
 
   useEffect(() => {
     loadDependents();
-     
   }, []);
 
   const editingRow = useMemo(
     () => rows.find((r) => r.id === editId) ?? null,
-    [rows, editId]
+    [rows, editId],
   );
 
   function startEdit(dep: Dep) {
     setEditId(dep.id);
+    setShowEditSsn(false);
     // keep draft minimal + add blank SSN (blank means "no change")
     setDraft({
       firstName: dep.firstName,
@@ -173,6 +177,7 @@ export default function DependentsPage() {
   function cancelEdit() {
     setEditId(null);
     setDraft({});
+    setShowEditSsn(false);
   }
 
   function applyLocalPatch(prev: Dep, patch: DepDraft): Dep {
@@ -203,8 +208,8 @@ export default function DependentsPage() {
         12,
         Number.isFinite(Number(next.monthsLived))
           ? Math.trunc(Number(next.monthsLived))
-          : 12
-      )
+          : 12,
+      ),
     );
 
     return next;
@@ -234,23 +239,15 @@ export default function DependentsPage() {
 
     // If they check applied=true, do not send ssn at all
     if (applied) {
-      // omit ssn entirely
       return payload;
     }
 
-    // If SSN is blank -> omit (means "no change")
     if (!ssn9) {
-      // extra safety: if the row was previously applied=true and user unchecked it without providing SSN,
-      // you might want to warn (optional)
       if (current?.appliedButNotReceived && !current?.hasSsn) {
-        // allow it, but it will become "Missing" on server
-        // (If you prefer to force SSN, uncomment the throw below)
-        // throw new Error("Enter SSN (9 digits) or keep 'Applied / not received' checked.");
       }
       return payload;
     }
 
-    // If SSN provided, must be 9 digits
     if (ssn9.length !== 9) {
       throw new Error("SSN must be 9 digits.");
     }
@@ -288,7 +285,7 @@ export default function DependentsPage() {
       } else {
         // Fallback: local patch update (works even if PATCH returns {success:true})
         setRows((r) =>
-          r.map((x) => (x.id === editId ? applyLocalPatch(x, draft) : x))
+          r.map((x) => (x.id === editId ? applyLocalPatch(x, draft) : x)),
         );
       }
 
@@ -305,7 +302,7 @@ export default function DependentsPage() {
       await fetchJson(
         `/api/dependents/${id}`,
         { method: "DELETE" },
-        "Remove failed."
+        "Remove failed.",
       );
       setRows((r) => r.filter((x) => x.id !== id));
       setMsg("Removed.");
@@ -338,12 +335,14 @@ export default function DependentsPage() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
         },
-        "Add failed."
+        "Add failed.",
       );
 
       const created = normalizeDep(createdRaw);
       setRows((r) => [created, ...r]);
+
       setShowAdd(false);
+      setShowAddSsn(false);
 
       setAddForm({
         firstName: "",
@@ -386,7 +385,10 @@ export default function DependentsPage() {
             <button
               className="inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold text-white shadow-sm hover:opacity-90"
               style={brandGradient}
-              onClick={() => setShowAdd(true)}
+              onClick={() => {
+                setShowAdd(true);
+                setShowAddSsn(false);
+              }}
             >
               <Plus className="h-4 w-4" /> Add Dependent
             </button>
@@ -603,7 +605,7 @@ export default function DependentsPage() {
                               ...x,
                               monthsLived: Math.max(
                                 0,
-                                Math.min(12, Number(e.target.value) || 0)
+                                Math.min(12, Number(e.target.value) || 0),
                               ),
                             }))
                           }
@@ -641,22 +643,40 @@ export default function DependentsPage() {
                               Applied / not received
                             </label>
 
-                            <input
-                              className={inputBase}
-                              placeholder="SSN (9 digits)"
-                              inputMode="numeric"
-                              maxLength={9}
-                              value={draft.ssn ?? ""}
-                              onChange={(e) =>
-                                setDraft((x) => ({
-                                  ...x,
-                                  ssn: e.target.value
-                                    .replace(/\D/g, "")
-                                    .slice(0, 9),
-                                }))
-                              }
-                              disabled={Boolean(draft.appliedButNotReceived)}
-                            />
+                            {/* ✅ Masked SSN input + eye toggle */}
+                            <div className="relative">
+                              <input
+                                className={`${inputBase} pr-10`}
+                                placeholder="SSN (9 digits)"
+                                inputMode="numeric"
+                                maxLength={9}
+                                autoComplete="off"
+                                type={showEditSsn ? "text" : "password"}
+                                value={draft.ssn ?? ""}
+                                onChange={(e) =>
+                                  setDraft((x) => ({
+                                    ...x,
+                                    ssn: e.target.value.replace(/\D/g, "").slice(0, 9),
+                                  }))
+                                }
+                                disabled={Boolean(draft.appliedButNotReceived)}
+                              />
+
+                              <button
+                                type="button"
+                                className="absolute right-2 top-1/2 -translate-y-1/2 rounded-lg border border-slate-200 bg-white p-1 text-slate-700 hover:bg-slate-50"
+                                onClick={() => setShowEditSsn((v) => !v)}
+                                aria-label={
+                                  showEditSsn ? "Hide SSN" : "Show SSN"
+                                }
+                              >
+                                {showEditSsn ? (
+                                  <EyeOff className="h-4 w-4" />
+                                ) : (
+                                  <Eye className="h-4 w-4" />
+                                )}
+                              </button>
+                            </div>
 
                             <p className="text-xs text-slate-500">
                               {d.hasSsn ? "Currently on file. " : ""}
@@ -752,8 +772,11 @@ export default function DependentsPage() {
                   style={brandGradient}
                 />
               </div>
-              <button
-                onClick={() => setShowAdd(false)}
+             <button
+                onClick={() => {
+                  setShowAdd(false);
+                  setShowAddSsn(false);
+                }}
                 className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
                 aria-label="Close"
               >
@@ -830,22 +853,42 @@ export default function DependentsPage() {
                 Applied / not received (SSN not available yet)
               </label>
 
-              <input
-                className={`${inputBase} sm:col-span-2`}
-                placeholder="SSN (9 digits)"
-                inputMode="numeric"
-                maxLength={9}
-                value={addForm.ssn}
-                onChange={(e) =>
-                  setAddForm((f) => ({
-                    ...f,
-                    ssn: e.target.value.replace(/\D/g, "").slice(0, 9),
-                  }))
-                }
-                disabled={addForm.appliedButNotReceived}
-              />
+                 {/* ✅ Masked SSN input + eye toggle (Add Modal) */}
+              <div className="relative sm:col-span-2">
+                <input
+                  className={`${inputBase} pr-10`}
+                  placeholder="SSN (9 digits)"
+                  inputMode="numeric"
+                  maxLength={9}
+                  autoComplete="off"
+                  type={showAddSsn ? "text" : "password"}
+                  value={addForm.ssn}
+                  onChange={(e) =>
+                    setAddForm((f) => ({
+                      ...f,
+                      ssn: e.target.value.replace(/\D/g, "").slice(0, 9),
+                    }))
+                  }
+                  disabled={addForm.appliedButNotReceived}
+                />
 
-              <input
+                <button
+                  type="button"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 rounded-lg border border-slate-200 bg-white p-1 text-slate-700 hover:bg-slate-50"
+                  onClick={() => setShowAddSsn((v) => !v)}
+                  aria-label={showAddSsn ? "Hide SSN" : "Show SSN"}
+                  disabled={addForm.appliedButNotReceived}
+                >
+                  {showAddSsn ? (
+                    <EyeOff className="h-4 w-4" />
+                  ) : (
+                    <Eye className="h-4 w-4" />
+                  )}
+                </button>
+              </div>
+
+
+             <input
                 className={inputBase}
                 placeholder="Months lived (0-12)"
                 inputMode="numeric"
@@ -853,10 +896,7 @@ export default function DependentsPage() {
                 onChange={(e) =>
                   setAddForm((f) => ({
                     ...f,
-                    monthsLived: Math.max(
-                      0,
-                      Math.min(12, Number(e.target.value) || 0)
-                    ),
+                    monthsLived: Math.max(0, Math.min(12, Number(e.target.value) || 0)),
                   }))
                 }
               />
@@ -889,7 +929,10 @@ export default function DependentsPage() {
             <div className="mt-5 flex justify-end gap-2">
               <button
                 className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-                onClick={() => setShowAdd(false)}
+                onClick={() => {
+                  setShowAdd(false);
+                  setShowAddSsn(false);
+                }}
               >
                 Cancel
               </button>

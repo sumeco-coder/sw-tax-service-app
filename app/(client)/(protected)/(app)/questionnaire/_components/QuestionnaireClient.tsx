@@ -3,6 +3,7 @@
 
 import React, { useMemo, useState } from "react";
 import type { QuestionnairePrefill } from "@/types/questionnaire";
+import { completeQuestionnaire } from "../actions";
 
 import DependentQuestionnaire from "./DependentQuestionnaire";
 
@@ -51,6 +52,15 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 
 const BRAND = {
   pink: "#E72B69",
@@ -80,15 +90,18 @@ type TabKey =
   | "qualChild"
   | "foreignAssets";
 
-type Props = {
-  prefill: QuestionnairePrefill;
-  completeQuestionnaire: (formData: FormData) => Promise<void>;
+type DepItem = {
+  dependentId: string;
+  values: any;
+  meta?: { ssnOnFile?: boolean; ssnLast4?: string | null };
 };
 
-export default function QuestionnaireClient({
-  prefill,
-  completeQuestionnaire,
-}: Props) {
+type Props = {
+  prefill: QuestionnairePrefill;
+  initialStep?: string; // optional deep link
+};
+
+export default function QuestionnaireClient({ prefill, initialStep }: Props) {
   const [activeTab, setActiveTab] = useState<TabKey>("dependent");
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<{
@@ -96,27 +109,122 @@ export default function QuestionnaireClient({
     msg: string;
   } | null>(null);
 
-  const deps = prefill?.dependents ?? [];
+  // ---------------- Dependents: normalize to a stable shape ----------------
+  const initialDeps = useMemo<DepItem[]>(() => {
+    const raw = (prefill as any)?.dependents;
+    if (!Array.isArray(raw)) return [];
+    return raw.map((d: any) => ({
+      dependentId: d.dependentId ?? d.id,
+      values: d.values ?? d,
+      meta: d.meta ?? { ssnOnFile: false, ssnLast4: null },
+    }));
+  }, [prefill]);
+
+  const [depsList, setDepsList] = useState<DepItem[]>(initialDeps);
   const [activeDependentId, setActiveDependentId] = useState<string>(
-    deps[0]?.id ?? ""
+    initialDeps[0]?.dependentId ?? ""
   );
 
-  const tabs = useMemo(
-    () =>
-      [
-        { key: "dependent", label: "Dependents" },
-        { key: "directDeposit", label: "Direct Deposit" },
-        { key: "education", label: "Education Credits" },
-        { key: "hoh", label: "HOH Docs" },
-        { key: "identification", label: "ID (Taxpayer/Spouse)" },
-        { key: "estimated", label: "Estimated Taxes" },
-        { key: "estimatedState", label: "Estimated State" },
-        { key: "incomeDocs", label: "Income Docs" },
-        { key: "qualChild", label: "Qualifying Child" },
-        { key: "foreignAssets", label: "Foreign / Digital Assets" },
-      ] as const,
-    []
-  );
+  // keep client state in sync if prefill changes
+  React.useEffect(() => {
+    setDepsList(initialDeps);
+    setActiveDependentId((prev) => prev || initialDeps[0]?.dependentId || "");
+  }, [initialDeps]);
+
+  // optional: support deep links like ?step=IDENTIFICATION (map to a tab)
+  React.useEffect(() => {
+    if (!initialStep) return;
+    const s = String(initialStep).toUpperCase();
+    const map: Record<string, TabKey> = {
+      DEPENDENTS: "dependent",
+      DEPENDENT: "dependent",
+      DIRECT_DEPOSIT: "directDeposit",
+      EDUCATION: "education",
+      HOH: "hoh",
+      HEAD_OF_HOUSEHOLD: "hoh",
+      IDENTIFICATION: "identification",
+      ESTIMATED: "estimated",
+      ESTIMATED_STATE: "estimatedState",
+      INCOME_DOCS: "incomeDocs",
+      QUAL_CHILD: "qualChild",
+      FOREIGN_ASSETS: "foreignAssets",
+    };
+    if (map[s]) setActiveTab(map[s]);
+  }, [initialStep]);
+
+  // ---------------- Add dependent on same page ----------------
+  const [addOpen, setAddOpen] = useState(false);
+  const [newDep, setNewDep] = useState({
+    firstName: "",
+    lastName: "",
+    dob: "",
+    relationship: "",
+  });
+
+  async function createDependentOnSamePage() {
+    setToast(null);
+    setSaving(true);
+
+    try {
+      const payload = {
+        firstName: newDep.firstName.trim(),
+        middleName: "",
+        lastName: newDep.lastName.trim(),
+        dob: newDep.dob, // YYYY-MM-DD
+        relationship: newDep.relationship.trim(),
+        monthsInHome: 12,
+        isStudent: false,
+        isDisabled: false,
+        appliedButNotReceived: false,
+      };
+
+      const res = await fetch("/api/dependents", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({} as any));
+        throw new Error(err?.error || "Failed to add dependent.");
+      }
+
+      const data = await res.json().catch(() => ({} as any));
+      // handle a few possible response shapes
+      const created = data?.dependent ?? data?.value ?? data;
+      const newId = created?.id ?? created?.dependentId;
+      if (!newId) throw new Error("Dependent created, but no id returned.");
+
+      const entry: DepItem = {
+        dependentId: newId,
+        meta: { ssnOnFile: false, ssnLast4: null },
+        values: {
+          firstName: payload.firstName,
+          middleName: "",
+          lastName: payload.lastName,
+          dob: payload.dob,
+          relationship: payload.relationship,
+          monthsInHome: "12",
+          isStudent: false,
+          isDisabled: false,
+          appliedButNotReceived: false,
+          ssnOnFile: false,
+          ssn: "",
+        },
+      };
+
+      setDepsList((prev) => [...prev, entry]);
+      setActiveDependentId(newId);
+
+      setNewDep({ firstName: "", lastName: "", dob: "", relationship: "" });
+      setAddOpen(false);
+      setToast({ type: "success", msg: "Dependent added." });
+    } catch (e: any) {
+      setToast({ type: "error", msg: e?.message ?? "Failed to add dependent." });
+    } finally {
+      setSaving(false);
+    }
+  }
 
   async function postJson<T>(url: string, values: T, fallbackMsg: string) {
     const res = await fetch(url, {
@@ -165,14 +273,18 @@ export default function QuestionnaireClient({
       "Failed to save estimated tax payments"
     );
 
-  const handleSaveEstimatedState = async (values: EstimatedStateTaxPaymentsValues) =>
+  const handleSaveEstimatedState = async (
+    values: EstimatedStateTaxPaymentsValues
+  ) =>
     postJson(
       "/api/estimated-state-tax-payments",
       values,
       "Failed to save estimated state tax payments"
     );
 
-  const handleSaveIncomeDocs = async (values: IncomeDocumentationAssistanceValues) =>
+  const handleSaveIncomeDocs = async (
+    values: IncomeDocumentationAssistanceValues
+  ) =>
     postJson(
       "/api/income-documentation",
       values,
@@ -211,21 +323,6 @@ export default function QuestionnaireClient({
     };
   }
 
-  async function handleFinish() {
-    setToast(null);
-    setSaving(true);
-    try {
-      const fd = new FormData();
-      fd.set("next", "/dashboard");
-      await completeQuestionnaire(fd);
-      // server action will redirect
-    } catch (e: any) {
-      setToast({ type: "error", msg: e?.message ?? "Failed to finish." });
-    } finally {
-      setSaving(false);
-    }
-  }
-
   return (
     <div className="min-h-screen bg-slate-50 p-6 text-slate-900">
       <div className="mx-auto max-w-5xl space-y-6">
@@ -247,15 +344,17 @@ export default function QuestionnaireClient({
                 {saving ? "Saving…" : "Ready"}
               </span>
 
-              <Button
-                type="button"
-                onClick={handleFinish}
-                disabled={saving}
-                className="text-white hover:opacity-90"
-                style={brandBar}
-              >
-                Finish
-              </Button>
+              <form action={completeQuestionnaire}>
+                <input type="hidden" name="next" value="/dashboard" />
+                <Button
+                  type="submit"
+                  disabled={saving}
+                  className="text-white hover:opacity-90"
+                  style={brandBar}
+                >
+                  Finish
+                </Button>
+              </form>
             </div>
           </div>
 
@@ -275,10 +374,7 @@ export default function QuestionnaireClient({
 
         {/* Tabs Card */}
         <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <Tabs
-            value={activeTab}
-            onValueChange={(v) => setActiveTab(v as TabKey)}
-          >
+          <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as TabKey)}>
             <TabsList
               className="
                 h-auto w-full
@@ -287,12 +383,19 @@ export default function QuestionnaireClient({
                 rounded-xl bg-white p-1 ring-1 ring-slate-200
               "
             >
-              {tabs.map((t) => (
-                <TabsTrigger
-                  key={t.key}
-                  value={t.key}
-                  className={tabTriggerClass}
-                >
+              {[
+                { key: "dependent", label: "Dependents" },
+                { key: "directDeposit", label: "Direct Deposit" },
+                { key: "education", label: "Education Credits" },
+                { key: "hoh", label: "HOH Docs" },
+                { key: "identification", label: "ID (Taxpayer/Spouse)" },
+                { key: "estimated", label: "Estimated Taxes" },
+                { key: "estimatedState", label: "Estimated State" },
+                { key: "incomeDocs", label: "Income Docs" },
+                { key: "qualChild", label: "Qualifying Child" },
+                { key: "foreignAssets", label: "Foreign / Digital Assets" },
+              ].map((t) => (
+                <TabsTrigger key={t.key} value={t.key} className={tabTriggerClass}>
                   {t.label}
                 </TabsTrigger>
               ))}
@@ -300,12 +403,110 @@ export default function QuestionnaireClient({
 
             {/* ---------------- Dependents ---------------- */}
             <TabsContent value="dependent" className="mt-5 space-y-4">
-              {deps.length ? (
+              {depsList.length ? (
                 <>
                   <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                    <div className="text-sm font-semibold text-slate-800">
-                      Select dependent
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="text-sm font-semibold text-slate-800">
+                        Select dependent
+                      </div>
+
+                      <Dialog open={addOpen} onOpenChange={setAddOpen}>
+                        <DialogTrigger asChild>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="rounded-xl"
+                            disabled={saving}
+                          >
+                            Add dependent
+                          </Button>
+                        </DialogTrigger>
+
+                        <DialogContent className="rounded-2xl">
+                          <DialogHeader>
+                            <DialogTitle>Add a dependent</DialogTitle>
+                          </DialogHeader>
+
+                          <div className="space-y-3">
+                            <div className="grid grid-cols-2 gap-3">
+                              <div className="space-y-1">
+                                <Label>First name</Label>
+                                <Input
+                                  value={newDep.firstName}
+                                  onChange={(e) =>
+                                    setNewDep((p) => ({
+                                      ...p,
+                                      firstName: e.target.value,
+                                    }))
+                                  }
+                                />
+                              </div>
+
+                              <div className="space-y-1">
+                                <Label>Last name</Label>
+                                <Input
+                                  value={newDep.lastName}
+                                  onChange={(e) =>
+                                    setNewDep((p) => ({
+                                      ...p,
+                                      lastName: e.target.value,
+                                    }))
+                                  }
+                                />
+                              </div>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-3">
+                              <div className="space-y-1">
+                                <Label>Date of birth</Label>
+                                <Input
+                                  type="date"
+                                  value={newDep.dob}
+                                  onChange={(e) =>
+                                    setNewDep((p) => ({
+                                      ...p,
+                                      dob: e.target.value,
+                                    }))
+                                  }
+                                />
+                              </div>
+
+                              <div className="space-y-1">
+                                <Label>Relationship</Label>
+                                <Input
+                                  placeholder="Child, stepchild, etc."
+                                  value={newDep.relationship}
+                                  onChange={(e) =>
+                                    setNewDep((p) => ({
+                                      ...p,
+                                      relationship: e.target.value,
+                                    }))
+                                  }
+                                />
+                              </div>
+                            </div>
+
+                            <Button
+                              type="button"
+                              className="w-full rounded-xl text-white hover:opacity-90"
+                              style={brandBar}
+                              disabled={
+                                saving ||
+                                !newDep.firstName.trim() ||
+                                !newDep.lastName.trim() ||
+                                !newDep.dob ||
+                                !newDep.relationship.trim()
+                              }
+                              onClick={createDependentOnSamePage}
+                            >
+                              Create dependent
+                            </Button>
+                          </div>
+                        </DialogContent>
+                      </Dialog>
                     </div>
+
                     <div className="mt-2 max-w-md">
                       <Select
                         value={activeDependentId}
@@ -315,10 +516,10 @@ export default function QuestionnaireClient({
                           <SelectValue placeholder="Choose a dependent" />
                         </SelectTrigger>
                         <SelectContent>
-                          {deps.map((d) => (
-                            <SelectItem key={d.id} value={d.id}>
-                              {d.firstName} {d.lastName} (
-                              {String(d.dob ?? "").slice(0, 10)})
+                          {depsList.map((d) => (
+                            <SelectItem key={d.dependentId} value={d.dependentId}>
+                              {d.values?.firstName} {d.values?.lastName} (
+                              {String(d.values?.dob ?? "").slice(0, 10)})
                             </SelectItem>
                           ))}
                         </SelectContent>
@@ -330,8 +531,90 @@ export default function QuestionnaireClient({
                 </>
               ) : (
                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
-                  No dependents found yet. Add a dependent first, then their
-                  questionnaire will appear here.
+                  <div>No dependents found yet. Add a dependent to begin.</div>
+
+                  <div className="mt-3">
+                    <Dialog open={addOpen} onOpenChange={setAddOpen}>
+                      <DialogTrigger asChild>
+                        <Button type="button" variant="outline" className="rounded-xl" disabled={saving}>
+                          Add dependent
+                        </Button>
+                      </DialogTrigger>
+
+                      <DialogContent className="rounded-2xl">
+                        <DialogHeader>
+                          <DialogTitle>Add a dependent</DialogTitle>
+                        </DialogHeader>
+
+                        <div className="space-y-3">
+                          <div className="grid grid-cols-2 gap-3">
+                            <div className="space-y-1">
+                              <Label>First name</Label>
+                              <Input
+                                value={newDep.firstName}
+                                onChange={(e) =>
+                                  setNewDep((p) => ({ ...p, firstName: e.target.value }))
+                                }
+                              />
+                            </div>
+
+                            <div className="space-y-1">
+                              <Label>Last name</Label>
+                              <Input
+                                value={newDep.lastName}
+                                onChange={(e) =>
+                                  setNewDep((p) => ({ ...p, lastName: e.target.value }))
+                                }
+                              />
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-3">
+                            <div className="space-y-1">
+                              <Label>Date of birth</Label>
+                              <Input
+                                type="date"
+                                value={newDep.dob}
+                                onChange={(e) =>
+                                  setNewDep((p) => ({ ...p, dob: e.target.value }))
+                                }
+                              />
+                            </div>
+
+                            <div className="space-y-1">
+                              <Label>Relationship</Label>
+                              <Input
+                                placeholder="Child, stepchild, etc."
+                                value={newDep.relationship}
+                                onChange={(e) =>
+                                  setNewDep((p) => ({
+                                    ...p,
+                                    relationship: e.target.value,
+                                  }))
+                                }
+                              />
+                            </div>
+                          </div>
+
+                          <Button
+                            type="button"
+                            className="w-full rounded-xl text-white hover:opacity-90"
+                            style={brandBar}
+                            disabled={
+                              saving ||
+                              !newDep.firstName.trim() ||
+                              !newDep.lastName.trim() ||
+                              !newDep.dob ||
+                              !newDep.relationship.trim()
+                            }
+                            onClick={createDependentOnSamePage}
+                          >
+                            Create dependent
+                          </Button>
+                        </div>
+                      </DialogContent>
+                    </Dialog>
+                  </div>
                 </div>
               )}
             </TabsContent>
@@ -344,11 +627,9 @@ export default function QuestionnaireClient({
                   prefill.directDeposit
                     ? {
                         useDirectDeposit: prefill.directDeposit.useDirectDeposit,
-                        accountHolderName:
-                          prefill.directDeposit.accountHolderName,
+                        accountHolderName: prefill.directDeposit.accountHolderName,
                         bankName: prefill.directDeposit.bankName,
                         accountType: prefill.directDeposit.accountType,
-                        // IMPORTANT: do NOT prefill full routing/account numbers
                         routingNumber: "",
                         accountNumber: "",
                         confirmAccountNumber: "",
