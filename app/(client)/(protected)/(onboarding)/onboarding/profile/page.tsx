@@ -22,7 +22,6 @@ import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 
-
 configureAmplify();
 
 function formatUSPhone(value: string) {
@@ -57,8 +56,9 @@ function safeInternalPath(input: string | null, fallback: string) {
 }
 
 /** Keep server cookies in sync (so server actions / API routes can trust session) */
-async function ensureServerSession() {
-  const session = await fetchAuthSession();
+/** Keep server cookies in sync (so server actions / API routes can trust session) */
+async function ensureServerSession(forceRefresh = false) {
+  const session = await fetchAuthSession({ forceRefresh });
   const idToken = session.tokens?.idToken?.toString();
   const accessToken = session.tokens?.accessToken?.toString();
 
@@ -154,7 +154,7 @@ export default function OnboardingProfilePage() {
 
   const safeNext = useMemo(
     () => safeInternalPath(nextParam, "/onboarding/profile"),
-    [nextParam]
+    [nextParam],
   );
 
   const signInHref = useMemo(() => {
@@ -174,7 +174,8 @@ export default function OnboardingProfilePage() {
 
         // sync server cookies (important for server actions / api routes)
         const session =
-          (await ensureServerSession()) ?? (await fetchAuthSession());
+          (await ensureServerSession(true)) ??
+          (await fetchAuthSession({ forceRefresh: true }));
 
         const idTokenPayload = session.tokens?.idToken?.payload ?? {};
 
@@ -263,13 +264,16 @@ export default function OnboardingProfilePage() {
           <div>
             <div className="flex items-center gap-2">
               <Badge variant="secondary">Step 1 of 6</Badge>
-              <Badge className="bg-primary text-primary-foreground">Profile</Badge>
+              <Badge className="bg-primary text-primary-foreground">
+                Profile
+              </Badge>
             </div>
             <h1 className="mt-2 text-2xl font-bold tracking-tight text-foreground sm:text-3xl">
               Confirm your details
             </h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              We’ll use this information on your tax return and to keep you updated about your file.
+              We’ll use this information on your tax return and to keep you
+              updated about your file.
             </p>
           </div>
 
@@ -282,7 +286,8 @@ export default function OnboardingProfilePage() {
           <CardHeader className="pb-3">
             <CardTitle className="text-base">Your information</CardTitle>
             <CardDescription>
-              Enter your legal details exactly as shown on your Social Security card.
+              Enter your legal details exactly as shown on your Social Security
+              card.
             </CardDescription>
           </CardHeader>
 
@@ -302,9 +307,12 @@ export default function OnboardingProfilePage() {
               {/* Legal name */}
               <div className="space-y-3">
                 <div>
-                  <p className="text-sm font-semibold text-foreground">Legal name</p>
+                  <p className="text-sm font-semibold text-foreground">
+                    Legal name
+                  </p>
                   <p className="text-xs text-muted-foreground">
-                    Enter your name exactly as it appears on your Social Security card.
+                    Enter your name exactly as it appears on your Social
+                    Security card.
                   </p>
                 </div>
 
@@ -369,9 +377,12 @@ export default function OnboardingProfilePage() {
               {/* Contact & address */}
               <div className="space-y-4">
                 <div>
-                  <p className="text-sm font-semibold text-foreground">Contact & address</p>
+                  <p className="text-sm font-semibold text-foreground">
+                    Contact & address
+                  </p>
                   <p className="text-xs text-muted-foreground">
-                    This should be your current mailing address for IRS/state notices.
+                    This should be your current mailing address for IRS/state
+                    notices.
                   </p>
                 </div>
 
@@ -426,7 +437,12 @@ export default function OnboardingProfilePage() {
                     <Label>
                       City <span className="text-destructive">*</span>
                     </Label>
-                    <Input name="city" required autoComplete="address-level2" className="rounded-xl" />
+                    <Input
+                      name="city"
+                      required
+                      autoComplete="address-level2"
+                      className="rounded-xl"
+                    />
                   </div>
 
                   <div className="space-y-2">
@@ -475,7 +491,12 @@ export default function OnboardingProfilePage() {
                   <Label>
                     Date of birth <span className="text-destructive">*</span>
                   </Label>
-                  <Input type="date" name="dob" required className="rounded-xl" />
+                  <Input
+                    type="date"
+                    name="dob"
+                    required
+                    className="rounded-xl"
+                  />
                 </div>
 
                 <div className="space-y-2">
@@ -501,12 +522,17 @@ export default function OnboardingProfilePage() {
                       onClick={() => setShowSsn((v) => !v)}
                       aria-label={showSsn ? "Hide SSN" : "Show SSN"}
                     >
-                      {showSsn ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+                      {showSsn ? (
+                        <EyeOff className="h-5 w-5" />
+                      ) : (
+                        <Eye className="h-5 w-5" />
+                      )}
                     </Button>
                   </div>
 
                   <p className="text-[11px] text-muted-foreground">
-                    Optional — you can provide this over the phone if you prefer.
+                    Optional — you can provide this over the phone if you
+                    prefer.
                   </p>
                 </div>
               </div>

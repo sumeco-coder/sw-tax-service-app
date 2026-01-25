@@ -1,5 +1,6 @@
 // app/api/auth/session/route.ts
 import { NextResponse } from "next/server";
+import { decodeJwt } from "jose";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -27,17 +28,22 @@ export async function POST(req: Request) {
     );
   }
 
+  // ✅ derive onboardingComplete from the id token payload
+  const idPayload = decodeJwt(idToken) as Record<string, any>;
+  const onboardingComplete =
+    String(idPayload?.["custom:onboardingComplete"] ?? "").toLowerCase() === "true";
+
   const secure = process.env.NODE_ENV === "production";
 
   const domain =
-  secure ? (process.env.COOKIE_DOMAIN ?? ".swtaxservice.com") : undefined;
+    secure ? (process.env.COOKIE_DOMAIN ?? ".swtaxservice.com") : undefined;
 
   const cookieOptions = {
     httpOnly: true,
     secure,
     sameSite: "lax" as const,
     path: "/",
-    maxAge: 60 * 60 * 24 * 7, 
+    maxAge: 60 * 60 * 24 * 7,
     ...(domain ? { domain } : {}),
   };
 
@@ -53,6 +59,13 @@ export async function POST(req: Request) {
 
   res.cookies.set("accessToken", accessToken, cookieOptions);
   res.cookies.set("idToken", idToken, cookieOptions);
+
+  // ✅ this is what your middleware is looking for
+  res.cookies.set(
+    "onboardingComplete",
+    onboardingComplete ? "true" : "false",
+    cookieOptions
+  );
 
   return res;
 }
