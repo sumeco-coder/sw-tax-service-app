@@ -3,7 +3,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import RefundDeliveryCard from "./_components/RefundDeliveryCard"
+import RefundDeliveryCard from "./_components/RefundDeliveryCard";
 import DashboardHeader from "./_components/DashboardHeader";
 import NextStepsCard from "./_components/NextStepsCard";
 import AppointmentCard from "./_components/AppointmentCard";
@@ -40,16 +40,23 @@ import {
   formatRefundBalance,
 } from "@/lib/utils/dashboard";
 
-
 type RefundDelivery = {
   method: "direct_deposit" | "check" | "not_set";
   bankLast4?: string | null;
 };
 
+type SnapshotRow = {
+  taxYear: number;
+  net?: number | null;
+  status: "DRAFT" | "IN_REVIEW" | "FILED" | "ACCEPTED" | "REJECTED" | "AMENDED";
+};
+
 function normalizeDeliveryMethod(v: unknown): RefundDelivery["method"] {
   const s = String(v ?? "").toLowerCase();
-  if (s === "direct_deposit" || s === "directdeposit" || s === "dd") return "direct_deposit";
-  if (s === "check" || s === "paper_check" || s === "papercheck") return "check";
+  if (s === "direct_deposit" || s === "directdeposit" || s === "dd")
+    return "direct_deposit";
+  if (s === "check" || s === "paper_check" || s === "papercheck")
+    return "check";
   return "not_set";
 }
 
@@ -57,24 +64,27 @@ function normalizeDeliveryMethod(v: unknown): RefundDelivery["method"] {
 export default function DashboardPage() {
   const router = useRouter();
   const currentYear = new Date().getFullYear();
-
+  const [snapshotRows, setSnapshotRows] = useState<SnapshotRow[]>([]);
   const [year, setYear] = useState<string>(currentYear.toString());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const [status, setStatus] = useState<ReturnStatus["status"]>("DRAFT");
-  const [refund, setRefund] = useState<{ amount: number | null; eta?: string | null }>({
+  const [refund, setRefund] = useState<{
+    amount: number | null;
+    eta?: string | null;
+  }>({
     amount: null,
   });
 
   const [refundDelivery, setRefundDelivery] = useState<{
-  method: "direct_deposit" | "check" | "not_set";
-  bankLast4?: string | null;
-}>({ method: "not_set", bankLast4: null });
+    method: "direct_deposit" | "check" | "not_set";
+    bankLast4?: string | null;
+  }>({ method: "not_set", bankLast4: null });
 
   // Keep this as your DB onboarding step enum type
-  const [onboardingStep, setOnboardingStep] = useState<OnboardingStep>("PROFILE");
-
+  const [onboardingStep, setOnboardingStep] =
+    useState<OnboardingStep>("PROFILE");
 
   const [tasks, setTasks] = useState<Task[]>([]);
   const [docs, setDocs] = useState<Doc[]>([]);
@@ -89,7 +99,7 @@ export default function DashboardPage() {
 
   const blockingTasks = useMemo(
     () => tasks.filter((t) => t.status !== "DONE" && t.status !== "CANCELLED"),
-    [tasks]
+    [tasks],
   );
 
   /* --------------------------- Load dashboard --------------------------- */
@@ -100,24 +110,30 @@ export default function DashboardPage() {
       setLoading(true);
       setError(null);
 
-      const [t, d, i, m, s, o, a, ys, q] = await Promise.all([
+      type TaxYearsRes = { years: number[] };
+
+      const [t, d, i, m, s, o, a, ysRes, q] = await Promise.all([
         apiGet<Task[]>(`/api/tasks?year=${year}`, []),
         apiGet<Doc[]>(`/api/documents?year=${year}`, []),
         apiGet<Invoice[]>(`/api/invoices?year=${year}`, []),
         apiGet<Message[]>(`/api/messages?year=${year}`, []),
-        apiGet<ReturnStatus>(`/api/return-status?year=${year}`, { status: "DRAFT" }),
-        apiGet<{ step: OnboardingStep }>(`/api/onboarding-step`, { step: "PROFILE" }),
+        apiGet<ReturnStatus>(`/api/return-status?year=${year}`, {
+          status: "DRAFT",
+        }),
+        apiGet<{ step: OnboardingStep }>(`/api/onboarding-step`, {
+          step: "PROFILE",
+        }),
         apiGet<Appointment | null>(`/api/appointments/next?year=${year}`, null),
-        apiGet<YearSnapshot[]>(`/api/tax-years`, []),
-        apiGet<any>(`/api/questionnaire/summary?year=${year}`, {}), 
+        apiGet<TaxYearsRes>(`/api/tax-years`, { years: [] }),
+        apiGet<any>(`/api/questionnaire/summary?year=${year}`, {}),
       ]);
 
       if (cancelled) return;
 
-      setTasks(t || []);
-      setDocs(d || []);
-      setInvoices(i || []);
-      setMessages(m || []);
+      setTasks(Array.isArray(t) ? t : []);
+      setDocs(Array.isArray(d) ? d : []);
+      setInvoices(Array.isArray(i) ? i : []);
+      setMessages(Array.isArray(m) ? m : []);
       setStatus(s?.status ?? "DRAFT");
 
       setRefund({
@@ -128,14 +144,26 @@ export default function DashboardPage() {
         eta: s?.refundEta ?? null,
       });
 
-       setRefundDelivery({
-        method: normalizeDeliveryMethod(q?.refundMethod ?? q?.refundDeliveryMethod),
+      setRefundDelivery({
+        method: normalizeDeliveryMethod(
+          q?.refundMethod ?? q?.refundDeliveryMethod,
+        ),
         bankLast4: q?.bankLast4 ?? q?.ddLast4 ?? null,
       });
 
       setOnboardingStep(o?.step ?? "PROFILE");
       setNextAppt(a ?? null);
-      setYearSnapshots(ys || []);
+
+      // ✅ Convert { years: number[] } -> YearSnapshot[]
+
+      const yearsArr = Array.isArray(ysRes?.years) ? ysRes.years : [];
+      setSnapshotRows(
+        yearsArr.map((y) => ({
+          taxYear: Number(y),
+          net: null,
+          status: "DRAFT",
+        })),
+      );
 
       setLoading(false);
     };
@@ -153,11 +181,15 @@ export default function DashboardPage() {
 
   /* ------------------------- Actions: Tasks ------------------------- */
   async function handleMarkDone(taskId: string) {
-    setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, status: "DONE" } : t)));
+    setTasks((prev) =>
+      prev.map((t) => (t.id === taskId ? { ...t, status: "DONE" } : t)),
+    );
 
     const res = await apiPut(`/api/tasks/${taskId}`, { status: "DONE" });
     if (!res) {
-      setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, status: "OPEN" } : t)));
+      setTasks((prev) =>
+        prev.map((t) => (t.id === taskId ? { ...t, status: "OPEN" } : t)),
+      );
     }
   }
 
@@ -171,7 +203,7 @@ export default function DashboardPage() {
       {
         fileName: file.name,
         contentType: file.type || "application/octet-stream",
-      }
+      },
     );
     if (!presign) return;
 
@@ -209,7 +241,10 @@ export default function DashboardPage() {
 
     setMessages((prev) => [...prev, temp]);
 
-    const created = await apiPost<Message>("/api/messages", { body: text, year });
+    const created = await apiPost<Message>("/api/messages", {
+      body: text,
+      year,
+    });
 
     if (!created) {
       setMessages((prev) => prev.filter((m) => m.id !== temp.id));
@@ -224,7 +259,7 @@ export default function DashboardPage() {
   /* ------------------------------ Header ------------------------------ */
   const years = useMemo(
     () => Array.from({ length: 6 }, (_, i) => (currentYear - i).toString()),
-    [currentYear]
+    [currentYear],
   );
 
   /* -------------------- Next Steps (Complete Profile Flow) -------------------- */
@@ -235,11 +270,12 @@ export default function DashboardPage() {
 
   const totalSteps = COMPLETE_PROFILE_FLOW.length;
 
-  const progressPercent = Math.round(((currentStepIndex + 1) / Math.max(1, totalSteps)) * 100);
+  const progressPercent = Math.round(
+    ((currentStepIndex + 1) / Math.max(1, totalSteps)) * 100,
+  );
 
   // Safe fallback so NextStepsCard always gets a config
-  const currentStepConfig =
-    COMPLETE_PROFILE_FLOW[currentStepIndex] ??
+  const currentStepConfig = COMPLETE_PROFILE_FLOW[currentStepIndex] ??
     COMPLETE_PROFILE_FLOW[0] ?? {
       label: "Continue",
       description: "Continue completing your profile.",
@@ -251,7 +287,7 @@ export default function DashboardPage() {
   /* --------------------- Return timeline derived state --------------------- */
   const statusStageIndex = useMemo(
     () => getTimelineStageIndex(status, RETURN_TIMELINE_STAGES),
-    [status]
+    [status],
   );
 
   const currentStatusStage = RETURN_TIMELINE_STAGES[statusStageIndex];
@@ -267,98 +303,109 @@ export default function DashboardPage() {
 
   /* ------------------------------ Render ------------------------------ */
   return (
-   <div className="mx-auto w-full max-w-6xl px-3 py-4 sm:px-4 sm:py-6 md:px-6 md:py-8 lg:px-8 space-y-4 sm:space-y-6">
-  {/* Error */}
-  {error ? (
-    <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-      {error}
-    </div>
-  ) : null}
+    <div className="mx-auto w-full max-w-6xl px-3 py-4 sm:px-4 sm:py-6 md:px-6 md:py-8 lg:px-8 space-y-4 sm:space-y-6">
+      {/* Error */}
+      {error ? (
+        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          {error}
+        </div>
+      ) : null}
 
-  {/* Top Bar */}
-  <DashboardHeader
-    year={Number(year)}
-    years={years.map(Number)}
-    setYear={(y: number) => setYear(y.toString())}
-    status={status}
-  />
-
-  {/* Next Steps / Progress */}
-  <NextStepsCard
-    year={Number(year)}
-    progressPercent={progressPercent}
-    currentStepIndex={currentStepIndex}
-    totalSteps={totalSteps}
-    currentStepConfig={currentStepConfig}
-    isDone={isDone}
-  />
-
-  {/* Appointment + Missing Info (stack on mobile, side-by-side on md+) */}
-  <div className="grid grid-cols-1 gap-4 sm:gap-6 md:grid-cols-2">
-    <AppointmentCard year={Number(year)} nextAppt={nextAppt} loading={loading} />
-    <MissingInfoCard loading={loading} blockingTasks={blockingTasks} />
-  </div>
-
-  {/* Key Cards (handles 5 cards nicely) */}
-  <div className="grid grid-cols-1 gap-4 sm:gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-    <RefundCard refund={refund} currency={currency} fmtDate={fmtDate} />
-
-    <RefundDeliveryCard delivery={refundDelivery} updateHref="/questionnaire" />
-
-    <InvoicesCard
-      loading={loading}
-      invoices={invoices.map((inv) => ({
-        ...inv,
-        amount: typeof inv.amount === "string" ? Number(inv.amount) : inv.amount,
-      }))}
-      currency={(amount) => currency(amount)}
-    />
-
-    <TimelineCard
-      year={Number(year)}
-      status={status}
-      currentStatusStage={currentStatusStage}
-      nextStatusStage={nextStatusStage}
-      RETURN_TIMELINE_STAGES={RETURN_TIMELINE_STAGES}
-      statusStageIndex={statusStageIndex}
-    />
-
-    {/* On xl, make QuickActions span 2 columns so it doesn't look squeezed */}
-    <div className="xl:col-span-2">
-      <QuickActionsCard
+      {/* Top Bar */}
+      <DashboardHeader
         year={Number(year)}
-        fileInputRef={fileInputRef}
-        handleUpload={handleUpload}
+        years={years.map(Number)}
+        setYear={(y: number) => setYear(y.toString())}
+        status={status}
       />
+
+      {/* Next Steps / Progress */}
+      <NextStepsCard
+        year={Number(year)}
+        progressPercent={progressPercent}
+        currentStepIndex={currentStepIndex}
+        totalSteps={totalSteps}
+        currentStepConfig={currentStepConfig}
+        isDone={isDone}
+      />
+
+      {/* Appointment + Missing Info (stack on mobile, side-by-side on md+) */}
+      <div className="grid grid-cols-1 gap-4 sm:gap-6 md:grid-cols-2">
+        <AppointmentCard
+          year={Number(year)}
+          nextAppt={nextAppt}
+          loading={loading}
+        />
+        <MissingInfoCard loading={loading} blockingTasks={blockingTasks} />
+      </div>
+
+      {/* Key Cards (handles 5 cards nicely) */}
+      <div className="grid grid-cols-1 gap-4 sm:gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+        <RefundCard refund={refund} currency={currency} fmtDate={fmtDate} />
+
+        <RefundDeliveryCard
+          delivery={refundDelivery}
+          updateHref="/questionnaire"
+        />
+
+        <InvoicesCard
+          loading={loading}
+          invoices={invoices.map((inv) => ({
+            ...inv,
+            amount:
+              typeof inv.amount === "string" ? Number(inv.amount) : inv.amount,
+          }))}
+          currency={(amount) => currency(amount)}
+        />
+
+        <TimelineCard
+          year={Number(year)}
+          status={status}
+          currentStatusStage={currentStatusStage}
+          nextStatusStage={nextStatusStage}
+          RETURN_TIMELINE_STAGES={RETURN_TIMELINE_STAGES}
+          statusStageIndex={statusStageIndex}
+        />
+
+        {/* On xl, make QuickActions span 2 columns so it doesn't look squeezed */}
+        <div className="xl:col-span-2">
+          <QuickActionsCard
+            year={Number(year)}
+            fileInputRef={fileInputRef}
+            handleUpload={handleUpload}
+          />
+        </div>
+      </div>
+
+      {/* Snapshot */}
+      <SnapshotCard
+        loading={loading}
+        yearSnapshots={snapshotRows}
+        formatRefundBalance={formatRefundBalance}
+      />
+
+      {/* Support */}
+      <SupportCard year={Number(year)} scrollToMessages={scrollToMessages} />
+
+      {/* Tasks + Documents */}
+      <div className="grid grid-cols-1 gap-4 sm:gap-6 md:grid-cols-2">
+        <TasksCard
+          loading={loading}
+          tasks={tasks}
+          handleMarkDone={handleMarkDone}
+        />
+        <DocumentsCard loading={loading} docs={docs} year={Number(year)} />
+      </div>
+
+      {/* Messages */}
+      <div className="grid grid-cols-1 gap-4 sm:gap-6" ref={messagesRef}>
+        <MessagesCard
+          loading={loading}
+          messages={messages}
+          handleSendMessage={handleSendMessage}
+          messageInputRef={messageInputRef}
+        />
+      </div>
     </div>
-  </div>
-
-  {/* Snapshot */}
-  <SnapshotCard
-    loading={loading}
-    yearSnapshots={yearSnapshots}
-    formatRefundBalance={formatRefundBalance}
-  />
-
-  {/* Support */}
-  <SupportCard year={Number(year)} scrollToMessages={scrollToMessages} />
-
-  {/* Tasks + Documents */}
-  <div className="grid grid-cols-1 gap-4 sm:gap-6 md:grid-cols-2">
-    <TasksCard loading={loading} tasks={tasks} handleMarkDone={handleMarkDone} />
-    <DocumentsCard loading={loading} docs={docs} year={Number(year)} />
-  </div>
-
-  {/* Messages */}
-  <div className="grid grid-cols-1 gap-4 sm:gap-6" ref={messagesRef}>
-    <MessagesCard
-      loading={loading}
-      messages={messages}
-      handleSendMessage={handleSendMessage}
-      messageInputRef={messageInputRef}
-    />
-  </div>
-</div>
-
   );
 }
