@@ -1,6 +1,9 @@
 // app/api/auth/session/route.ts
 import { NextResponse } from "next/server";
 import { decodeJwt } from "jose";
+import { db } from "@/drizzle/db";
+import { users } from "@/drizzle/schema";
+import { eq } from "drizzle-orm";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,50 +25,67 @@ export async function POST(req: Request) {
         status: 400,
         headers: {
           "Cache-Control": "no-store",
-          "Vary": "Cookie, Authorization",
+          Vary: "Cookie, Authorization",
         },
       }
     );
   }
 
-  // ✅ derive onboardingComplete from the id token payload
-  const idPayload = decodeJwt(idToken) as Record<string, any>;
-  const onboardingComplete =
-    String(idPayload?.["custom:onboardingComplete"] ?? "").toLowerCase() === "true";
+  // ✅ Decode sub from idToken
+  let sub = "";
+  try {
+    sub = String((decodeJwt(idToken) as any)?.sub ?? "");
+  } catch {
+    sub = "";
+  }
+
+  // ✅ Source of truth: DB onboardingStep
+  let onboardingComplete = false;
+  if (sub) {
+    const row = await db
+      .select({ step: users.onboardingStep })
+      .from(users)
+      .where(eq(users.cognitoSub, sub))
+      .limit(1);
+
+    onboardingComplete = row[0]?.step === "DONE";
+  }
 
   const secure = process.env.NODE_ENV === "production";
+  const prodDomain = secure ? (process.env.COOKIE_DOMAIN ?? ".swtaxservice.com") : undefined;
 
-  const domain =
-    secure ? (process.env.COOKIE_DOMAIN ?? ".swtaxservice.com") : undefined;
-
-  const cookieOptions = {
+  const baseCookie = {
     httpOnly: true,
     secure,
     sameSite: "lax" as const,
     path: "/",
     maxAge: 60 * 60 * 24 * 7,
-    ...(domain ? { domain } : {}),
   };
 
   const res = NextResponse.json(
-    { ok: true },
+    { ok: true, onboardingComplete },
     {
       headers: {
         "Cache-Control": "no-store",
-        "Vary": "Cookie, Authorization",
+        Vary: "Cookie, Authorization",
       },
     }
   );
 
-  res.cookies.set("accessToken", accessToken, cookieOptions);
-  res.cookies.set("idToken", idToken, cookieOptions);
+  // 1) Host-only cookies (swtaxservice.com)
+  res.cookies.set("accessToken", accessToken, baseCookie);
+  res.cookies.set("idToken", idToken, baseCookie);
+  res.cookies.set("onboardingComplete", onboardingComplete ? "true" : "false", baseCookie);
 
-  // ✅ this is what your middleware is looking for
-  res.cookies.set(
-    "onboardingComplete",
-    onboardingComplete ? "true" : "false",
-    cookieOptions
-  );
+  // 2) Domain cookies (.swtaxservice.com) — covers www + subdomains
+  if (prodDomain) {
+    res.cookies.set("accessToken", accessToken, { ...baseCookie, domain: prodDomain });
+    res.cookies.set("idToken", idToken, { ...baseCookie, domain: prodDomain });
+    res.cookies.set("onboardingComplete", onboardingComplete ? "true" : "false", {
+      ...baseCookie,
+      domain: prodDomain,
+    });
+  }
 
   return res;
 }

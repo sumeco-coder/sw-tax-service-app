@@ -38,7 +38,7 @@ async function getCookieDomainForProd(): Promise<string | undefined> {
 export async function completeOnboarding(formData: FormData) {
   const rawNext = String(formData.get("next") ?? "");
   const intended = normalizePostOnboardingTarget(
-    safeInternalPath(rawNext, "/dashboard")
+    safeInternalPath(rawNext, "/dashboard"),
   );
 
   const cookieStore = await cookies();
@@ -69,18 +69,30 @@ export async function completeOnboarding(formData: FormData) {
     redirect(`/sign-in?next=${encodeURIComponent(intended)}`);
   }
 
-  // ✅ Cookie stops middleware redirect loops immediately (no JWT refresh needed)
+  // ✅ Cookie stops middleware redirect loops immediately
   const isProd = process.env.NODE_ENV === "production";
-  const domain = isProd ? await getCookieDomainForProd() : undefined;
+  const prodDomain = isProd
+    ? (process.env.COOKIE_DOMAIN ?? ".swtaxservice.com")
+    : undefined;
 
-  cookieStore.set("onboardingComplete", "true", {
+  const baseCookie = {
     httpOnly: true,
     secure: isProd,
-    sameSite: "lax",
+    sameSite: "lax" as const,
     path: "/",
-    domain,
     maxAge: 60 * 60 * 24 * 365, // 1 year
-  });
+  };
+
+  // 1) host-only
+  cookieStore.set("onboardingComplete", "true", baseCookie);
+
+  // 2) domain-wide
+  if (prodDomain) {
+    cookieStore.set("onboardingComplete", "true", {
+      ...baseCookie,
+      domain: prodDomain,
+    });
+  }
 
   redirect(intended);
 }
