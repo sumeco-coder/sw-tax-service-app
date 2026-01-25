@@ -2,7 +2,38 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-import { Pencil, Check, X, Plus, Trash2, Eye, EyeOff } from "lucide-react";
+import {
+  Pencil,
+  Check,
+  X,
+  Plus,
+  Trash2,
+  Eye,
+  EyeOff,
+  RefreshCcw,
+} from "lucide-react";
+
+const REL_OPTIONS = [
+  "Son",
+  "Daughter",
+  "Foster child",
+  "Grandchild",
+  "Stepchild",
+  "Grandparent",
+  "Parent",
+  "Brother",
+  "Half-brother",
+  "Stepbrother",
+  "Sister",
+  "Half-sister",
+  "Stepsister",
+  "Aunt",
+  "Uncle",
+  "Nephew",
+  "Niece",
+  "Sibling",
+  "Other",
+] as const;
 
 type Dep = {
   id: string;
@@ -12,11 +43,12 @@ type Dep = {
   dob: string; // YYYY-MM-DD
   relationship: string;
 
-  // placeholder (never display/return real encrypted value)
+  // never display/return real encrypted value
   ssnEncrypted: string;
 
   // safe status fields
   hasSsn: boolean;
+  ssnLast4: string | null;
   appliedButNotReceived: boolean;
 
   monthsLived: number; // 0–12
@@ -47,6 +79,9 @@ const inputBase =
 const inputReadOnly = "bg-slate-50 text-slate-900 border-slate-200";
 const card = "rounded-2xl border border-slate-200 bg-white p-6 shadow-sm";
 
+const labelClass =
+  "mb-1 block text-[11px] font-semibold uppercase tracking-wide text-slate-500 leading-tight";
+
 function digitsOnly(v: unknown, maxLen: number) {
   return String(v ?? "")
     .replace(/\D/g, "")
@@ -65,6 +100,7 @@ function normalizeDep(d: any): Dep {
     ssnEncrypted: "",
 
     hasSsn: Boolean(d?.hasSsn),
+    ssnLast4: d?.ssnLast4 ? String(d.ssnLast4) : null,
     appliedButNotReceived: Boolean(d?.appliedButNotReceived),
 
     monthsLived: Number.isFinite(Number(d?.monthsLived))
@@ -97,6 +133,8 @@ export default function DependentsPage() {
 
   const [editId, setEditId] = useState<string | null>(null);
   const [draft, setDraft] = useState<DepDraft>({});
+
+  // ✅ inline add panel (no popup)
   const [showAdd, setShowAdd] = useState(false);
 
   // ✅ eye toggles for SSN inputs
@@ -107,7 +145,7 @@ export default function DependentsPage() {
     firstName: string;
     middleName: string;
     lastName: string;
-    dob: string;
+    dob: string; // YYYY-MM-DD
     relationship: string;
     ssn: string; // transient input (9 digits)
     appliedButNotReceived: boolean;
@@ -129,7 +167,33 @@ export default function DependentsPage() {
 
   const [msg, setMsg] = useState("");
 
+  const [showFullSsnId, setShowFullSsnId] = useState<string | null>(null);
+  const [fullSsnById, setFullSsnById] = useState<Record<string, string>>({});
+  const [loadingFullSsnById, setLoadingFullSsnById] = useState<
+    Record<string, boolean>
+  >({});
+
+  async function revealDependentSsn(id: string) {
+    if (fullSsnById[id]) return fullSsnById[id];
+
+    setLoadingFullSsnById((p) => ({ ...p, [id]: true }));
+    try {
+      const data = await fetchJson<{ ok?: boolean; ssn?: string }>(
+        `/api/dependents/${id}/ssn?reveal=1`,
+        { cache: "no-store" },
+        "Failed to reveal SSN",
+      );
+
+      const ssn = String((data as any)?.ssn ?? "");
+      setFullSsnById((p) => ({ ...p, [id]: ssn }));
+      return ssn;
+    } finally {
+      setLoadingFullSsnById((p) => ({ ...p, [id]: false }));
+    }
+  }
+
   async function loadDependents() {
+    setLoading(true);
     try {
       const data = await fetchJson<any[]>(
         "/api/dependents",
@@ -138,6 +202,7 @@ export default function DependentsPage() {
       );
       const safe = Array.isArray(data) ? data.map(normalizeDep) : [];
       setRows(safe);
+      setMsg("");
     } catch (e: any) {
       setMsg(e?.message ?? "Failed to load dependents.");
       setRows([]);
@@ -158,7 +223,6 @@ export default function DependentsPage() {
   function startEdit(dep: Dep) {
     setEditId(dep.id);
     setShowEditSsn(false);
-    // keep draft minimal + add blank SSN (blank means "no change")
     setDraft({
       firstName: dep.firstName,
       middleName: dep.middleName,
@@ -169,7 +233,7 @@ export default function DependentsPage() {
       monthsLived: dep.monthsLived,
       isStudent: dep.isStudent,
       isDisabled: dep.isDisabled,
-      ssn: "",
+      ssn: "", // blank means "no change"
     });
     setMsg("");
   }
@@ -189,16 +253,18 @@ export default function DependentsPage() {
       ssnEncrypted: "",
     };
 
-    // applied toggle influences local status
     if (typeof patch.appliedButNotReceived === "boolean") {
       next.appliedButNotReceived = patch.appliedButNotReceived;
-      if (next.appliedButNotReceived) next.hasSsn = false;
+      if (next.appliedButNotReceived) {
+        next.hasSsn = false;
+        next.ssnLast4 = null;
+      }
     }
 
-    // if user entered a valid SSN, treat as "on file" locally after save
     const ssn9 = digitsOnly(ssn, 9);
     if (ssn9.length === 9) {
       next.hasSsn = true;
+      next.ssnLast4 = ssn9.slice(-4);
       next.appliedButNotReceived = false;
     }
 
@@ -215,7 +281,6 @@ export default function DependentsPage() {
     return next;
   }
 
-  // Build a clean PATCH payload (only fields your API supports)
   function buildPatchPayload(current: Dep | null, d: DepDraft) {
     const payload: any = {};
 
@@ -231,22 +296,14 @@ export default function DependentsPage() {
     if (d.isStudent != null) payload.isStudent = Boolean(d.isStudent);
     if (d.isDisabled != null) payload.isDisabled = Boolean(d.isDisabled);
 
-    // applied + SSN rules
     const applied = Boolean(d.appliedButNotReceived);
     payload.appliedButNotReceived = applied;
 
     const ssn9 = digitsOnly(d.ssn ?? "", 9);
 
-    // If they check applied=true, do not send ssn at all
-    if (applied) {
-      return payload;
-    }
+    if (applied) return payload;
 
-    if (!ssn9) {
-      if (current?.appliedButNotReceived && !current?.hasSsn) {
-      }
-      return payload;
-    }
+    if (!ssn9) return payload;
 
     if (ssn9.length !== 9) {
       throw new Error("SSN must be 9 digits.");
@@ -261,29 +318,25 @@ export default function DependentsPage() {
 
     try {
       setMsg("");
-
       const payload = buildPatchPayload(editingRow, draft);
 
-      const data = await fetch(`/api/dependents/${editId}`, {
+      const res = await fetch(`/api/dependents/${editId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
 
-      // Try to read JSON; some versions may return { success: true }
-      const body = await data.json().catch(() => null);
+      const body = await res.json().catch(() => null);
 
-      if (!data.ok) {
+      if (!res.ok) {
         const serverMsg = body?.error || "Save failed.";
         throw new Error(serverMsg);
       }
 
-      // If PATCH returns the updated dependent, use it (best)
       if (body && typeof body === "object" && body.id) {
         const updated = normalizeDep(body);
         setRows((r) => r.map((x) => (x.id === editId ? updated : x)));
       } else {
-        // Fallback: local patch update (works even if PATCH returns {success:true})
         setRows((r) =>
           r.map((x) => (x.id === editId ? applyLocalPatch(x, draft) : x)),
         );
@@ -315,17 +368,35 @@ export default function DependentsPage() {
     try {
       setMsg("");
 
+      const firstName = addForm.firstName.trim();
+      const lastName = addForm.lastName.trim();
+      const dob = addForm.dob;
+      const relationship = addForm.relationship;
+
+      if (!firstName || !lastName || !dob || !relationship) {
+        throw new Error(
+          "Please complete First name, Last name, DOB, and Relationship.",
+        );
+      }
+
+      const ssn9 = digitsOnly(addForm.ssn, 9);
+      if (!addForm.appliedButNotReceived && ssn9.length !== 9) {
+        throw new Error(
+          "Enter a full 9-digit SSN or check Applied / not received.",
+        );
+      }
+
       const payload = {
-        firstName: addForm.firstName,
-        middleName: addForm.middleName,
-        lastName: addForm.lastName,
-        dob: addForm.dob,
-        relationship: addForm.relationship,
+        firstName,
+        middleName: addForm.middleName.trim(),
+        lastName,
+        dob,
+        relationship,
         monthsLived: addForm.monthsLived,
         isStudent: addForm.isStudent,
         isDisabled: addForm.isDisabled,
         appliedButNotReceived: addForm.appliedButNotReceived,
-        ssn: addForm.appliedButNotReceived ? "" : digitsOnly(addForm.ssn, 9),
+        ssn: addForm.appliedButNotReceived ? "" : ssn9,
       };
 
       const createdRaw = await fetchJson<any>(
@@ -382,22 +453,260 @@ export default function DependentsPage() {
               </p>
             </div>
 
-            <button
-              className="inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold text-white shadow-sm hover:opacity-90"
-              style={brandGradient}
-              onClick={() => {
-                setShowAdd(true);
-                setShowAddSsn(false);
-              }}
-            >
-              <Plus className="h-4 w-4" /> Add Dependent
-            </button>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                onClick={loadDependents}
+                title="Refresh"
+              >
+                <RefreshCcw className="h-4 w-4" /> Refresh
+              </button>
+
+              <button
+                type="button"
+                className="inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold text-white shadow-sm hover:opacity-90"
+                style={brandGradient}
+                onClick={() => {
+                  setShowAdd((v) => !v);
+                  setShowAddSsn(false);
+                  setMsg("");
+                }}
+              >
+                <Plus className="h-4 w-4" />{" "}
+                {showAdd ? "Close" : "Add Dependent"}
+              </button>
+            </div>
           </div>
 
           {msg && (
             <p className="mt-4 text-sm text-slate-600" aria-live="polite">
               {msg}
             </p>
+          )}
+
+          {/* ✅ Inline Add Panel (no popup) */}
+          {showAdd && (
+            <div className="mt-6 rounded-2xl border border-slate-200 bg-white p-4 sm:p-5">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-base font-semibold text-slate-900">
+                    Add a dependent
+                  </h2>
+                  <div
+                    className="mt-2 h-1 w-16 rounded-full"
+                    style={brandGradient}
+                  />
+                </div>
+                <button
+                  type="button"
+                  className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                  onClick={() => {
+                    setShowAdd(false);
+                    setShowAddSsn(false);
+                  }}
+                  aria-label="Close"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+
+              <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
+                <div>
+                  <label className={labelClass}>First name</label>
+                  <input
+                    className={inputBase}
+                    value={addForm.firstName}
+                    onChange={(e) =>
+                      setAddForm((f) => ({ ...f, firstName: e.target.value }))
+                    }
+                  />
+                </div>
+
+                <div>
+                  <label className={labelClass}>Last name</label>
+                  <input
+                    className={inputBase}
+                    value={addForm.lastName}
+                    onChange={(e) =>
+                      setAddForm((f) => ({ ...f, lastName: e.target.value }))
+                    }
+                  />
+                </div>
+
+                <div className="md:col-span-2">
+                  <label className={labelClass}>Middle name (optional)</label>
+                  <input
+                    className={inputBase}
+                    value={addForm.middleName}
+                    onChange={(e) =>
+                      setAddForm((f) => ({ ...f, middleName: e.target.value }))
+                    }
+                  />
+                </div>
+
+                <div>
+                  <label className={labelClass}>DOB</label>
+                  <input
+                    className={inputBase}
+                    type="date"
+                    value={addForm.dob}
+                    onChange={(e) =>
+                      setAddForm((f) => ({ ...f, dob: e.target.value }))
+                    }
+                  />
+                </div>
+
+                <div>
+                  <label className={labelClass}>Relationship</label>
+                  <select
+                    className={inputBase}
+                    value={addForm.relationship}
+                    onChange={(e) =>
+                      setAddForm((f) => ({
+                        ...f,
+                        relationship: e.target.value,
+                      }))
+                    }
+                  >
+                    <option value="">Select…</option>
+                    {REL_OPTIONS.map((opt) => (
+                      <option key={opt} value={opt}>
+                        {opt}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className={labelClass}>Months in home</label>
+                  <input
+                    className={inputBase}
+                    type="number"
+                    min={0}
+                    max={12}
+                    value={String(addForm.monthsLived)}
+                    onChange={(e) =>
+                      setAddForm((f) => ({
+                        ...f,
+                        monthsLived: Math.max(
+                          0,
+                          Math.min(12, Number(e.target.value) || 0),
+                        ),
+                      }))
+                    }
+                  />
+                </div>
+
+                <div>
+                  <label className={labelClass}>SSN</label>
+
+                  <label className="mb-2 inline-flex w-full items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-800">
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 accent-[#E72B69]"
+                      checked={addForm.appliedButNotReceived}
+                      onChange={(e) =>
+                        setAddForm((f) => ({
+                          ...f,
+                          appliedButNotReceived: e.target.checked,
+                          ssn: e.target.checked ? "" : f.ssn,
+                        }))
+                      }
+                    />
+                    Applied / not received
+                  </label>
+
+                  <div className="relative">
+                    <input
+                      className={`${inputBase} pr-10`}
+                      placeholder="SSN (9 digits)"
+                      inputMode="numeric"
+                      maxLength={9}
+                      autoComplete="off"
+                      type={showAddSsn ? "text" : "password"}
+                      value={addForm.ssn}
+                      onChange={(e) =>
+                        setAddForm((f) => ({
+                          ...f,
+                          ssn: e.target.value.replace(/\D/g, "").slice(0, 9),
+                        }))
+                      }
+                      disabled={addForm.appliedButNotReceived}
+                    />
+
+                    <button
+                      type="button"
+                      className="absolute right-2 top-1/2 -translate-y-1/2 rounded-lg border border-slate-200 bg-white p-1 text-slate-700 hover:bg-slate-50"
+                      onClick={() => setShowAddSsn((v) => !v)}
+                      aria-label={showAddSsn ? "Hide SSN" : "Show SSN"}
+                      disabled={addForm.appliedButNotReceived}
+                    >
+                      {showAddSsn ? (
+                        <EyeOff className="h-4 w-4" />
+                      ) : (
+                        <Eye className="h-4 w-4" />
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="md:col-span-2">
+                  <label className={labelClass}>Flags</label>
+                  <div className="flex flex-wrap gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2">
+                    <label className="inline-flex items-center gap-2 text-sm text-slate-800">
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 accent-[#E72B69]"
+                        checked={addForm.isStudent}
+                        onChange={(e) =>
+                          setAddForm((f) => ({
+                            ...f,
+                            isStudent: e.target.checked,
+                          }))
+                        }
+                      />
+                      Student
+                    </label>
+                    <label className="inline-flex items-center gap-2 text-sm text-slate-800">
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 accent-[#E72B69]"
+                        checked={addForm.isDisabled}
+                        onChange={(e) =>
+                          setAddForm((f) => ({
+                            ...f,
+                            isDisabled: e.target.checked,
+                          }))
+                        }
+                      />
+                      Disabled
+                    </label>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-5 flex justify-end gap-2">
+                <button
+                  type="button"
+                  className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                  onClick={() => {
+                    setShowAdd(false);
+                    setShowAddSsn(false);
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="rounded-xl px-4 py-2 text-sm font-semibold text-white shadow-sm hover:opacity-90"
+                  style={brandGradient}
+                  onClick={addDependent}
+                >
+                  Add
+                </button>
+              </div>
+            </div>
           )}
         </div>
 
@@ -427,12 +736,15 @@ export default function DependentsPage() {
                     ? "bg-emerald-50 text-emerald-700 border-emerald-200"
                     : "bg-rose-50 text-rose-700 border-rose-200";
 
+                const maskedLast4 =
+                  d.hasSsn && d.ssnLast4 ? `***-**-${d.ssnLast4}` : ssnStatus;
+
                 return (
                   <div
                     key={d.id}
                     className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-5 shadow-sm"
                   >
-                    {/* Row header (prevents overlap on iPad) */}
+                    {/* Header */}
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                       <div className="min-w-0">
                         <div className="flex flex-wrap items-center gap-2">
@@ -449,13 +761,15 @@ export default function DependentsPage() {
                         </div>
 
                         <p className="mt-1 text-xs text-slate-500">
-                          Edit fields below, then save.
+                          {!editing
+                            ? "Click Edit to update details."
+                            : "Edit fields below, then save."}
                         </p>
                       </div>
 
-                      {/* Actions */}
                       {!editing ? (
                         <button
+                          type="button"
                           className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
                           onClick={() => startEdit(d)}
                           title="Edit"
@@ -466,6 +780,7 @@ export default function DependentsPage() {
                       ) : (
                         <div className="flex w-full gap-2 sm:w-auto">
                           <button
+                            type="button"
                             className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl px-3 py-2 text-sm font-semibold text-white shadow-sm hover:opacity-90 sm:flex-none"
                             style={brandGradient}
                             onClick={saveEdit}
@@ -475,6 +790,7 @@ export default function DependentsPage() {
                             Save
                           </button>
                           <button
+                            type="button"
                             className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 sm:flex-none"
                             onClick={cancelEdit}
                             title="Cancel"
@@ -486,17 +802,11 @@ export default function DependentsPage() {
                       )}
                     </div>
 
-                    {/* Responsive grid:
-                    - On iPad/narrow content area, keep it stacked/2-col.
-                    - Only go 12-col on XL screens.
-                 */}
-                    <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-12">
-                      {/* Name group */}
-                      <div className="sm:col-span-2 xl:col-span-5">
-                        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
-                          Name
-                        </label>
-
+                    {/* ✅ FIXED LAYOUT: stable 2-col on desktop, no overlap */}
+                    <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+                      {/* Name */}
+                      <div className="md:col-span-2">
+                        <label className={labelClass}>Name</label>
                         <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
                           <input
                             className={fieldClass(editing)}
@@ -544,13 +854,11 @@ export default function DependentsPage() {
                       </div>
 
                       {/* DOB */}
-                      <div className="xl:col-span-2">
-                        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
-                          DOB
-                        </label>
+                      <div>
+                        <label className={labelClass}>DOB</label>
                         <input
                           className={fieldClass(editing)}
-                          placeholder="YYYY-MM-DD"
+                          type="date"
                           value={editing ? (draft.dob ?? "") : d.dob}
                           onChange={(e) =>
                             setDraft((x) => ({ ...x, dob: e.target.value }))
@@ -560,10 +868,8 @@ export default function DependentsPage() {
                       </div>
 
                       {/* Relationship */}
-                      <div className="xl:col-span-2">
-                        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
-                          Relationship
-                        </label>
+                      <div>
+                        <label className={labelClass}>Relationship</label>
                         <select
                           className={fieldClass(editing)}
                           value={
@@ -580,22 +886,22 @@ export default function DependentsPage() {
                           disabled={!editing}
                         >
                           <option value="">Select…</option>
-                          <option>Child</option>
-                          <option>Stepchild</option>
-                          <option>Foster child</option>
-                          <option>Sibling</option>
-                          <option>Parent</option>
-                          <option>Other</option>
+                          {REL_OPTIONS.map((opt) => (
+                            <option key={opt} value={opt}>
+                              {opt}
+                            </option>
+                          ))}
                         </select>
                       </div>
 
                       {/* Months */}
-                      <div className="xl:col-span-1">
-                        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
-                          Months
-                        </label>
+                      <div>
+                        <label className={labelClass}>Months in home</label>
                         <input
                           className={fieldClass(editing)}
+                          type="number"
+                          min={0}
+                          max={12}
                           inputMode="numeric"
                           value={
                             editing ? (draft.monthsLived ?? 12) : d.monthsLived
@@ -614,17 +920,73 @@ export default function DependentsPage() {
                       </div>
 
                       {/* SSN */}
-                      <div className="sm:col-span-2 xl:col-span-2">
-                        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
-                          SSN
-                        </label>
+                      <div>
+                        <label className={labelClass}>SSN</label>
 
                         {!editing ? (
-                          <input
-                            className={`${inputBase} ${inputReadOnly}`}
-                            value={ssnStatus}
-                            disabled
-                          />
+                          <div className="relative">
+                            <input
+                              className={`${inputBase} ${inputReadOnly} pr-10`}
+                              value={
+                                d.appliedButNotReceived
+                                  ? "Applied / not received"
+                                  : d.hasSsn
+                                    ? showFullSsnId === d.id
+                                      ? fullSsnById[d.id] ||
+                                        (loadingFullSsnById[d.id]
+                                          ? "Loading…"
+                                          : maskedLast4)
+                                      : maskedLast4
+                                    : "Missing"
+                              }
+                              disabled
+                            />
+
+                            {/* Eye toggle: Eye = reveal full, EyeOff = back to last4 */}
+                            {d.hasSsn && !d.appliedButNotReceived ? (
+                              <button
+                                type="button"
+                                className="absolute right-2 top-1/2 -translate-y-1/2 rounded-lg border border-slate-200 bg-white p-1 text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                                disabled={Boolean(loadingFullSsnById[d.id])}
+                                aria-label={
+                                  showFullSsnId === d.id
+                                    ? "Hide full SSN"
+                                    : "Reveal full SSN"
+                                }
+                                title={
+                                  showFullSsnId === d.id
+                                    ? "Hide full SSN"
+                                    : "Reveal full SSN"
+                                }
+                                onClick={async () => {
+                                  try {
+                                    setMsg("");
+
+                                    // If currently showing full SSN for this row → hide back to last4
+                                    if (showFullSsnId === d.id) {
+                                      setShowFullSsnId(null);
+                                      return;
+                                    }
+
+                                    // Otherwise, fetch + reveal
+                                    await revealDependentSsn(d.id);
+                                    setShowFullSsnId(d.id);
+                                  } catch (e: any) {
+                                    setMsg(
+                                      e?.message ?? "Failed to reveal SSN.",
+                                    );
+                                    setShowFullSsnId(null);
+                                  }
+                                }}
+                              >
+                                {showFullSsnId === d.id ? (
+                                  <EyeOff className="h-4 w-4" />
+                                ) : (
+                                  <Eye className="h-4 w-4" />
+                                )}
+                              </button>
+                            ) : null}
+                          </div>
                         ) : (
                           <div className="space-y-2">
                             <label className="inline-flex items-center gap-2 text-sm text-slate-800">
@@ -643,7 +1005,6 @@ export default function DependentsPage() {
                               Applied / not received
                             </label>
 
-                            {/* ✅ Masked SSN input + eye toggle */}
                             <div className="relative">
                               <input
                                 className={`${inputBase} pr-10`}
@@ -656,7 +1017,9 @@ export default function DependentsPage() {
                                 onChange={(e) =>
                                   setDraft((x) => ({
                                     ...x,
-                                    ssn: e.target.value.replace(/\D/g, "").slice(0, 9),
+                                    ssn: e.target.value
+                                      .replace(/\D/g, "")
+                                      .slice(0, 9),
                                   }))
                                 }
                                 disabled={Boolean(draft.appliedButNotReceived)}
@@ -679,7 +1042,9 @@ export default function DependentsPage() {
                             </div>
 
                             <p className="text-xs text-slate-500">
-                              {d.hasSsn ? "Currently on file. " : ""}
+                              {d.hasSsn
+                                ? `Currently on file (${maskedLast4}). `
+                                : ""}
                               Leaving SSN blank keeps it unchanged.
                             </p>
                           </div>
@@ -687,11 +1052,8 @@ export default function DependentsPage() {
                       </div>
 
                       {/* Flags */}
-                      <div className="sm:col-span-2 xl:col-span-12">
-                        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
-                          Flags
-                        </label>
-
+                      <div className="md:col-span-2">
+                        <label className={labelClass}>Flags</label>
                         <div
                           className={`flex flex-wrap items-center gap-4 rounded-xl border border-slate-200 px-3 py-2 ${
                             editing ? "bg-white" : "bg-slate-50 opacity-90"
@@ -738,9 +1100,10 @@ export default function DependentsPage() {
                       </div>
 
                       {/* Delete */}
-                      <div className="sm:col-span-2 xl:col-span-12">
+                      <div className="md:col-span-2">
                         <div className="flex justify-end">
                           <button
+                            type="button"
                             className="inline-flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700 hover:bg-rose-100"
                             onClick={() => remove(d.id)}
                             title="Remove dependent"
@@ -757,196 +1120,6 @@ export default function DependentsPage() {
           )}
         </div>
       </div>
-
-      {/* Add Modal */}
-      {showAdd && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-[2px]">
-          <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-6 text-slate-900 shadow-xl">
-            <div className="mb-4 flex items-center justify-between">
-              <div>
-                <h2 className="text-lg font-semibold text-slate-900">
-                  Add Dependent
-                </h2>
-                <div
-                  className="mt-2 h-1 w-16 rounded-full"
-                  style={brandGradient}
-                />
-              </div>
-             <button
-                onClick={() => {
-                  setShowAdd(false);
-                  setShowAddSsn(false);
-                }}
-                className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
-                aria-label="Close"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <input
-                className={inputBase}
-                placeholder="First name"
-                value={addForm.firstName}
-                onChange={(e) =>
-                  setAddForm((f) => ({ ...f, firstName: e.target.value }))
-                }
-              />
-
-              <input
-                className={inputBase}
-                placeholder="Last name"
-                value={addForm.lastName}
-                onChange={(e) =>
-                  setAddForm((f) => ({ ...f, lastName: e.target.value }))
-                }
-              />
-
-              <input
-                className={`${inputBase} sm:col-span-2`}
-                placeholder="Middle name (optional)"
-                value={addForm.middleName}
-                onChange={(e) =>
-                  setAddForm((f) => ({ ...f, middleName: e.target.value }))
-                }
-              />
-
-              <input
-                className={inputBase}
-                placeholder="DOB (YYYY-MM-DD)"
-                value={addForm.dob}
-                onChange={(e) =>
-                  setAddForm((f) => ({ ...f, dob: e.target.value }))
-                }
-              />
-
-              <select
-                className={inputBase}
-                value={addForm.relationship}
-                onChange={(e) =>
-                  setAddForm((f) => ({ ...f, relationship: e.target.value }))
-                }
-              >
-                <option value="">Relationship</option>
-                <option>Child</option>
-                <option>Stepchild</option>
-                <option>Foster child</option>
-                <option>Sibling</option>
-                <option>Parent</option>
-                <option>Other</option>
-              </select>
-
-              <label className="sm:col-span-2 inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-800">
-                <input
-                  type="checkbox"
-                  className="h-4 w-4 accent-[#E72B69]"
-                  checked={addForm.appliedButNotReceived}
-                  onChange={(e) =>
-                    setAddForm((f) => ({
-                      ...f,
-                      appliedButNotReceived: e.target.checked,
-                      ssn: e.target.checked ? "" : f.ssn,
-                    }))
-                  }
-                />
-                Applied / not received (SSN not available yet)
-              </label>
-
-                 {/* ✅ Masked SSN input + eye toggle (Add Modal) */}
-              <div className="relative sm:col-span-2">
-                <input
-                  className={`${inputBase} pr-10`}
-                  placeholder="SSN (9 digits)"
-                  inputMode="numeric"
-                  maxLength={9}
-                  autoComplete="off"
-                  type={showAddSsn ? "text" : "password"}
-                  value={addForm.ssn}
-                  onChange={(e) =>
-                    setAddForm((f) => ({
-                      ...f,
-                      ssn: e.target.value.replace(/\D/g, "").slice(0, 9),
-                    }))
-                  }
-                  disabled={addForm.appliedButNotReceived}
-                />
-
-                <button
-                  type="button"
-                  className="absolute right-2 top-1/2 -translate-y-1/2 rounded-lg border border-slate-200 bg-white p-1 text-slate-700 hover:bg-slate-50"
-                  onClick={() => setShowAddSsn((v) => !v)}
-                  aria-label={showAddSsn ? "Hide SSN" : "Show SSN"}
-                  disabled={addForm.appliedButNotReceived}
-                >
-                  {showAddSsn ? (
-                    <EyeOff className="h-4 w-4" />
-                  ) : (
-                    <Eye className="h-4 w-4" />
-                  )}
-                </button>
-              </div>
-
-
-             <input
-                className={inputBase}
-                placeholder="Months lived (0-12)"
-                inputMode="numeric"
-                value={String(addForm.monthsLived)}
-                onChange={(e) =>
-                  setAddForm((f) => ({
-                    ...f,
-                    monthsLived: Math.max(0, Math.min(12, Number(e.target.value) || 0)),
-                  }))
-                }
-              />
-
-              <label className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-800">
-                <input
-                  type="checkbox"
-                  className="h-4 w-4 accent-[#E72B69]"
-                  checked={addForm.isStudent}
-                  onChange={(e) =>
-                    setAddForm((f) => ({ ...f, isStudent: e.target.checked }))
-                  }
-                />
-                Student
-              </label>
-
-              <label className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-800">
-                <input
-                  type="checkbox"
-                  className="h-4 w-4 accent-[#E72B69]"
-                  checked={addForm.isDisabled}
-                  onChange={(e) =>
-                    setAddForm((f) => ({ ...f, isDisabled: e.target.checked }))
-                  }
-                />
-                Disabled
-              </label>
-            </div>
-
-            <div className="mt-5 flex justify-end gap-2">
-              <button
-                className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-                onClick={() => {
-                  setShowAdd(false);
-                  setShowAddSsn(false);
-                }}
-              >
-                Cancel
-              </button>
-              <button
-                className="rounded-xl px-4 py-2 text-sm font-semibold text-white shadow-sm hover:opacity-90"
-                style={brandGradient}
-                onClick={addDependent}
-              >
-                Add
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
