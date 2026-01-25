@@ -114,7 +114,7 @@ export const invites = pgTable("invites", {
 
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).$onUpdate(
-    () => new Date()
+    () => new Date(),
   ),
 });
 // =========================
@@ -160,7 +160,7 @@ export const waitlist = pgTable("waitlist", {
 
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).$onUpdate(
-    () => new Date()
+    () => new Date(),
   ),
   utmSource: text("utm_source"),
   utmMedium: text("utm_medium"),
@@ -219,7 +219,7 @@ export const emailCampaignSegment = pgEnum("email_campaign_segment", [
 
 export const appointmentAudienceSegment = pgEnum(
   "appointment_audience_segment",
-  ["upcoming", "today", "past", "cancelled", "all"]
+  ["upcoming", "today", "past", "cancelled", "all"],
 );
 
 // =========================
@@ -286,9 +286,9 @@ export const emailRecipients = pgTable(
     // ✅ prevents duplicates per campaign
     campaignEmailUq: uniqueIndex("email_recipients_campaign_email_uq").on(
       t.campaignId,
-      t.email
+      t.email,
     ),
-  })
+  }),
 );
 
 export const emailLists = pgTable("email_lists", {
@@ -323,9 +323,9 @@ export const emailListMembers = pgTable(
     emailIdx: index("email_list_members_email_idx").on(t.email),
     listEmailUq: uniqueIndex("email_list_members_list_email_uq").on(
       t.listId,
-      t.email
+      t.email,
     ),
-  })
+  }),
 );
 
 export const emailUnsubscribes = pgTable("email_unsubscribes", {
@@ -436,6 +436,13 @@ export const users = pgTable(
       .default("PROFILE")
       .notNull(),
 
+    questionnaireComplete: boolean("questionnaire_complete")
+      .notNull()
+      .default(false),
+    questionnaireCompletedAt: timestamp("questionnaire_completed_at", {
+      withTimezone: true,
+    }),
+
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -447,7 +454,7 @@ export const users = pgTable(
   },
   (t) => ({
     emailIdx: index("users_email_idx").on(t.email),
-  })
+  }),
 );
 
 // =========================
@@ -474,7 +481,7 @@ export const taxpayerIntake = pgTable(
   },
   (t) => ({
     userUnique: uniqueIndex("taxpayer_intake_user_unique").on(t.userId),
-  })
+  }),
 );
 
 // =========================
@@ -500,7 +507,7 @@ export const headOfHouseholdDocs = pgTable(
   },
   (t) => ({
     userUniq: uniqueIndex("hoh_docs_user_uniq").on(t.userId),
-  })
+  }),
 );
 
 export const educationCredits = pgTable(
@@ -523,7 +530,7 @@ export const educationCredits = pgTable(
   },
   (t) => ({
     userUniq: uniqueIndex("education_credits_user_uniq").on(t.userId),
-  })
+  }),
 );
 
 export const identificationType = pgEnum("identification_type", [
@@ -572,10 +579,10 @@ export const identification = pgTable(
   (t) => ({
     userPersonUnique: uniqueIndex("identifications_user_person_unique").on(
       t.userId,
-      t.person
+      t.person,
     ),
     userIdx: index("identifications_user_idx").on(t.userId),
-  })
+  }),
 );
 
 export const estimatedStateTaxPayments = pgTable(
@@ -599,7 +606,7 @@ export const estimatedStateTaxPayments = pgTable(
   },
   (t) => ({
     userUnique: uniqueIndex("est_state_tax_payments_user_unique").on(t.userId),
-  })
+  }),
 );
 
 export const estimatedTaxPayments = pgTable(
@@ -622,7 +629,7 @@ export const estimatedTaxPayments = pgTable(
   },
   (t) => ({
     userUnique: uniqueIndex("estimated_tax_payments_user_unique").on(t.userId),
-  })
+  }),
 );
 
 export const incomeDocumentation = pgTable(
@@ -648,7 +655,7 @@ export const incomeDocumentation = pgTable(
   (t) => ({
     userUnique: uniqueIndex("income_documentations_user_unique").on(t.userId),
     userIdx: index("income_documentations_user_idx").on(t.userId),
-  })
+  }),
 );
 
 export const qualifyingChildren = pgTable(
@@ -669,7 +676,7 @@ export const qualifyingChildren = pgTable(
   (t) => ({
     userUnique: uniqueIndex("qualifying_children_user_unique").on(t.userId),
     userIdx: index("qualifying_children_user_idx").on(t.userId),
-  })
+  }),
 );
 
 export const foreignAccountsDigitalAssets = pgTable(
@@ -693,10 +700,10 @@ export const foreignAccountsDigitalAssets = pgTable(
   },
   (t) => ({
     userUnique: uniqueIndex("foreign_accounts_digital_assets_user_unique").on(
-      t.userId
+      t.userId,
     ),
     userIdx: index("foreign_accounts_digital_assets_user_idx").on(t.userId),
-  })
+  }),
 );
 
 // =========================
@@ -786,7 +793,7 @@ export const appointmentSlots = pgTable(
   },
   (t) => ({
     startsIdx: index("appointment_slots_starts_idx").on(t.startsAt),
-  })
+  }),
 );
 
 // --- Dependents ---
@@ -802,6 +809,9 @@ export const dependents = pgTable(
     lastName: varchar("last_name", { length: 80 }).notNull(),
     dob: date("dob").notNull(),
     ssnEncrypted: text("ssn_encrypted"),
+    ssnLast4: varchar("ssn_last4", { length: 4 }),
+ssnSetAt: timestamp("ssn_set_at", { withTimezone: true }),
+
     appliedButNotReceived: boolean("applied_but_not_received")
       .default(false)
       .notNull(),
@@ -821,7 +831,7 @@ export const dependents = pgTable(
   (t) => ({
     userIdx: index("dependents_user_idx").on(t.userId),
     livedCheck: index("dependents_months_check").on(t.monthsInHome),
-  }) // placeholder to allow inline check below if you use SQL
+  }), // placeholder to allow inline check below if you use SQL
 );
 
 export const dependentQuestionnaires = pgTable(
@@ -849,7 +859,7 @@ export const dependentQuestionnaires = pgTable(
   },
   (t) => ({
     userIdx: index("dependent_questionnaires_user_idx").on(t.userId),
-  })
+  }),
 );
 
 export const clientAgreements = pgTable("client_agreements", {
@@ -906,11 +916,11 @@ export const taxReturns = pgTable(
   (t) => ({
     uniqPerUserYear: unique("tax_returns_user_year_uniq").on(
       t.userId,
-      t.taxYear
+      t.taxYear,
     ),
     userIdx: index("tax_returns_user_idx").on(t.userId),
     yearIdx: index("tax_returns_year_idx").on(t.taxYear),
-  })
+  }),
 );
 
 // ===================================================
@@ -942,7 +952,7 @@ export const documents = pgTable(
     userIdx: index("documents_user_idx").on(t.userId),
     returnIdx: index("documents_return_idx").on(t.taxReturnId),
     keyUniq: unique("documents_key_uniq").on(t.key),
-  })
+  }),
 );
 
 export const paymentStatusEnum = pgEnum("invoice_payment_status", [
@@ -972,7 +982,7 @@ export const invoices = pgTable(
   (t) => ({
     userIdx: index("invoices_user_idx").on(t.userId),
     returnIdx: index("invoices_return_idx").on(t.taxReturnId),
-  })
+  }),
 );
 
 export const invoicePayments = pgTable(
@@ -1009,7 +1019,7 @@ export const invoicePayments = pgTable(
     invoiceIdx: index("invoice_payments_invoice_idx").on(t.invoiceId),
     userIdx: index("invoice_payments_user_idx").on(t.userId),
     statusIdx: index("invoice_payments_status_idx").on(t.status),
-  })
+  }),
 );
 
 export const invoicesRelations = relations(invoices, ({ many }) => ({
@@ -1023,7 +1033,7 @@ export const invoicePaymentsRelations = relations(
       fields: [invoicePayments.invoiceId],
       references: [invoices.id],
     }),
-  })
+  }),
 );
 
 export const tasks = pgTable(
@@ -1054,7 +1064,7 @@ export const tasks = pgTable(
     userIdx: index("tasks_user_idx").on(t.userId),
     returnIdx: index("tasks_return_idx").on(t.taxReturnId),
     userYearIdx: index("tasks_user_year_idx").on(t.userId, t.taxYear),
-  })
+  }),
 );
 
 export const messages = pgTable(
@@ -1085,7 +1095,7 @@ export const messages = pgTable(
     conversationIdx: index("messages_conversation_idx").on(t.conversationId),
     senderIdx: index("messages_sender_idx").on(t.senderUserId),
     createdIdx: index("messages_created_idx").on(t.createdAt),
-  })
+  }),
 );
 
 export const messageAudit = pgTable("message_audit", {
@@ -1133,7 +1143,7 @@ export const conversations = pgTable(
   (t) => ({
     clientIdx: index("conversations_client_idx").on(t.clientId),
     lastMessageIdx: index("conversations_last_message_idx").on(t.lastMessageAt),
-  })
+  }),
 );
 
 export const userSettings = pgTable(
@@ -1164,7 +1174,7 @@ export const userSettings = pgTable(
   },
   (t) => ({
     userIdx: index("user_settings_user_idx").on(t.userId),
-  })
+  }),
 );
 
 /* ======================================================================
@@ -1198,7 +1208,7 @@ export const firms = pgTable(
   },
   (t) => ({
     subdomainIdx: index("firms_subdomain_idx").on(t.subdomain),
-  })
+  }),
 );
 
 export const courses = pgTable(
@@ -1229,7 +1239,7 @@ export const courses = pgTable(
   (t) => ({
     firmIdx: index("courses_firm_idx").on(t.firmId),
     ownerIdx: index("courses_owner_idx").on(t.ownerUserId),
-  })
+  }),
 );
 
 export const modules = pgTable(
@@ -1253,7 +1263,7 @@ export const modules = pgTable(
   (t) => ({
     courseIdx: index("modules_course_idx").on(t.courseId),
     sortIdx: index("modules_sort_idx").on(t.courseId, t.sortOrder),
-  })
+  }),
 );
 
 export const lessons = pgTable(
@@ -1287,7 +1297,7 @@ export const lessons = pgTable(
     courseIdx: index("lessons_course_idx").on(t.courseId),
     moduleIdx: index("lessons_module_idx").on(t.moduleId),
     sortIdx: index("lessons_sort_idx").on(t.courseId, t.sortOrder),
-  })
+  }),
 );
 
 export const enrollments = pgTable(
@@ -1311,9 +1321,9 @@ export const enrollments = pgTable(
     userIdx: index("enrollments_user_idx").on(t.userId),
     uniqCourseUser: unique("enrollments_course_user_uniq").on(
       t.courseId,
-      t.userId
+      t.userId,
     ),
-  })
+  }),
 );
 
 export const lessonProgress = pgTable(
@@ -1335,9 +1345,9 @@ export const lessonProgress = pgTable(
     lessonIdx: index("lesson_progress_lesson_idx").on(t.lessonId),
     uniqEnrollmentLesson: unique("lesson_progress_enrollment_lesson_uniq").on(
       t.enrollmentId,
-      t.lessonId
+      t.lessonId,
     ),
-  })
+  }),
 );
 
 export const sopFiles = pgTable(
@@ -1363,7 +1373,7 @@ export const sopFiles = pgTable(
   (t) => ({
     firmIdx: index("sop_files_firm_idx").on(t.firmId),
     storageKeyUniq: unique("sop_files_storage_key_uniq").on(t.storageKey),
-  })
+  }),
 );
 
 // ============================
@@ -1417,7 +1427,7 @@ export const socialAccounts = pgTable(
   (t) => ({
     providerIdx: index("social_accounts_provider_idx").on(t.provider),
     enabledIdx: index("social_accounts_enabled_idx").on(t.isEnabled),
-  })
+  }),
 );
 
 export const socialPosts = pgTable(
@@ -1466,11 +1476,11 @@ export const socialPosts = pgTable(
   (t) => ({
     statusScheduleIdx: index("social_posts_status_scheduled_idx").on(
       t.status,
-      t.scheduledAt
+      t.scheduledAt,
     ),
     providerIdx: index("social_posts_provider_idx").on(t.provider),
     triggerIdx: index("social_posts_trigger_idx").on(t.triggerKey),
-  })
+  }),
 );
 
 // Status enum
@@ -1530,7 +1540,7 @@ export const directDeposit = pgTable(
   },
   (t) => ({
     userUnique: uniqueIndex("direct_deposit_user_id_uq").on(t.userId),
-  })
+  }),
 );
 
 export const taxCalculatorLeads = pgTable(
@@ -1606,17 +1616,17 @@ export const taxCalculatorLeads = pgTable(
   },
   (t) => ({
     emailLowerUnique: uniqueIndex("tax_calc_leads_email_lower_unique").on(
-      t.emailLower
+      t.emailLower,
     ),
     createdAtIdx: index("tax_calc_leads_created_at_idx").on(t.createdAt),
     paidAtIdx: index("tax_calc_leads_paid_at_idx").on(t.paidAt),
     stripeSessionIdx: index("tax_calc_leads_stripe_session_idx").on(
-      t.stripeCheckoutSessionId
+      t.stripeCheckoutSessionId,
     ),
     stripeCustomerIdx: index("tax_calc_leads_stripe_customer_idx").on(
-      t.stripeCustomerId
+      t.stripeCustomerId,
     ),
-  })
+  }),
 );
 
 // =========================
@@ -1673,7 +1683,7 @@ export const clientBusinesses = pgTable(
 
     // optional helpful index
     activeIdx: index("client_businesses_active_idx").on(t.isActive),
-  })
+  }),
 );
 
 // =========================
@@ -1722,7 +1732,7 @@ export const clientNotices = pgTable(
   (t) => ({
     userIdx: index("client_notices_user_idx").on(t.userId),
     dueIdx: index("client_notices_due_idx").on(t.dueDate),
-  })
+  }),
 );
 
 // =========================
@@ -1761,7 +1771,7 @@ export const clientNextSteps = pgTable(
   (t) => ({
     userIdx: index("client_next_steps_user_idx").on(t.userId),
     dueIdx: index("client_next_steps_due_idx").on(t.dueDate),
-  })
+  }),
 );
 
 // =========================
@@ -1816,10 +1826,10 @@ export const emailLeads = pgTable(
   },
   (t) => ({
     emailLowerUnique: uniqueIndex("email_leads_email_lower_unique").on(
-      t.emailLower
+      t.emailLower,
     ),
     lastSeenIdx: index("email_leads_last_seen_idx").on(t.lastSeenAt),
     sourceIdx: index("email_leads_source_idx").on(t.source),
     optinIdx: index("email_leads_optin_idx").on(t.marketingOptIn),
-  })
+  }),
 );

@@ -253,6 +253,20 @@
       "when": 1769263181320,
       "tag": "0035_black_wallflower",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1769301477232,
+      "tag": "0036_lazy_quentin_quire",
+      "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1769305241204,
+      "tag": "0037_boring_madripoor",
+      "breakpoints": true
     }
   ]
 }
