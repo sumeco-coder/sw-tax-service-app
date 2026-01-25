@@ -8,7 +8,13 @@ import { db } from "@/drizzle/db";
 import { users, documents } from "@/drizzle/schema";
 import { getServerRole } from "@/lib/auth/roleServer";
 
-import { S3Client, GetObjectCommand, PutObjectCommand,  DeleteObjectCommand, } from "@aws-sdk/client-s3";
+import { createPresignedPost } from "@aws-sdk/s3-presigned-post";
+import {
+  S3Client,
+  GetObjectCommand,
+  DeleteObjectCommand,
+  HeadObjectCommand,
+} from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 /* ------------------------- helpers ------------------------- */
@@ -26,20 +32,16 @@ function sanitizeFileName(name: string) {
 }
 
 function getS3Config() {
-  const bucket =
-    process.env.DOCUMENTS_BUCKET ||
-    process.env.S3_BUCKET ||
-    process.env.AWS_S3_BUCKET ||
-    "";
-
+  const bucket = process.env.DOCUMENTS_BUCKET || "";
   const region = process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || "";
 
   if (!bucket || !region) {
-    throw new Error("Server S3 config missing (bucket/region).");
+    throw new Error("Server S3 config missing (DOCUMENTS_BUCKET/AWS_REGION).");
   }
 
   return { bucket, region };
 }
+
 
 async function requireAuthUser() {
   const me = await getServerRole();
@@ -131,16 +133,14 @@ export async function listClientDocuments(clientIdOrSub: string) {
 }
 
 /**
- * ✅ Create a presigned PUT url for upload.
- * - If input.targetUserId provided: admin OR owner allowed (UUID or sub)
- * - If not provided: uses current logged-in user's DB id
- *
- * Inserts a row into `documents` so it appears in lists.
+ * ✅ Create a presigned POST for browser upload.
+ * - Returns { url, fields, key }
+ * - DOES NOT write DB here (finalizeUpload() writes after PUT exists)
  */
 export async function createUploadUrl(input: {
   fileName: string;
   contentType?: string;
-  targetUserId?: string; // UUID or cognitoSub
+  targetUserId?: string; // UUID or cognitoSub (admin uploads)
 }) {
   const { userRow } = await requireAuthUser();
   const { bucket, region } = getS3Config();
@@ -148,11 +148,10 @@ export async function createUploadUrl(input: {
   const fileName = sanitizeFileName(input.fileName);
   if (!fileName) throw new Error("Missing file name.");
 
-  const contentType = String(input.contentType ?? "application/octet-stream");
+  const contentType = String(input.contentType ?? "application/octet-stream").trim();
 
   // Determine who the upload is for
   let targetUserId = String(userRow.id);
-
   if (input.targetUserId) {
     const access = await assertCanAccess(String(input.targetUserId));
     targetUserId = String(access.targetUserId);
@@ -163,25 +162,83 @@ export async function createUploadUrl(input: {
 
   const s3 = new S3Client({ region });
 
-  const url = await getSignedUrl(
-    s3,
-    new PutObjectCommand({
-      Bucket: bucket,
-      Key: key,
-      ContentType: contentType,
-    }),
-    { expiresIn: 60 * 5 }
-  );
-
-  // ✅ Insert DB row so listClientDocuments() shows it
-  await db.insert(documents).values({
-    userId: targetUserId,
-    key,
-    displayName: fileName,
-    uploadedAt: new Date(),
+  const post = await createPresignedPost(s3, {
+    Bucket: bucket,
+    Key: key,
+    Expires: 60 * 5,
+    Fields: {
+      "Content-Type": contentType,
+    },
+    Conditions: [
+      ["content-length-range", 0, 25 * 1024 * 1024], // 25MB cap (adjust)
+      ["eq", "$Content-Type", contentType],
+    ],
   });
 
-  return { key, url };
+  return { key, url: post.url, fields: post.fields };
+}
+
+export async function finalizeUpload(input: {
+  key: string;
+  fileName: string;
+  targetUserId?: string; // UUID or cognitoSub (admin uploads)
+}) {
+  const { userRow } = await requireAuthUser();
+  const { bucket, region } = getS3Config();
+
+  const cleanKey = String(input.key ?? "").trim();
+  if (!cleanKey) throw new Error("Missing key.");
+
+  const displayName = sanitizeFileName(input.fileName);
+
+  // Determine who the upload is for
+  let targetUserId = String(userRow.id);
+  if (input.targetUserId) {
+    const access = await assertCanAccess(String(input.targetUserId));
+    targetUserId = String(access.targetUserId);
+  }
+
+  // ✅ Enforce the key belongs to the user folder
+  if (!cleanKey.startsWith(`${targetUserId}/`)) {
+    throw new Error("Forbidden.");
+  }
+
+  const s3 = new S3Client({ region });
+
+  // ✅ Ensure file actually exists in S3
+  try {
+    await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: cleanKey }));
+  } catch (e: any) {
+    const status = e?.$metadata?.httpStatusCode;
+    const name = e?.name;
+    if (status === 404 || name === "NotFound" || name === "NoSuchKey") {
+      throw new Error("Upload missing in storage. Please try uploading again.");
+    }
+    throw e;
+  }
+
+  // ✅ Insert row only after upload exists (scoped to this user)
+  const [exists] = await db
+    .select({ key: documents.key })
+    .from(documents)
+    .where(and(eq(documents.key, cleanKey), eq(documents.userId, targetUserId)))
+    .limit(1);
+
+  if (!exists) {
+    await db.insert(documents).values({
+      userId: targetUserId,
+      key: cleanKey,
+      displayName,
+      uploadedAt: new Date(),
+    });
+  } else {
+    await db
+      .update(documents)
+      .set({ displayName })
+      .where(and(eq(documents.key, cleanKey), eq(documents.userId, targetUserId)));
+  }
+
+  return { ok: true };
 }
 
 /**
@@ -203,7 +260,6 @@ export async function createClientDownloadUrl(clientIdOrSub: string, key: string
   const k = String(key ?? "").trim();
   if (!k) throw new Error("Missing key.");
 
-  // ✅ Ensure this key belongs to that user (prevents guessing keys)
   const [doc] = await db
     .select({
       key: documents.key,
@@ -214,17 +270,29 @@ export async function createClientDownloadUrl(clientIdOrSub: string, key: string
     .limit(1);
 
   if (!doc) throw new Error("Document not found.");
-
-  if (String(doc.ownerId) !== String(targetUserId)) {
-    throw new Error("Forbidden.");
-  }
-
-  // If not admin, only allow downloading own docs
-  if (!isAdmin && String(targetUserId) !== String(viewerUserId)) {
-    throw new Error("Forbidden.");
-  }
+  if (String(doc.ownerId) !== String(targetUserId)) throw new Error("Forbidden.");
+  if (!isAdmin && String(targetUserId) !== String(viewerUserId)) throw new Error("Forbidden.");
 
   const s3 = new S3Client({ region });
+
+  // ✅ Verify exists in S3 before signing
+  try {
+    await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: k }));
+  } catch (e: any) {
+    const status = e?.$metadata?.httpStatusCode;
+    const name = e?.name;
+
+    if (status === 404 || name === "NotFound" || name === "NoSuchKey") {
+      // Optional: clean up orphan DB row
+      await db
+        .delete(documents)
+        .where(and(eq(documents.key, k), eq(documents.userId, targetUserId)));
+
+      throw new Error("File is missing in storage (upload likely failed). Ask client to re-upload.");
+    }
+
+    throw e;
+  }
 
   const url = await getSignedUrl(
     s3,
@@ -234,7 +302,6 @@ export async function createClientDownloadUrl(clientIdOrSub: string, key: string
 
   return { url };
 }
-
 
 export async function deleteDocument(input: { targetUserId: string; key: string }) {
   const { isAdmin, targetUserId, viewerUserId } = await assertCanAccess(String(input.targetUserId));
@@ -259,7 +326,9 @@ export async function deleteDocument(input: { targetUserId: string; key: string 
     await s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: k }));
   } catch {}
 
-  await db.delete(documents).where(and(eq(documents.key, k), eq(documents.userId, targetUserId)));
+  await db
+    .delete(documents)
+    .where(and(eq(documents.key, k), eq(documents.userId, targetUserId)));
 
   return { ok: true };
 }

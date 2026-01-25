@@ -1,18 +1,16 @@
+// app/(client)/(protected)/(onboarding)/onboarding/documents/actions.ts
 "use server";
 
 import crypto from "crypto";
 import { redirect } from "next/navigation";
-import { desc, eq, and } from "drizzle-orm"; // ✅ FIXED: removed `and`
+import { desc, eq, and } from "drizzle-orm";
 import { db } from "@/drizzle/db";
 import { users, documents } from "@/drizzle/schema";
 import { getServerRole } from "@/lib/auth/roleServer";
 
-import {
-  S3Client,
-  GetObjectCommand,
-  PutObjectCommand,
-} from "@aws-sdk/client-s3"; // ✅ FIXED: removed DeleteObjectCommand
+import { S3Client, GetObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { createPresignedPost } from "@aws-sdk/s3-presigned-post";
 
 /* -------------------------------------------------------------------------- */
 /* Types */
@@ -23,6 +21,12 @@ type ListItem = {
   name: string;
   size: number;
   lastModified: string | null;
+};
+
+type PresignedPostOut = {
+  key: string;
+  url: string;
+  fields: Record<string, string>;
 };
 
 type ActionResult<T> =
@@ -45,19 +49,8 @@ const NEXT_PATH = "/onboarding/documents";
 /* -------------------------------------------------------------------------- */
 
 function getS3Config() {
-  const bucket =
-    process.env.DOCUMENTS_BUCKET ||
-    process.env.FILES_BUCKET ||
-    process.env.S3_BUCKET_NAME ||
-    process.env.S3_BUCKET ||
-    process.env.AWS_S3_BUCKET ||
-    "";
-
-  const region =
-    process.env.AWS_REGION ||
-    process.env.AWS_DEFAULT_REGION ||
-    process.env.S3_REGION ||
-    "";
+  const bucket = process.env.DOCUMENTS_BUCKET || "";
+  const region = process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || "";
 
   if (!bucket || !region) {
     console.error("[getS3Config] CONFIG_MISSING", {
@@ -75,10 +68,12 @@ function getS3Config() {
 /* -------------------------------------------------------------------------- */
 
 function sanitizeFileName(name: string) {
-  return String(name ?? "file")
+  const cleaned = String(name ?? "file")
     .trim()
     .replace(/[\/\\]/g, "_")
     .replace(/[^\w.\-()\s]/g, "_");
+
+  return cleaned || "file";
 }
 
 type Viewer =
@@ -106,9 +101,7 @@ async function getViewer(): Promise<Viewer> {
 /* List documents */
 /* -------------------------------------------------------------------------- */
 
-export async function onboardingListMyDocuments(): Promise<
-  ActionResult<ListItem[]>
-> {
+export async function onboardingListMyDocuments(): Promise<ActionResult<ListItem[]>> {
   try {
     const viewer = await getViewer();
     if (!viewer) return { ok: false, code: "UNAUTHENTICATED" };
@@ -126,13 +119,11 @@ export async function onboardingListMyDocuments(): Promise<
 
     return {
       ok: true,
-      data: rows.map((r) => ({
-        key: r.key,
-        name: r.name ?? r.key,
+      data: (rows ?? []).map((r) => ({
+        key: String(r.key),
+        name: String(r.name ?? r.key),
         size: 0,
-        lastModified: r.uploadedAt
-          ? new Date(r.uploadedAt).toISOString()
-          : null,
+        lastModified: r.uploadedAt ? new Date(r.uploadedAt as any).toISOString() : null,
       })),
     };
   } catch (e) {
@@ -142,13 +133,13 @@ export async function onboardingListMyDocuments(): Promise<
 }
 
 /* -------------------------------------------------------------------------- */
-/* Create upload URL */
+/* Create upload (PRESIGNED POST) */
 /* -------------------------------------------------------------------------- */
 
 export async function onboardingCreateMyUploadUrl(input: {
   fileName: string;
   contentType?: string;
-}): Promise<ActionResult<{ key: string; url: string }>> {
+}): Promise<ActionResult<PresignedPostOut>> {
   try {
     const viewer = await getViewer();
     if (!viewer) return { ok: false, code: "UNAUTHENTICATED" };
@@ -157,23 +148,32 @@ export async function onboardingCreateMyUploadUrl(input: {
     const cfg = getS3Config();
     if (!cfg) return { ok: false, code: "CONFIG_MISSING" };
 
-    const key = `${viewer.userId}/${crypto.randomUUID()}-${sanitizeFileName(
-      input.fileName
-    )}`;
+    const rawName = String(input.fileName ?? "").trim();
+    if (!rawName) {
+      return { ok: false, code: "ERROR", message: "Missing fileName." };
+    }
+
+    const fileName = sanitizeFileName(rawName);
+    const contentType = String(input.contentType ?? "application/octet-stream").trim();
+
+    const key = `${viewer.userId}/${crypto.randomUUID()}-${fileName}`;
 
     const s3 = new S3Client({ region: cfg.region });
 
-    const url = await getSignedUrl(
-      s3,
-      new PutObjectCommand({
-        Bucket: cfg.bucket,
-        Key: key,
-        ContentType: input.contentType ?? "application/octet-stream",
-      }),
-      { expiresIn: 300 }
-    );
+    const post = await createPresignedPost(s3, {
+      Bucket: cfg.bucket,
+      Key: key,
+      Expires: 60 * 5,
+      Fields: {
+        "Content-Type": contentType,
+      },
+      Conditions: [
+        ["content-length-range", 0, 25 * 1024 * 1024], // 25MB cap
+        ["eq", "$Content-Type", contentType],
+      ],
+    });
 
-    return { ok: true, data: { key, url } };
+    return { ok: true, data: { key, url: post.url, fields: post.fields } };
   } catch (e) {
     console.error("[onboardingCreateMyUploadUrl]", e);
     return { ok: false, code: "ERROR" };
@@ -181,7 +181,7 @@ export async function onboardingCreateMyUploadUrl(input: {
 }
 
 /* -------------------------------------------------------------------------- */
-/* Finalize upload (DB WRITE AFTER PUT) */
+/* Finalize upload (DB WRITE AFTER UPLOAD EXISTS) */
 /* -------------------------------------------------------------------------- */
 
 export async function onboardingFinalizeMyUpload(input: {
@@ -193,17 +193,37 @@ export async function onboardingFinalizeMyUpload(input: {
     if (!viewer) return { ok: false, code: "UNAUTHENTICATED" };
     if (!viewer.ok) return { ok: false, code: "NO_USER_ROW" };
 
+    const cfg = getS3Config();
+    if (!cfg) return { ok: false, code: "CONFIG_MISSING" };
+
     const key = String(input.key ?? "").trim();
     if (!key) return { ok: false, code: "ERROR", message: "Missing key." };
 
-    // ✅ key must belong to this user (prevents writing other users’ keys)
     if (!key.startsWith(`${viewer.userId}/`)) {
       return { ok: false, code: "FORBIDDEN" };
     }
 
+    const s3 = new S3Client({ region: cfg.region });
+
+    try {
+      await s3.send(new HeadObjectCommand({ Bucket: cfg.bucket, Key: key }));
+    } catch (e: any) {
+      const status = e?.$metadata?.httpStatusCode;
+      const name = e?.name;
+
+      if (status === 404 || name === "NotFound" || name === "NoSuchKey") {
+        return {
+          ok: false,
+          code: "ERROR",
+          message: "Upload not found in storage yet. Please try again.",
+        };
+      }
+
+      throw e;
+    }
+
     const displayName = sanitizeFileName(input.fileName);
 
-    // avoid duplicates if finalize is called twice
     const [exists] = await db
       .select({ key: documents.key })
       .from(documents)
@@ -227,7 +247,7 @@ export async function onboardingFinalizeMyUpload(input: {
 }
 
 /* -------------------------------------------------------------------------- */
-/* Download URL */
+/* Download URL (VERIFY S3 EXISTS BEFORE SIGNING) */
 /* -------------------------------------------------------------------------- */
 
 export async function onboardingCreateMyDownloadUrl(
@@ -244,25 +264,40 @@ export async function onboardingCreateMyDownloadUrl(
     const cleanKey = String(key ?? "").trim();
     if (!cleanKey) return { ok: false, code: "ERROR", message: "Missing key." };
 
-    // ✅ Verify ownership (don’t sign arbitrary keys)
     const [row] = await db
       .select({ key: documents.key })
       .from(documents)
-      .where(
-        and(eq(documents.userId, viewer.userId), eq(documents.key, cleanKey))
-      )
+      .where(and(eq(documents.userId, viewer.userId), eq(documents.key, cleanKey)))
       .limit(1);
 
     if (!row) return { ok: false, code: "FORBIDDEN" };
 
     const s3 = new S3Client({ region: cfg.region });
 
+    try {
+      await s3.send(new HeadObjectCommand({ Bucket: cfg.bucket, Key: cleanKey }));
+    } catch (e: any) {
+      const status = e?.$metadata?.httpStatusCode;
+      const name = e?.name;
+
+      if (status === 404 || name === "NotFound" || name === "NoSuchKey") {
+        await db
+          .delete(documents)
+          .where(and(eq(documents.userId, viewer.userId), eq(documents.key, cleanKey)));
+
+        return {
+          ok: false,
+          code: "ERROR",
+          message: "File is missing in storage (upload likely failed). Please re-upload.",
+        };
+      }
+
+      throw e;
+    }
+
     const url = await getSignedUrl(
       s3,
-      new GetObjectCommand({
-        Bucket: cfg.bucket,
-        Key: cleanKey,
-      }),
+      new GetObjectCommand({ Bucket: cfg.bucket, Key: cleanKey }),
       { expiresIn: 300 }
     );
 

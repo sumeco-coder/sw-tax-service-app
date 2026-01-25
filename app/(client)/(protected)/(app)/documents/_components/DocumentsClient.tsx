@@ -5,9 +5,10 @@ import { useEffect, useMemo, useState, useTransition } from "react";
 import {
   listMyDocuments,
   createUploadUrl,
+  finalizeUpload,
   createMyDownloadUrl,
   createClientDownloadUrl,
-  deleteDocument, // ✅ keep this for S3-delete behavior if you already built it
+  deleteDocument,
 } from "../actions";
 
 // ✅ import admin server actions (DB-backed)
@@ -63,11 +64,11 @@ export default function DocumentsClient({
   );
 
   async function refresh() {
-    const rows = mode === "admin"
-      ? ((await adminListDocuments(targetUserId)) as AdminDocItem[])
-      : await listMyDocuments();
+    const rows =
+      mode === "admin"
+        ? ((await adminListDocuments(targetUserId)) as AdminDocItem[])
+        : await listMyDocuments();
 
-    // Normalize both shapes into DocItem
     const normalized: DocItem[] = (rows as any[]).map((r) => ({
       id: r.id ? String(r.id) : undefined,
       key: String(r.key),
@@ -85,7 +86,9 @@ export default function DocumentsClient({
 
   useEffect(() => {
     startTransition(() => {
-      refresh().catch((e: any) => setErr(e?.message ?? "Failed to load documents."));
+      refresh().catch((e: any) =>
+        setErr(e?.message ?? "Failed to load documents.")
+      );
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [targetUserId, mode]);
@@ -95,6 +98,7 @@ export default function DocumentsClient({
 
     const contentType = file.type || "application/octet-stream";
 
+    // 1) Get presigned POST (NO DB write here)
     const out =
       mode === "admin"
         ? await createUploadUrl({
@@ -107,14 +111,33 @@ export default function DocumentsClient({
             contentType,
           });
 
-    const put = await fetch(out.url, {
-      method: "PUT",
-      headers: { "content-type": contentType },
-      body: file,
+    // 2) Upload to S3 using POST + FormData (NOT PUT)
+    const form = new FormData();
+    for (const [k, v] of Object.entries(out.fields || {})) {
+      form.append(k, v as string);
+    }
+    // S3 expects the actual file field to be named "file"
+    form.append("file", file);
+
+    const res = await fetch(out.url, {
+      method: "POST",
+      body: form,
     });
 
-    if (!put.ok) throw new Error("Upload failed.");
+    // POST success is often 204 or 201
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`Upload failed (${res.status}). ${text.slice(0, 200)}`);
+    }
 
+    // 3) Finalize (HeadObject check + DB insert AFTER S3 upload)
+    await finalizeUpload({
+      key: out.key,
+      fileName: file.name,
+      ...(mode === "admin" ? { targetUserId } : {}),
+    });
+
+    // 4) Refresh list
     await refresh();
   }
 
@@ -126,7 +149,7 @@ export default function DocumentsClient({
         ? await createClientDownloadUrl(targetUserId, key)
         : await createMyDownloadUrl(key);
 
-    window.open(out.url, "_blank");
+    window.open(out.url, "_blank", "noopener,noreferrer");
   }
 
   async function onDelete(item: DocItem) {
@@ -139,9 +162,7 @@ export default function DocumentsClient({
       await adminDeleteDocument(targetUserId, item.id);
     }
 
-    // ✅ If your existing deleteDocument removes from S3 (recommended),
-    // call it too so we don't leave orphaned S3 files.
-    // If deleteDocument ALSO deletes DB rows already, then remove adminDeleteDocument above.
+    // ✅ Remove from S3 + DB (based on your server action behavior)
     await deleteDocument({ targetUserId, key: item.key });
 
     await refresh();
@@ -232,7 +253,8 @@ export default function DocumentsClient({
               <div className="min-w-0">
                 <p className="truncate text-sm font-semibold">{it.name}</p>
                 <p className="text-[11px] text-muted-foreground">
-                  {fmtDate(it.lastModified)}{it.lastModified ? " · " : ""}
+                  {fmtDate(it.lastModified)}
+                  {it.lastModified ? " · " : ""}
                   {fmtSize(it.size)}
                 </p>
               </div>

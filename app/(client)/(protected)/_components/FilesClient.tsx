@@ -10,6 +10,8 @@ import {
   listClientDocuments,
   createMyUploadUrl,
   createUploadUrl,
+  finalizeMyUpload, 
+  finalizeUpload,   
   createMyDownloadUrl,
   createDownloadUrl,
 } from "../(app)/files/actions";
@@ -41,7 +43,7 @@ const focusRing =
  *   <FilesClient targetUserIdOrSub="{COGNITO_SUB}" />
  *
  * NOTE: `targetUserIdOrSub` here should be the SAME folder id your S3 uses.
- * With the actions we wrote: that means Cognito sub.
+ * With the actions we wrote: that means Cognito sub (or your chosen prefix id).
  */
 export default function FilesClient({
   targetUserIdOrSub,
@@ -68,8 +70,8 @@ export default function FilesClient({
     const mapped: DocRow[] = (items ?? []).map((x) => ({
       key: String(x.key),
       size: Number(x.size ?? 0),
-      uploadedAt: x.lastModified ? String(x.lastModified) : null,
-      fileName: prettifyName(String(x.name ?? x.key)),
+      uploadedAt: x.lastModified ? String(x.lastModified) : x.uploadedAt ? String(x.uploadedAt) : null,
+      fileName: prettifyName(String(x.name ?? x.fileName ?? x.key)),
     }));
 
     mapped.sort((a, b) => (b.uploadedAt ?? "").localeCompare(a.uploadedAt ?? ""));
@@ -104,15 +106,20 @@ export default function FilesClient({
     setUploading(true);
     setError(null);
 
+    let okCount = 0;
+    let skipCount = 0;
+
     try {
       for (const file of files) {
         if (file.size > 10 * 1024 * 1024) {
+          skipCount++;
           toast.error(`${file.name}: max size is 10MB`);
           continue;
         }
 
         const contentType = file.type || "application/octet-stream";
 
+        // 1) presign PUT (NO DB row should be created here)
         const presign = target
           ? await createUploadUrl({
               targetUserIdOrSub: target,
@@ -124,7 +131,16 @@ export default function FilesClient({
               contentType,
             });
 
-        const put = await fetch(presign.url, {
+        // Support either `{ key, url }` or `{ fileKey, uploadUrl }` shapes
+        const key = String((presign as any).key ?? (presign as any).fileKey ?? "").trim();
+        const url = String((presign as any).url ?? (presign as any).uploadUrl ?? "").trim();
+
+        if (!key || !url) {
+          throw new Error("Presign response missing key/url.");
+        }
+
+        // 2) PUT to S3
+        const put = await fetch(url, {
           method: "PUT",
           headers: { "Content-Type": contentType },
           body: file,
@@ -133,9 +149,34 @@ export default function FilesClient({
         if (!put.ok) {
           throw new Error(`Upload failed (${put.status}) for ${file.name}`);
         }
+
+        // 3) finalize AFTER PUT (HeadObject check + DB insert/upsert if you track files in DB)
+        if (target) {
+          await finalizeUpload({
+            targetUserIdOrSub: target,
+            key,
+            fileName: file.name,
+          });
+        } else {
+          await finalizeMyUpload({
+            key,
+            fileName: file.name,
+          });
+        }
+
+        okCount++;
       }
 
-      toast.success(`Uploaded ${files.length} file${files.length > 1 ? "s" : ""}`);
+      if (okCount > 0) {
+        toast.success(
+          `Uploaded ${okCount} file${okCount > 1 ? "s" : ""}${
+            skipCount ? ` (skipped ${skipCount})` : ""
+          }`
+        );
+      } else if (skipCount > 0) {
+        toast.error("No files uploaded.");
+      }
+
       await refresh();
     } catch (e: any) {
       console.error(e);
@@ -194,11 +235,16 @@ export default function FilesClient({
         style={{ boxShadow: "0 1px 0 rgba(0,0,0,0.02)" }}
       >
         <div className="mx-auto flex w-full max-w-md flex-col items-center gap-3">
-          <div className="flex h-12 w-12 items-center justify-center rounded-2xl text-white shadow-sm" style={brandGradient}>
+          <div
+            className="flex h-12 w-12 items-center justify-center rounded-2xl text-white shadow-sm"
+            style={brandGradient}
+          >
             <UploadCloud className="h-6 w-6" />
           </div>
 
-          <div className="text-base font-semibold text-slate-900">Drag &amp; drop files here</div>
+          <div className="text-base font-semibold text-slate-900">
+            Drag &amp; drop files here
+          </div>
           <div className="text-xs text-slate-500">or</div>
 
           <button
@@ -226,14 +272,23 @@ export default function FilesClient({
           </div>
         ) : (
           docs.map((doc) => (
-            <div key={doc.key} className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white p-4">
+            <div
+              key={doc.key}
+              className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white p-4"
+            >
               <div className="flex min-w-0 items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-xl text-white" style={brandGradient} aria-hidden="true">
+                <div
+                  className="flex h-10 w-10 items-center justify-center rounded-xl text-white"
+                  style={brandGradient}
+                  aria-hidden="true"
+                >
                   <Files className="h-5 w-5" />
                 </div>
 
                 <div className="min-w-0">
-                  <div className="truncate font-semibold text-slate-900">{doc.fileName}</div>
+                  <div className="truncate font-semibold text-slate-900">
+                    {doc.fileName}
+                  </div>
                   <div className="text-xs text-slate-500">
                     {doc.size ? formatBytes(doc.size) + " • " : ""}
                     {doc.uploadedAt ? new Date(doc.uploadedAt).toLocaleString() : ""}
