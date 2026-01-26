@@ -154,31 +154,53 @@ type OnFile = {
   updatedAt: string | null;
 };
 
+type OnFileFull = {
+  routingNumber: string;
+  accountNumber: string;
+};
+
+function maskLast4(last4: string) {
+  const v = String(last4 ?? "").trim();
+  if (!v) return "";
+  return `********${v}`;
+}
+
 export default function DirectDepositInformation({
   initialValues,
   onSave,
   onBack,
   saveLabel = "Save",
-  autoLoad = true, // ✅ new: load saved values like Education & Credits does
+  autoLoad = true,
+  revealOnFileNumbers = false, // ✅ NEW
 }: {
   initialValues?: Partial<DirectDepositValues>;
   onSave?: (values: DirectDepositValues) => Promise<void> | void;
   onBack?: () => void;
   saveLabel?: string;
   autoLoad?: boolean;
+  revealOnFileNumbers?: boolean;
 }) {
   const [showNumbers, setShowNumbers] = React.useState(false);
   const [msg, setMsg] = React.useState<string>("");
   const [toggleSaving, setToggleSaving] = React.useState(false);
   const [loading, setLoading] = React.useState<boolean>(false);
+
   const [onFile, setOnFile] = React.useState<OnFile>({
     routingLast4: "",
     accountLast4: "",
     updatedAt: null,
   });
 
+  // ✅ NEW: reveal state for "On file"
+  const [revealOnFile, setRevealOnFile] = React.useState(false);
+  const [onFileFullLoading, setOnFileFullLoading] = React.useState(false);
+  const [onFileFull, setOnFileFull] = React.useState<OnFileFull>({
+    routingNumber: "",
+    accountNumber: "",
+  });
+
   const resolver: Resolver<DirectDepositValues> = zodResolver(
-    schema
+    schema,
   ) as unknown as Resolver<DirectDepositValues>;
 
   const form = useForm<DirectDepositValues>({
@@ -199,12 +221,49 @@ export default function DirectDepositInformation({
 
   const useDirectDeposit = watch("useDirectDeposit");
 
-  async function saveToggle(nextUseDirectDeposit: boolean) {
-    // NOTE:
-    // - Turning ON: send minimal payload so API "enable-only" branch can flip the flag
-    //   without requiring routing/account yet.
-    // - Turning OFF: scrub everything immediately.
+  async function fetchSensitiveOnFile() {
+    setOnFileFullLoading(true);
+    try {
+      const res = await fetch("/api/direct-deposit/sensitive", {
+        method: "GET",
+        cache: "no-store",
+      });
 
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err?.error || "Failed to load full bank details");
+      }
+
+      const data = await res.json().catch(() => ({}));
+      setOnFileFull({
+        routingNumber: String(data?.routingNumber ?? ""),
+        accountNumber: String(data?.accountNumber ?? ""),
+      });
+
+      // also refresh last4 if present
+      setOnFile((prev) => ({
+        routingLast4: String(data?.routingLast4 ?? prev.routingLast4 ?? ""),
+        accountLast4: String(data?.accountLast4 ?? prev.accountLast4 ?? ""),
+        updatedAt: data?.updatedAt
+          ? String(data.updatedAt)
+          : (prev.updatedAt ?? null),
+      }));
+    } finally {
+      setOnFileFullLoading(false);
+    }
+  }
+
+  async function toggleRevealOnFile() {
+    if (!revealOnFile) {
+      // only fetch sensitive when turning ON
+      if (!onFileFull.routingNumber && !onFileFull.accountNumber) {
+        await fetchSensitiveOnFile();
+      }
+    }
+    setRevealOnFile((v) => !v);
+  }
+
+  async function saveToggle(nextUseDirectDeposit: boolean) {
     const payload: Partial<DirectDepositValues> = nextUseDirectDeposit
       ? { useDirectDeposit: true }
       : {
@@ -217,7 +276,6 @@ export default function DirectDepositInformation({
           accountType: "checking",
         };
 
-    // If you passed an onSave prop, use it; otherwise call API directly
     if (onSave) {
       await onSave(payload as DirectDepositValues);
       return;
@@ -233,19 +291,33 @@ export default function DirectDepositInformation({
       const err = await res.json().catch(() => ({}));
       throw new Error(err?.error || "Failed to save toggle");
     }
+
+    const data = await res.json().catch(() => ({}));
+    setOnFile({
+      routingLast4: String(data?.routingLast4 ?? ""),
+      accountLast4: String(data?.accountLast4 ?? ""),
+      updatedAt: data?.updatedAt ? String(data.updatedAt) : null,
+    });
+
+    if (!nextUseDirectDeposit) {
+      setRevealOnFile(false);
+      setOnFileFull({ routingNumber: "", accountNumber: "" });
+    }
   }
 
-  // ✅ If parent passes initialValues later, apply them (RHF defaultValues won't update after first render)
   React.useEffect(() => {
     if (!initialValues) return;
     reset({
       ...defaultValues,
       ...initialValues,
-      // never rehydrate full account numbers
       routingNumber: "",
       accountNumber: "",
       confirmAccountNumber: "",
     });
+
+    // if parent rehydrates, hide any revealed "on file"
+    setRevealOnFile(false);
+    setOnFileFull({ routingNumber: "", accountNumber: "" });
   }, [initialValues, reset]);
 
   const loadSaved = React.useCallback(async () => {
@@ -268,7 +340,7 @@ export default function DirectDepositInformation({
         updatedAt: data?.updatedAt ? String(data.updatedAt) : null,
       });
 
-      // ✅ hydrate safe fields only (no full routing/account)
+      // reset safe fields only (no full numbers)
       reset({
         ...defaultValues,
         useDirectDeposit: Boolean(data?.useDirectDeposit),
@@ -279,15 +351,17 @@ export default function DirectDepositInformation({
         accountNumber: "",
         confirmAccountNumber: "",
       });
+
+      // hide any revealed "on file"
+      setRevealOnFile(false);
+      setOnFileFull({ routingNumber: "", accountNumber: "" });
     } finally {
       setLoading(false);
     }
   }, [reset]);
 
-  // ✅ Auto-load on mount (Education & Credits behavior)
   React.useEffect(() => {
     if (!autoLoad) return;
-    // If parent already provided initialValues, skip auto-load
     if (initialValues) return;
     void loadSaved();
   }, [autoLoad, initialValues, loadSaved]);
@@ -309,32 +383,65 @@ export default function DirectDepositInformation({
     try {
       if (onSave) {
         await onSave(payload);
-        setMsg("✅ Saved.");
-      } else {
-        const res = await fetch("/api/direct-deposit", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        });
-
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({}));
-          throw new Error(err?.error || "Failed to save direct deposit info");
-        }
-
-        setMsg("✅ Saved.");
+        setMsg(
+          "✅ Bank details saved. You can view them anytime in Profile → Bank Details.",
+        );
+        return;
       }
 
-      // reduce exposure: clear account numbers after success
-      setValue("accountNumber", "");
-      setValue("confirmAccountNumber", "");
+      const res = await fetch("/api/direct-deposit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
 
-      // ✅ refresh last4 + safe fields after save
-      await loadSaved();
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err?.error || "Failed to save direct deposit info");
+      }
+
+      const data = await res.json().catch(() => ({}));
+      setOnFile({
+        routingLast4: String(data?.routingLast4 ?? ""),
+        accountLast4: String(data?.accountLast4 ?? ""),
+        updatedAt: data?.updatedAt ? String(data.updatedAt) : null,
+      });
+
+      // ✅ If user just saved numbers, we can set onFileFull immediately (no extra fetch)
+      if (values.useDirectDeposit) {
+        setOnFileFull({
+          routingNumber: String(values.routingNumber ?? ""),
+          accountNumber: String(values.accountNumber ?? ""),
+        });
+      } else {
+        // ✅ turned off → clear everything
+        setOnFile({ routingLast4: "", accountLast4: "", updatedAt: null });
+        setOnFileFull({ routingNumber: "", accountNumber: "" });
+      }
+
+      setMsg(
+        "✅ Bank details saved. You can view them anytime in Profile → Bank Details.",
+      );
     } catch (e: any) {
       setMsg(`❌ ${e?.message ?? "Save failed"}`);
     }
   };
+
+  const showOnFileRow = !!(onFile.routingLast4 || onFile.accountLast4);
+
+  const onFileRoutingText =
+    revealOnFile && onFileFull.routingNumber
+      ? `Routing ${onFileFull.routingNumber}`
+      : onFile.routingLast4
+        ? `Routing ${maskLast4(onFile.routingLast4)}`
+        : "";
+
+  const onFileAccountText =
+    revealOnFile && onFileFull.accountNumber
+      ? `Account ${onFileFull.accountNumber}`
+      : onFile.accountLast4
+        ? `Account ${maskLast4(onFile.accountLast4)}`
+        : "";
 
   return (
     <div className="space-y-6">
@@ -353,17 +460,34 @@ export default function DirectDepositInformation({
                 Provide bank details for refund direct deposit (optional).
               </p>
 
-              {(onFile.routingLast4 || onFile.accountLast4) && (
-                <p className="mt-2 text-xs text-slate-600">
-                  On file:{" "}
-                  {onFile.routingLast4
-                    ? `Routing ****${onFile.routingLast4}`
-                    : ""}
-                  {onFile.routingLast4 && onFile.accountLast4 ? " • " : ""}
-                  {onFile.accountLast4
-                    ? `Account ****${onFile.accountLast4}`
-                    : ""}
-                </p>
+              {showOnFileRow && (
+                <div className="mt-2 flex items-center justify-between gap-3">
+                  <p className="text-xs text-slate-600">
+                    On file: {onFileRoutingText}
+                    {onFileRoutingText && onFileAccountText ? " • " : ""}
+                    {onFileAccountText}
+                    {onFileFullLoading ? " (loading…)" : ""}
+                  </p>
+
+                  {revealOnFileNumbers && (
+                    <button
+                      type="button"
+                      className="inline-flex items-center gap-2 text-xs font-semibold text-slate-600 hover:text-slate-900"
+                      onClick={() => void toggleRevealOnFile()}
+                      disabled={loading || isSubmitting || onFileFullLoading}
+                      aria-label={
+                        revealOnFile ? "Hide bank details" : "Show bank details"
+                      }
+                    >
+                      {revealOnFile ? (
+                        <EyeOff className="h-4 w-4" />
+                      ) : (
+                        <Eye className="h-4 w-4" />
+                      )}
+                      {revealOnFile ? "Hide" : "Show"}
+                    </button>
+                  )}
+                </div>
               )}
             </div>
 
@@ -375,7 +499,11 @@ export default function DirectDepositInformation({
         </CardHeader>
 
         <CardContent className="space-y-5">
-          {msg && <p className="text-sm text-slate-600">{msg}</p>}
+          {msg && (
+            <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+              {msg}
+            </div>
+          )}
 
           <div className="flex items-center justify-between rounded-2xl border border-slate-200 bg-white p-4">
             <div className="flex items-start gap-3">
@@ -410,7 +538,6 @@ export default function DirectDepositInformation({
                     setToggleSaving(true);
 
                     try {
-                      // update UI immediately
                       field.onChange(v);
 
                       if (!v) {
@@ -421,24 +548,22 @@ export default function DirectDepositInformation({
                         setValue("confirmAccountNumber", "");
                         setValue("accountType", "checking");
 
-                        // clear "on file" display immediately
                         setOnFile({
                           routingLast4: "",
                           accountLast4: "",
                           updatedAt: null,
                         });
+                        setRevealOnFile(false);
+                        setOnFileFull({ routingNumber: "", accountNumber: "" });
                       }
 
-                      // ✅ autosave the toggle immediately
                       await saveToggle(v);
-
-                      // reduce exposure
-                      setValue("accountNumber", "");
-                      setValue("confirmAccountNumber", "");
-
-                      setMsg("✅ Saved.");
+                      setMsg(
+                        v
+                          ? "✅ Direct deposit enabled. Finish entering your bank details and click Save. You can view them in Profile → Bank Details."
+                          : "✅ Direct deposit turned off. Bank details cleared from Profile → Bank Details.",
+                      );
                     } catch (e: any) {
-                      // revert UI if save fails
                       field.onChange(prev);
                       setMsg(`❌ ${e?.message ?? "Save failed"}`);
                     } finally {
@@ -449,6 +574,7 @@ export default function DirectDepositInformation({
               )}
             />
           </div>
+
           {useDirectDeposit && !onFile.routingLast4 && !onFile.accountLast4 && (
             <p className="text-xs text-slate-600">
               To get your refund by direct deposit, enter your bank details and
@@ -462,7 +588,9 @@ export default function DirectDepositInformation({
             noValidate
           >
             <div
-              className={`grid grid-cols-1 gap-4 ${useDirectDeposit ? "md:grid-cols-2" : ""}`}
+              className={`grid grid-cols-1 gap-4 ${
+                useDirectDeposit ? "md:grid-cols-2" : ""
+              }`}
             >
               <div>
                 <Label className="text-slate-700">Account Holder Name</Label>

@@ -10,6 +10,10 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
+const NO_STORE_HEADERS = {
+  "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+};
+
 function isAdminRole(role: string) {
   return ["ADMIN", "SUPERADMIN", "LMS_ADMIN", "LMS_PREPARER"].includes(role);
 }
@@ -30,11 +34,15 @@ function getDirectDepositKey(): Buffer {
     ? Buffer.from(raw, "hex")
     : Buffer.from(
         raw,
-        raw.includes("-") || raw.includes("_") ? ("base64url" as any) : "base64"
+        raw.includes("-") || raw.includes("_")
+          ? ("base64url" as any)
+          : "base64",
       );
 
   if (key.length !== 32) {
-    throw new Error("DIRECT_DEPOSIT_ENCRYPTION_KEY must decode to 32 bytes (AES-256).");
+    throw new Error(
+      "DIRECT_DEPOSIT_ENCRYPTION_KEY must decode to 32 bytes (AES-256).",
+    );
   }
   return key;
 }
@@ -74,29 +82,42 @@ async function resolveUser(idOrSub: string) {
 
 export async function GET(
   req: Request,
-  { params }: { params: { userId: string } }
+  { params }: { params: Promise<{ userId: string }> },
 ) {
   try {
+    const { userId } = await params;
+
     const me = await getServerRole();
-    if (!me) return NextResponse.json({ ok: false, message: "Unauthorized" }, { status: 401 });
+    if (!me)
+      return NextResponse.json(
+        { ok: false, message: "Unauthorized" },
+        { status: 401, headers: NO_STORE_HEADERS },
+      );
 
     const role = String((me as any).role ?? "");
-    if (!isAdminRole(role)) return NextResponse.json({ ok: false, message: "Forbidden" }, { status: 403 });
+    if (!isAdminRole(role))
+      return NextResponse.json(
+        { ok: false, message: "Forbidden" },
+        { status: 403, headers: NO_STORE_HEADERS },
+      );
 
     const url = new URL(req.url);
     const reveal = url.searchParams.get("reveal") === "1";
 
     if (reveal && !requireRevealPrivilege(role)) {
       return NextResponse.json(
-        { ok: false, message: "Forbidden: reveal requires SUPERADMIN" },
-        { status: 403 }
+        { ok: false, message: "Forbidden: reveal requires ADMIN or SUPERADMIN" },
+        { status: 403, headers: NO_STORE_HEADERS },
       );
     }
 
-    const u = await resolveUser(String(params.userId));
-    if (!u) return NextResponse.json({ ok: false, message: "User not found." }, { status: 404 });
+    const u = await resolveUser(String(userId));
+    if (!u)
+      return NextResponse.json(
+        { ok: false, message: "User not found." },
+        { status: 404, headers: NO_STORE_HEADERS },
+      );
 
-    // direct_deposit table query (raw SQL via drizzle)
     const rows = await db.execute(sql`
       SELECT
         use_direct_deposit,
@@ -113,50 +134,65 @@ export async function GET(
       LIMIT 1
     `);
 
-    const row: any = (rows as any)?.rows?.[0];
+    const row: any = (rows as any)?.rows?.[0] ?? null;
 
-    // If no record, return default “empty”
     if (!row) {
-      return NextResponse.json({
-        ok: true,
-        useDirectDeposit: false,
-        accountHolderName: "",
-        bankName: "",
-        accountType: "checking" as const,
-        routingLast4: "",
-        accountLast4: "",
-        updatedAt: null,
-      });
+      return NextResponse.json(
+        {
+          ok: true,
+          useDirectDeposit: false,
+          accountHolderName: "",
+          bankName: "",
+          accountType: "checking" as const,
+          routingLast4: "",
+          accountLast4: "",
+          updatedAt: null,
+          hasNumbersOnFile: false,
+        },
+        { headers: NO_STORE_HEADERS },
+      );
     }
+
+    const hasNumbersOnFile = Boolean(
+      row.routing_encrypted ||
+        row.account_encrypted ||
+        row.routing_last4 ||
+        row.account_last4,
+    );
 
     const base = {
       ok: true,
       useDirectDeposit: Boolean(row.use_direct_deposit),
       accountHolderName: String(row.account_holder_name ?? ""),
       bankName: String(row.bank_name ?? ""),
-      accountType: row.account_type === "savings" ? ("savings" as const) : ("checking" as const),
+      accountType:
+        row.account_type === "savings"
+          ? ("savings" as const)
+          : ("checking" as const),
       routingLast4: String(row.routing_last4 ?? ""),
       accountLast4: String(row.account_last4 ?? ""),
       updatedAt: row.updated_at ?? null,
+      hasNumbersOnFile,
     };
 
-    // masked-only response
-    if (!reveal) return NextResponse.json(base);
+    if (!reveal) return NextResponse.json(base, { headers: NO_STORE_HEADERS });
 
-    // reveal full routing + account numbers
     const key = getDirectDepositKey();
-    const routingNumber = row.routing_encrypted ? decryptGcm(String(row.routing_encrypted), key) : "";
-    const accountNumber = row.account_encrypted ? decryptGcm(String(row.account_encrypted), key) : "";
+    const routingNumber = row.routing_encrypted
+      ? decryptGcm(String(row.routing_encrypted), key)
+      : "";
+    const accountNumber = row.account_encrypted
+      ? decryptGcm(String(row.account_encrypted), key)
+      : "";
 
-    return NextResponse.json({
-      ...base,
-      routingNumber,
-      accountNumber,
-    });
+    return NextResponse.json(
+      { ...base, routingNumber, accountNumber },
+      { headers: NO_STORE_HEADERS },
+    );
   } catch (e: any) {
     return NextResponse.json(
       { ok: false, message: e?.message ?? "Server error" },
-      { status: 500 }
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

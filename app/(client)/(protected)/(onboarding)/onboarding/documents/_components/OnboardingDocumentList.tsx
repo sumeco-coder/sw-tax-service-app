@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import {
   onboardingListMyDocuments,
   onboardingCreateMyDownloadUrl,
@@ -13,10 +13,23 @@ type DocItem = {
   lastModified: string | null;
 };
 
-export default function OnboardingDocumentList({ refreshKey = 0 }: { refreshKey?: number }) {
+export default function OnboardingDocumentList({
+  refreshKey = 0,
+}: {
+  refreshKey?: number;
+}) {
   const [docs, setDocs] = useState<DocItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [busy, startTransition] = useTransition();
+
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -37,23 +50,36 @@ export default function OnboardingDocumentList({ refreshKey = 0 }: { refreshKey?
           window.location.href = "/onboarding";
           return;
         }
-        if (!cancelled) setError("Failed to load documents.");
-        if (!cancelled) setDocs([]);
-        if (!cancelled) setLoading(false);
+
+        if (!cancelled && mountedRef.current) {
+          setDocs([]);
+          setError(res.message || "Failed to load documents.");
+          setLoading(false);
+        }
         return;
       }
 
-      if (!cancelled) setDocs(res.data);
-      if (!cancelled) setLoading(false);
+      if (!cancelled && mountedRef.current) {
+        setDocs(res.data);
+        setLoading(false);
+      }
     }
 
-    load();
+    load().catch((e: any) => {
+      if (!cancelled && mountedRef.current) {
+        setError(e?.message || "Failed to load documents.");
+        setLoading(false);
+      }
+    });
+
     return () => {
       cancelled = true;
     };
   }, [refreshKey]);
 
   async function handleDownload(doc: DocItem) {
+    setError(null);
+
     const res = await onboardingCreateMyDownloadUrl(doc.key);
 
     if (!res.ok) {
@@ -62,7 +88,9 @@ export default function OnboardingDocumentList({ refreshKey = 0 }: { refreshKey?
           "/sign-in?next=" + encodeURIComponent("/onboarding/documents");
         return;
       }
-      setError("Failed to download document.");
+      if (mountedRef.current) {
+        setError(res.message || "Failed to download document.");
+      }
       return;
     }
 
@@ -70,7 +98,11 @@ export default function OnboardingDocumentList({ refreshKey = 0 }: { refreshKey?
   }
 
   if (loading) {
-    return <div className="mt-4 text-xs text-slate-500">Loading your uploaded documents…</div>;
+    return (
+      <div className="mt-4 text-xs text-slate-500">
+        Loading your uploaded documents…
+      </div>
+    );
   }
 
   if (error) {
@@ -87,7 +119,9 @@ export default function OnboardingDocumentList({ refreshKey = 0 }: { refreshKey?
 
   return (
     <div className="mt-4 space-y-2">
-      <p className="text-sm font-semibold text-slate-900">Uploaded documents</p>
+      <p className="text-sm font-semibold text-slate-900">
+        Uploaded documents
+      </p>
 
       <ul className="space-y-2">
         {docs.map((doc) => (
@@ -98,14 +132,17 @@ export default function OnboardingDocumentList({ refreshKey = 0 }: { refreshKey?
             <div className="flex flex-col">
               <span className="font-medium text-slate-900">{doc.name}</span>
               <span className="text-[11px] text-slate-500">
-                {doc.lastModified ? new Date(doc.lastModified).toLocaleString() : ""}
+                {doc.lastModified
+                  ? new Date(doc.lastModified).toLocaleString()
+                  : ""}
               </span>
             </div>
 
             <button
               type="button"
-              onClick={() => handleDownload(doc)}
-              className="text-[11px] font-semibold text-slate-700 hover:text-slate-900"
+              disabled={busy}
+              onClick={() => startTransition(() => handleDownload(doc))}
+              className="text-[11px] font-semibold text-slate-700 hover:text-slate-900 disabled:opacity-60"
             >
               Download
             </button>

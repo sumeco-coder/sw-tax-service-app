@@ -19,13 +19,17 @@ function normalizeEmail(v: unknown) {
   return clean(v, 255).toLowerCase();
 }
 function digitsOnly(v: unknown, maxLen: number) {
-  return String(v ?? "").replace(/\D/g, "").slice(0, maxLen);
+  return String(v ?? "")
+    .replace(/\D/g, "")
+    .slice(0, maxLen);
 }
 function isIsoDate(v: string) {
   return /^\d{4}-\d{2}-\d{2}$/.test(v);
 }
 function isUuid(v: string) {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    v,
+  );
 }
 
 function readAes256Key(envName: string): Buffer {
@@ -37,7 +41,9 @@ function readAes256Key(envName: string): Buffer {
     ? Buffer.from(raw, "hex")
     : Buffer.from(
         raw,
-        raw.includes("-") || raw.includes("_") ? ("base64url" as any) : "base64"
+        raw.includes("-") || raw.includes("_")
+          ? ("base64url" as any)
+          : "base64",
       );
 
   if (key.length !== 32) {
@@ -51,7 +57,10 @@ function encryptSsn(ssn9: string) {
   const iv = crypto.randomBytes(12);
   const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
 
-  const ciphertext = Buffer.concat([cipher.update(ssn9, "utf8"), cipher.final()]);
+  const ciphertext = Buffer.concat([
+    cipher.update(ssn9, "utf8"),
+    cipher.final(),
+  ]);
   const tag = cipher.getAuthTag();
 
   return `v1.${iv.toString("base64url")}.${tag.toString("base64url")}.${ciphertext.toString("base64url")}`;
@@ -66,7 +75,11 @@ async function requireAuth() {
 }
 
 async function getOrCreateUserBySub(cognitoSub: string, email?: string) {
-  const userCols = { id: users.id, cognitoSub: users.cognitoSub, email: users.email };
+  const userCols = {
+    id: users.id,
+    cognitoSub: users.cognitoSub,
+    email: users.email,
+  };
 
   const [existing] = await db
     .select(userCols)
@@ -117,12 +130,51 @@ const depCols = {
   updatedAt: dependents.updatedAt,
 };
 
+function normalizeRelationshipLabel(v: unknown) {
+  const raw = String(v ?? "").trim();
+  if (!raw) return "";
+
+  // 1) remove spaces (handles "Foster child")
+  const key1 = raw.replace(/\s+/g, "").toLowerCase();
+  // 2) letters only (handles "fosterChild", "otherRelative")
+  const key2 = raw.replace(/[^a-zA-Z]/g, "").toLowerCase();
+
+  const map: Record<string, string> = {
+    // onboarding codes + any normalized labels
+    son: "Son",
+    daughter: "Daughter",
+    stepchild: "Stepchild",
+    fosterchild: "Foster child",
+    grandchild: "Grandchild",
+    sibling: "Sibling",
+    parent: "Parent",
+    otherrelative: "Other relative",
+    other: "Other",
+
+    // extra label-type values you use in /dependents dropdown
+    grandparent: "Grandparent",
+    brother: "Brother",
+    halfbrother: "Half-brother",
+    stepbrother: "Stepbrother",
+    sister: "Sister",
+    halfsister: "Half-sister",
+    stepsister: "Stepsister",
+    aunt: "Aunt",
+    uncle: "Uncle",
+    nephew: "Nephew",
+    niece: "Niece",
+  };
+
+  return map[key1] || map[key2] || raw;
+}
+
 function toSafeDependent(r: any) {
   return {
     ...r,
     dob: r?.dob ? String(r.dob).slice(0, 10) : "",
     monthsLived: r?.monthsInHome ?? 12,
     hasSsn: !!r?.ssnEncrypted,
+    relationship: normalizeRelationshipLabel(r?.relationship),
 
     ssnLast4: r?.ssnLast4 ?? null,
     ssnSetAt: r?.ssnSetAt ?? null,
@@ -132,13 +184,18 @@ function toSafeDependent(r: any) {
 }
 
 // GET /api/dependents/[id]
-export async function GET(_request: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(
+  _request: NextRequest,
+  { params }: { params: { id: string } },
+) {
   try {
     const { id } = params;
-    if (!isUuid(id)) return NextResponse.json({ error: "Invalid id" }, { status: 400 });
+    if (!isUuid(id))
+      return NextResponse.json({ error: "Invalid id" }, { status: 400 });
 
     const auth = await requireAuth();
-    if (!auth) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (!auth)
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const u = await getOrCreateUserBySub(auth.sub, auth.email);
 
@@ -153,18 +210,26 @@ export async function GET(_request: NextRequest, { params }: { params: { id: str
     return NextResponse.json(toSafeDependent(row));
   } catch (e: any) {
     console.error(e);
-    return NextResponse.json({ error: e?.message ?? "Server error" }, { status: 500 });
+    return NextResponse.json(
+      { error: e?.message ?? "Server error" },
+      { status: 500 },
+    );
   }
 }
 
 // PATCH /api/dependents/[id]
-export async function PATCH(request: NextRequest, { params }: { params: { id: string } }) {
+export async function PATCH(
+  request: NextRequest,
+  { params }: { params: { id: string } },
+) {
   try {
     const { id } = params;
-    if (!isUuid(id)) return NextResponse.json({ error: "Invalid id" }, { status: 400 });
+    if (!isUuid(id))
+      return NextResponse.json({ error: "Invalid id" }, { status: 400 });
 
     const auth = await requireAuth();
-    if (!auth) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (!auth)
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const u = await getOrCreateUserBySub(auth.sub, auth.email);
 
@@ -173,35 +238,52 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
 
     if (typeof b.firstName === "string") {
       const v = clean(b.firstName, 80);
-      if (!v) return NextResponse.json({ error: "First name required" }, { status: 400 });
+      if (!v)
+        return NextResponse.json(
+          { error: "First name required" },
+          { status: 400 },
+        );
       set.firstName = v;
     }
-    if (typeof b.middleName === "string") set.middleName = clean(b.middleName, 80);
+    if (typeof b.middleName === "string")
+      set.middleName = clean(b.middleName, 80);
 
     if (typeof b.lastName === "string") {
       const v = clean(b.lastName, 80);
-      if (!v) return NextResponse.json({ error: "Last name required" }, { status: 400 });
+      if (!v)
+        return NextResponse.json(
+          { error: "Last name required" },
+          { status: 400 },
+        );
       set.lastName = v;
     }
 
     if (typeof b.dob === "string") {
       const dobStr = clean(b.dob, 10);
       if (!isIsoDate(dobStr)) {
-        return NextResponse.json({ error: "DOB must be YYYY-MM-DD" }, { status: 400 });
+        return NextResponse.json(
+          { error: "DOB must be YYYY-MM-DD" },
+          { status: 400 },
+        );
       }
       set.dob = dobStr;
     }
 
     if (typeof b.relationship === "string") {
       const v = clean(b.relationship, 80);
-      if (!v) return NextResponse.json({ error: "Relationship required" }, { status: 400 });
+      if (!v)
+        return NextResponse.json(
+          { error: "Relationship required" },
+          { status: 400 },
+        );
       set.relationship = v;
     }
 
     const monthsCandidate = b.monthsInHome ?? b.monthsLived;
     if (monthsCandidate != null) {
       const n = Number(monthsCandidate);
-      if (Number.isFinite(n)) set.monthsInHome = Math.max(0, Math.min(12, Math.trunc(n)));
+      if (Number.isFinite(n))
+        set.monthsInHome = Math.max(0, Math.min(12, Math.trunc(n)));
     }
 
     if (b.isStudent != null) set.isStudent = Boolean(b.isStudent);
@@ -215,7 +297,7 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
     if (appliedIncoming === true && ssnIncoming) {
       return NextResponse.json(
         { error: "Do not send SSN when marked applied-but-not-received." },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -231,7 +313,10 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
 
     if (ssnIncoming) {
       if (ssnIncoming.length !== 9) {
-        return NextResponse.json({ error: "SSN must be 9 digits" }, { status: 400 });
+        return NextResponse.json(
+          { error: "SSN must be 9 digits" },
+          { status: 400 },
+        );
       }
       set.ssnEncrypted = encryptSsn(ssnIncoming);
       set.ssnLast4 = ssnIncoming.slice(-4);
@@ -249,23 +334,32 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
       .where(and(eq(dependents.id, id), eq(dependents.userId, u.id)))
       .returning(depCols as any);
 
-    if (!updated) return NextResponse.json({ error: "Not found" }, { status: 404 });
+    if (!updated)
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
 
     return NextResponse.json(toSafeDependent(updated));
   } catch (e: any) {
     console.error(e);
-    return NextResponse.json({ error: e?.message ?? "Server error" }, { status: 500 });
+    return NextResponse.json(
+      { error: e?.message ?? "Server error" },
+      { status: 500 },
+    );
   }
 }
 
 // DELETE /api/dependents/[id]
-export async function DELETE(_request: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(
+  _request: NextRequest,
+  { params }: { params: { id: string } },
+) {
   try {
     const { id } = params;
-    if (!isUuid(id)) return NextResponse.json({ error: "Invalid id" }, { status: 400 });
+    if (!isUuid(id))
+      return NextResponse.json({ error: "Invalid id" }, { status: 400 });
 
     const auth = await requireAuth();
-    if (!auth) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (!auth)
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const u = await getOrCreateUserBySub(auth.sub, auth.email);
 
@@ -274,11 +368,15 @@ export async function DELETE(_request: NextRequest, { params }: { params: { id: 
       .where(and(eq(dependents.id, id), eq(dependents.userId, u.id)))
       .returning({ id: dependents.id });
 
-    if (!deleted?.length) return NextResponse.json({ error: "Not found" }, { status: 404 });
+    if (!deleted?.length)
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
 
     return NextResponse.json({ success: true });
   } catch (e: any) {
     console.error(e);
-    return NextResponse.json({ error: e?.message ?? "Server error" }, { status: 500 });
+    return NextResponse.json(
+      { error: e?.message ?? "Server error" },
+      { status: 500 },
+    );
   }
 }

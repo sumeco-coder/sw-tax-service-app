@@ -1,8 +1,7 @@
-// app/(client)/profile/_components/SsnSection.tsx
 "use client";
 
-import React, { useMemo, useState } from "react";
-import { Lock, ShieldCheck } from "lucide-react";
+import React, { useMemo, useState, useEffect } from "react";
+import { Lock, ShieldCheck, Eye, EyeOff } from "lucide-react";
 
 const BRAND = {
   pink: "#E72B69",
@@ -18,6 +17,17 @@ function onlyDigits(v: string) {
   return String(v ?? "").replace(/\D/g, "");
 }
 
+function formatSsn(digits: string) {
+  const d = onlyDigits(digits).slice(0, 9);
+  if (d.length !== 9) return digits;
+  return `${d.slice(0, 3)}-${d.slice(3, 5)}-${d.slice(5)}`;
+}
+
+function maskedFromLast4(last4: string) {
+  const l4 = onlyDigits(last4).slice(0, 4);
+  return l4 ? `***-**-${l4}` : "";
+}
+
 export default function SsnSection({ ssnLast4, onSaved }: Props) {
   const hasSsn = Boolean(ssnLast4);
 
@@ -25,6 +35,17 @@ export default function SsnSection({ ssnLast4, onSaved }: Props) {
   const [ssn, setSsn] = useState("");
   const [msg, setMsg] = useState("");
   const [loading, setLoading] = useState(false);
+
+  // reveal state
+  const [reveal, setReveal] = useState(false);
+  const [revealLoading, setRevealLoading] = useState(false);
+  const [ssnFull, setSsnFull] = useState("");
+
+  useEffect(() => {
+    // if parent last4 changes, hide full again
+    setReveal(false);
+    setSsnFull("");
+  }, [ssnLast4]);
 
   const brandGradient = useMemo(
     () => ({ background: `linear-gradient(135deg, ${BRAND.pink}, ${BRAND.copper})` }),
@@ -58,13 +79,43 @@ export default function SsnSection({ ssnLast4, onSaved }: Props) {
 
       setOpen(false);
       setSsn("");
-      setMsg("Saved ✅");
+      setMsg("✅ SSN saved. You can view it anytime in Profile.");
     } catch (e: unknown) {
       setMsg(e instanceof Error ? e.message : "Could not save SSN.");
     } finally {
       setLoading(false);
     }
   }
+
+  async function toggleReveal() {
+    if (reveal) {
+      setReveal(false);
+      setSsnFull("");
+      return;
+    }
+
+    setMsg("");
+    setRevealLoading(true);
+    try {
+      const res = await fetch("/api/profile/ssn?reveal=1", { cache: "no-store" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.message || "Could not reveal SSN.");
+
+      const full = String(data?.ssn ?? "");
+      if (!full) throw new Error("No SSN on file.");
+
+      setSsnFull(full); // already formatted by API
+      setReveal(true);
+    } catch (e: any) {
+      setMsg(`❌ ${e?.message ?? "Could not reveal SSN"}`);
+      setReveal(false);
+      setSsnFull("");
+    } finally {
+      setRevealLoading(false);
+    }
+  }
+
+  const display = hasSsn ? (reveal ? ssnFull : maskedFromLast4(ssnLast4)) : "";
 
   return (
     <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm text-slate-900">
@@ -73,7 +124,7 @@ export default function SsnSection({ ssnLast4, onSaved }: Props) {
           <h2 className="text-base font-semibold text-slate-900">SSN</h2>
           <p className="mt-1 text-xs text-slate-500">
             {hasSsn
-              ? "SSN is locked for security. Contact support if it needs to be changed."
+              ? "SSN is stored securely. Click Show only when needed."
               : "Add your SSN once. It will be stored securely and then locked."}
           </p>
         </div>
@@ -97,20 +148,32 @@ export default function SsnSection({ ssnLast4, onSaved }: Props) {
       </div>
 
       {hasSsn ? (
-        <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-800">
-          On file: •••-••-{ssnLast4}
+        <div className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-800">
+          <div>On file: {display}</div>
+
+          <button
+            type="button"
+            onClick={() => void toggleReveal()}
+            disabled={revealLoading}
+            className="inline-flex items-center gap-2 text-xs font-semibold text-slate-600 hover:text-slate-900 disabled:opacity-60"
+            aria-label={reveal ? "Hide SSN" : "Show SSN"}
+          >
+            {reveal ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+            {reveal ? "Hide" : revealLoading ? "Loading…" : "Show"}
+          </button>
         </div>
       ) : open ? (
         <div className="space-y-3">
           <label className="block text-sm font-medium text-slate-700">
             Social Security Number
           </label>
+
           <input
             type="password"
             inputMode="numeric"
             placeholder="###-##-####"
-            value={ssn}
-            onChange={(e) => setSsn(e.target.value)}
+            value={formatSsn(ssn)}
+            onChange={(e) => setSsn(onlyDigits(e.target.value).slice(0, 9))}
             className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-[#E72B69]/25 focus:border-[#E72B69]/40"
           />
 

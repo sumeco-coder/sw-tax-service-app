@@ -10,7 +10,7 @@ import {
   getCurrentUser,
   fetchUserAttributes,
 } from "aws-amplify/auth";
-
+import DirectDepositInformation from "@/app/(client)/(protected)/(app)/questionnaire/_components/DirectDepositInformation";
 import InputWithIcons, { EditKeys } from "./_components/InputWithIcons";
 import AddressSection from "./_components/AddressSection";
 import FilingStatusSection from "./_components/FilingStatusSection";
@@ -90,7 +90,7 @@ export default function ProfilePage() {
 
       ssnLast4: "",
     }),
-    []
+    [],
   );
 
   const [form, setForm] = useState<FormState>(initialForm);
@@ -125,7 +125,7 @@ export default function ProfilePage() {
         if (!cu) return;
 
         const attrs = await fetchUserAttributes().catch(
-          () => ({}) as Record<string, string>
+          () => ({}) as Record<string, string>,
         );
 
         const tokenEmail = (attrs.email ?? "").toLowerCase();
@@ -252,7 +252,9 @@ export default function ProfilePage() {
       const normalized = toE164US(form.phone.trim());
       if (!normalized) return setPhoneMsg("Phone is required.");
 
-      await updateUserAttributes({ userAttributes: { phone_number: normalized } });
+      await updateUserAttributes({
+        userAttributes: { phone_number: normalized },
+      });
 
       setPhonePending(true);
       setPhoneMsg("We sent a 6-digit code by SMS.");
@@ -282,7 +284,9 @@ export default function ProfilePage() {
 
   async function resendPhone() {
     try {
-      await sendUserAttributeVerificationCode({ userAttributeKey: "phone_number" });
+      await sendUserAttributeVerificationCode({
+        userAttributeKey: "phone_number",
+      });
       setPhoneMsg("Code resent.");
     } catch (e: unknown) {
       setPhoneMsg(e instanceof Error ? e.message : "Could not resend code.");
@@ -310,7 +314,8 @@ export default function ProfilePage() {
   }
 
   async function saveAddressField(field: EditKeys) {
-    if (!["address1", "address2", "city", "state", "zip"].includes(field)) return;
+    if (!["address1", "address2", "city", "state", "zip"].includes(field))
+      return;
 
     let value = (form[field] ?? "") as string;
     if (field === "state") value = value.toUpperCase().slice(0, 2);
@@ -456,7 +461,9 @@ export default function ProfilePage() {
               editFiling={editFiling}
               setEditFiling={setEditFiling}
               filingStatus={form.filingStatus}
-              setFilingStatus={(v) => setForm((f) => ({ ...f, filingStatus: v }))}
+              setFilingStatus={(v) =>
+                setForm((f) => ({ ...f, filingStatus: v }))
+              }
               snapFilingStatus={snap.filingStatus}
               onSave={saveFiling}
             />
@@ -465,6 +472,21 @@ export default function ProfilePage() {
           <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm text-slate-900">
             <PasswordSection />
           </div>
+        </div>
+        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm text-slate-900">
+          <h2 className="text-lg font-extrabold tracking-tight text-slate-900">
+            Bank Details
+          </h2>
+          <div className="mt-2 h-1 w-28 rounded-full" style={brandBar} />
+          <p className="mt-3 text-sm text-slate-600">
+            Manage your refund direct deposit information.
+          </p>
+
+          <DirectDepositInformation
+            autoLoad={true}
+            saveLabel="Save Bank Details"
+            revealOnFileNumbers={true}
+          />
         </div>
       </div>
     </div>

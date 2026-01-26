@@ -38,7 +38,9 @@ function readAes256Key(envName: string): Buffer {
     ? Buffer.from(raw, "hex")
     : Buffer.from(
         raw,
-        raw.includes("-") || raw.includes("_") ? ("base64url" as any) : "base64"
+        raw.includes("-") || raw.includes("_")
+          ? ("base64url" as any)
+          : "base64",
       );
 
   if (key.length !== 32) {
@@ -56,7 +58,10 @@ function encryptSsn(ssn9: string) {
   const iv = crypto.randomBytes(12);
   const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
 
-  const ciphertext = Buffer.concat([cipher.update(ssn9, "utf8"), cipher.final()]);
+  const ciphertext = Buffer.concat([
+    cipher.update(ssn9, "utf8"),
+    cipher.final(),
+  ]);
   const tag = cipher.getAuthTag();
 
   return `v1.${iv.toString("base64url")}.${tag.toString("base64url")}.${ciphertext.toString("base64url")}`;
@@ -128,12 +133,53 @@ const depCols = {
   updatedAt: dependents.updatedAt,
 };
 
+function normalizeRelationshipLabel(v: unknown) {
+  const raw = String(v ?? "").trim();
+  if (!raw) return "";
+
+  // Normalize two ways:
+  // 1) remove spaces + lowercase (handles "Foster child")
+  const key1 = raw.replace(/\s+/g, "").toLowerCase();
+
+  // 2) keep only letters + lowercase (handles "fosterChild", "otherRelative")
+  const key2 = raw.replace(/[^a-zA-Z]/g, "").toLowerCase();
+
+  const map: Record<string, string> = {
+    // onboarding codes (lowercase / camelCase)
+    son: "Son",
+    daughter: "Daughter",
+    stepchild: "Stepchild",
+    fosterchild: "Foster child",
+    grandchild: "Grandchild",
+    sibling: "Sibling",
+    parent: "Parent",
+    otherrelative: "Other relative",
+    other: "Other",
+
+    // if you ever store these as labels already // (same key, but only once)
+    grandparent: "Grandparent",
+    brother: "Brother",
+    halfbrother: "Half-brother",
+    stepbrother: "Stepbrother",
+    sister: "Sister",
+    halfsister: "Half-sister",
+    stepsister: "Stepsister",
+    aunt: "Aunt",
+    uncle: "Uncle",
+    nephew: "Nephew",
+    niece: "Niece",
+  };
+
+  return map[key1] || map[key2] || raw;
+}
+
 function toSafeDependent(r: any) {
   return {
     ...r,
     dob: r?.dob ? String(r.dob).slice(0, 10) : "",
     monthsLived: r?.monthsInHome ?? 12,
     hasSsn: !!r?.ssnEncrypted,
+    relationship: normalizeRelationshipLabel(r?.relationship),
 
     ssnLast4: r?.ssnLast4 ?? null,
     ssnSetAt: r?.ssnSetAt ?? null,
@@ -146,7 +192,8 @@ function toSafeDependent(r: any) {
 export async function GET() {
   try {
     const auth = await requireAuth();
-    if (!auth) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (!auth)
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const u = await getOrCreateUserBySub(auth.sub, auth.email);
 
@@ -159,7 +206,10 @@ export async function GET() {
     return NextResponse.json(rows.map(toSafeDependent));
   } catch (e: any) {
     console.error(e);
-    return NextResponse.json({ error: e?.message ?? "Server error" }, { status: 500 });
+    return NextResponse.json(
+      { error: e?.message ?? "Server error" },
+      { status: 500 },
+    );
   }
 }
 
@@ -167,7 +217,8 @@ export async function GET() {
 export async function POST(req: Request) {
   try {
     const auth = await requireAuth();
-    if (!auth) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (!auth)
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const u = await getOrCreateUserBySub(auth.sub, auth.email);
     const b = await req.json().catch(() => ({}));
@@ -188,25 +239,29 @@ export async function POST(req: Request) {
     const isDisabled = !!b.isDisabled;
 
     if (!firstName || !lastName || !dobStr || !relationship) {
-      return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
+      return NextResponse.json(
+        { error: "Missing required fields" },
+        { status: 400 },
+      );
     }
 
     if (applied && ssn9) {
       return NextResponse.json(
         { error: "Do not send SSN when marked applied-but-not-received." },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
-    // If they DIDN'T mark applied, require full ssn9
-    if (!applied && ssn9.length !== 9) {
+    // ✅ allow create without SSN (they can add it later in DependentQuestionnaire)
+    if (!applied && ssn9 && ssn9.length !== 9) {
       return NextResponse.json(
-        { error: "Full 9-digit SSN is required unless marked applied-but-not-received." },
-        { status: 400 }
+        { error: "SSN must be 9 digits." },
+        { status: 400 },
       );
     }
 
-    const ssnEncrypted = !applied && ssn9.length === 9 ? encryptSsn(ssn9) : null;
+    const ssnEncrypted =
+      !applied && ssn9.length === 9 ? encryptSsn(ssn9) : null;
     const ssnLast4 = !applied && ssn9.length === 9 ? ssn9.slice(-4) : null;
     const ssnSetAt = !applied && ssn9.length === 9 ? new Date() : null;
 
@@ -238,6 +293,9 @@ export async function POST(req: Request) {
     return NextResponse.json(toSafeDependent(created), { status: 201 });
   } catch (e: any) {
     console.error(e);
-    return NextResponse.json({ error: e?.message ?? "Server error" }, { status: 500 });
+    return NextResponse.json(
+      { error: e?.message ?? "Server error" },
+      { status: 500 },
+    );
   }
 }

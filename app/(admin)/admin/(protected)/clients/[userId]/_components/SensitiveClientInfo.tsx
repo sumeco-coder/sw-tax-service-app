@@ -2,6 +2,12 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import { Eye, EyeOff, ShieldCheck } from "lucide-react";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 const BRAND = {
   pink: "#E72B69",
@@ -9,24 +15,30 @@ const BRAND = {
 };
 
 function formatSsn(digitsOrFormatted: string) {
-  const d = String(digitsOrFormatted ?? "").replace(/\D/g, "").slice(0, 9);
+  const d = String(digitsOrFormatted ?? "")
+    .replace(/\D/g, "")
+    .slice(0, 9);
   if (d.length !== 9) return "";
   return `${d.slice(0, 3)}-${d.slice(3, 5)}-${d.slice(5)}`;
 }
 
 function maskSsn(last4: string) {
-  const l4 = String(last4 ?? "").replace(/\D/g, "").slice(-4);
+  const l4 = String(last4 ?? "")
+    .replace(/\D/g, "")
+    .slice(-4);
   return l4 ? `•••-••-${l4}` : "";
 }
 
 function maskAccountLast4(last4: string, label: string) {
-  const l4 = String(last4 ?? "").replace(/\D/g, "").slice(-4);
+  const l4 = String(last4 ?? "")
+    .replace(/\D/g, "")
+    .slice(-4);
   return l4 ? `${label} ****${l4}` : "";
 }
 
 type SsnState = {
   last4: string;
-  full?: string; // may be digits or formatted; we format anyway
+  full?: string;
 };
 
 type DdState = {
@@ -39,13 +51,17 @@ type DdState = {
   routingNumber?: string;
   accountNumber?: string;
   updatedAt: string | null;
+  hasNumbersOnFile?: boolean;
 };
 
 export default function SensitiveClientInfo({ userId }: { userId: string }) {
   const [loading, setLoading] = useState(true);
+
   const [revealSsnLoading, setRevealSsnLoading] = useState(false);
   const [revealDdLoading, setRevealDdLoading] = useState(false);
-  const [err, setErr] = useState("");
+
+  const [ssnErr, setSsnErr] = useState("");
+  const [ddErr, setDdErr] = useState("");
 
   const [ssn, setSsn] = useState<SsnState>({ last4: "" });
 
@@ -57,14 +73,17 @@ export default function SensitiveClientInfo({ userId }: { userId: string }) {
     routingLast4: "",
     accountLast4: "",
     updatedAt: null,
+    hasNumbersOnFile: false,
   });
 
   const [showSsn, setShowSsn] = useState(false);
   const [showBank, setShowBank] = useState(false);
 
   const brandBar = useMemo(
-    () => ({ background: `linear-gradient(135deg, ${BRAND.pink}, ${BRAND.copper})` }),
-    []
+    () => ({
+      background: `linear-gradient(135deg, ${BRAND.pink}, ${BRAND.copper})`,
+    }),
+    [],
   );
 
   async function fetchJson(url: string) {
@@ -75,7 +94,9 @@ export default function SensitiveClientInfo({ userId }: { userId: string }) {
     });
     const json = (await res.json().catch(() => ({}))) as any;
     if (!res.ok) {
-      throw new Error(json?.error || json?.message || `Request failed (${res.status})`);
+      throw new Error(
+        json?.error || json?.message || `Request failed (${res.status})`,
+      );
     }
     return json;
   }
@@ -83,7 +104,8 @@ export default function SensitiveClientInfo({ userId }: { userId: string }) {
   useEffect(() => {
     (async () => {
       setLoading(true);
-      setErr("");
+      setSsnErr("");
+      setDdErr("");
       setShowSsn(false);
       setShowBank(false);
 
@@ -93,29 +115,41 @@ export default function SensitiveClientInfo({ userId }: { userId: string }) {
           fetchJson(`/api/admin/clients/${userId}/direct-deposit`),
         ]);
 
-        // ✅ Accept either API shape:
-        // SSN route may return: { last4, ssn } OR { ssnLast4, ssnFull } etc.
         const last4 = String(ssnJson?.last4 ?? ssnJson?.ssnLast4 ?? "");
-        const full = ssnJson?.ssn ?? ssnJson?.ssnFull ?? ssnJson?.ssnFormatted ?? undefined;
+        const full =
+          ssnJson?.ssn ??
+          ssnJson?.ssnFull ??
+          ssnJson?.ssnFormatted ??
+          undefined;
 
         setSsn({
           last4,
           full: full ? String(full) : undefined,
         });
 
+        const routingLast4 = String(ddJson?.routingLast4 ?? "");
+        const accountLast4 = String(ddJson?.accountLast4 ?? "");
+        const fallbackHas = Boolean(routingLast4 || accountLast4);
+
         setDd({
           useDirectDeposit: Boolean(ddJson?.useDirectDeposit),
           accountHolderName: String(ddJson?.accountHolderName ?? ""),
           bankName: String(ddJson?.bankName ?? ""),
-          accountType: ddJson?.accountType === "savings" ? "savings" : "checking",
-          routingLast4: String(ddJson?.routingLast4 ?? ""),
-          accountLast4: String(ddJson?.accountLast4 ?? ""),
-          routingNumber: ddJson?.routingNumber ? String(ddJson.routingNumber) : undefined,
-          accountNumber: ddJson?.accountNumber ? String(ddJson.accountNumber) : undefined,
+          accountType:
+            ddJson?.accountType === "savings" ? "savings" : "checking",
+          routingLast4,
+          accountLast4,
+          routingNumber: ddJson?.routingNumber
+            ? String(ddJson.routingNumber)
+            : undefined,
+          accountNumber: ddJson?.accountNumber
+            ? String(ddJson.accountNumber)
+            : undefined,
           updatedAt: ddJson?.updatedAt ? String(ddJson.updatedAt) : null,
+          hasNumbersOnFile: Boolean(ddJson?.hasNumbersOnFile ?? fallbackHas),
         });
       } catch (e: any) {
-        setErr(e?.message ?? "Failed to load sensitive info.");
+        setDdErr(e?.message ?? "Failed to load sensitive info.");
       } finally {
         setLoading(false);
       }
@@ -123,120 +157,197 @@ export default function SensitiveClientInfo({ userId }: { userId: string }) {
   }, [userId]);
 
   const ssnDisplay = showSsn
-    ? (ssn.full ? formatSsn(ssn.full) : "")
+    ? ssn.full
+      ? formatSsn(ssn.full)
+      : maskSsn(ssn.last4)
     : maskSsn(ssn.last4);
 
   const routingDisplay = showBank
-    ? (dd.routingNumber ?? "")
+    ? dd.routingNumber || ""
     : maskAccountLast4(dd.routingLast4, "Routing");
 
   const acctDisplay = showBank
-    ? (dd.accountNumber ?? "")
+    ? dd.accountNumber || ""
     : maskAccountLast4(dd.accountLast4, "Account");
 
+  // 🔴 Button style that clearly looks clickable
+  const showBtnClass =
+    "inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-semibold shadow-sm " +
+    "border border-transparent text-white hover:opacity-95 active:opacity-90";
+
   async function toggleShowSsn() {
+    if (revealSsnLoading) return;
+
     const willShow = !showSsn;
+    setSsnErr("");
 
     if (!willShow) {
       setShowSsn(false);
       return;
     }
 
-    // If we don't already have full SSN, fetch reveal
-    if (!ssn.full) {
-      setRevealSsnLoading(true);
-      setErr("");
-      try {
-        const ssnJson = await fetchJson(`/api/admin/clients/${userId}/ssn?reveal=1`);
-        const full = ssnJson?.ssn ?? ssnJson?.ssnFull ?? ssnJson?.ssnFormatted ?? "";
-        const last4 = String(ssnJson?.last4 ?? ssnJson?.ssnLast4 ?? ssn.last4 ?? "");
+    // ALWAYS hit network so you can see it in DevTools
+    setRevealSsnLoading(true);
+    try {
+      const ssnJson = await fetchJson(
+        `/api/admin/clients/${userId}/ssn?reveal=1`,
+      );
 
-        setSsn({
-          last4,
-          full: full ? String(full) : undefined,
-        });
-      } catch (e: any) {
-        setErr(e?.message ?? "Failed to reveal SSN.");
+      const last4 = String(
+        ssnJson?.last4 ?? ssnJson?.ssnLast4 ?? ssn.last4 ?? "",
+      );
+      const full =
+        ssnJson?.ssn ?? ssnJson?.ssnFull ?? ssnJson?.ssnFormatted ?? "";
+
+      setSsn({ last4, full: full ? String(full) : undefined });
+
+      if (!full) {
+        setSsnErr("No SSN on file to reveal.");
         setShowSsn(false);
-      } finally {
-        setRevealSsnLoading(false);
+        return;
       }
-    }
 
-    setShowSsn(true);
+      setShowSsn(true);
+    } catch (e: any) {
+      setSsnErr(e?.message ?? "Failed to reveal SSN.");
+      setShowSsn(false);
+    } finally {
+      setRevealSsnLoading(false);
+    }
   }
 
   async function toggleShowBank() {
+    if (revealDdLoading) return;
+
     const willShow = !showBank;
+    setDdErr("");
 
     if (!willShow) {
       setShowBank(false);
       return;
     }
 
-    // If we don't already have full routing/account, fetch reveal
-    if (!dd.routingNumber || !dd.accountNumber) {
-      setRevealDdLoading(true);
-      setErr("");
-      try {
-        const ddJson = await fetchJson(`/api/admin/clients/${userId}/direct-deposit?reveal=1`);
+    // ALWAYS hit network so you can see it in DevTools
+    setRevealDdLoading(true);
+    try {
+      const ddJson = await fetchJson(
+        `/api/admin/clients/${userId}/direct-deposit?reveal=1`,
+      );
 
-        setDd((prev) => ({
-          ...prev,
-          useDirectDeposit: Boolean(ddJson?.useDirectDeposit),
-          accountHolderName: String(ddJson?.accountHolderName ?? prev.accountHolderName ?? ""),
-          bankName: String(ddJson?.bankName ?? prev.bankName ?? ""),
-          accountType: ddJson?.accountType === "savings" ? "savings" : "checking",
-          routingLast4: String(ddJson?.routingLast4 ?? prev.routingLast4 ?? ""),
-          accountLast4: String(ddJson?.accountLast4 ?? prev.accountLast4 ?? ""),
-          routingNumber: ddJson?.routingNumber ? String(ddJson.routingNumber) : prev.routingNumber,
-          accountNumber: ddJson?.accountNumber ? String(ddJson.accountNumber) : prev.accountNumber,
-          updatedAt: ddJson?.updatedAt ? String(ddJson.updatedAt) : prev.updatedAt,
-        }));
-      } catch (e: any) {
-        setErr(e?.message ?? "Failed to reveal bank details.");
+      const routingLast4 = String(
+        ddJson?.routingLast4 ?? dd.routingLast4 ?? "",
+      );
+      const accountLast4 = String(
+        ddJson?.accountLast4 ?? dd.accountLast4 ?? "",
+      );
+      const routingNumber = ddJson?.routingNumber
+        ? String(ddJson.routingNumber)
+        : "";
+      const accountNumber = ddJson?.accountNumber
+        ? String(ddJson.accountNumber)
+        : "";
+
+      const fallbackHas = Boolean(
+        routingNumber || accountNumber || routingLast4 || accountLast4,
+      );
+
+      setDd((prev) => ({
+        ...prev,
+        useDirectDeposit: Boolean(ddJson?.useDirectDeposit),
+        accountHolderName: String(
+          ddJson?.accountHolderName ?? prev.accountHolderName ?? "",
+        ),
+        bankName: String(ddJson?.bankName ?? prev.bankName ?? ""),
+        accountType: ddJson?.accountType === "savings" ? "savings" : "checking",
+        routingLast4,
+        accountLast4,
+        routingNumber: routingNumber || undefined,
+        accountNumber: accountNumber || undefined,
+        updatedAt: ddJson?.updatedAt
+          ? String(ddJson.updatedAt)
+          : prev.updatedAt,
+        hasNumbersOnFile: Boolean(ddJson?.hasNumbersOnFile ?? fallbackHas),
+      }));
+
+      if (!routingNumber && !accountNumber) {
+        setDdErr("No direct deposit numbers on file to reveal.");
         setShowBank(false);
-      } finally {
-        setRevealDdLoading(false);
+        return;
       }
-    }
 
-    setShowBank(true);
+      setShowBank(true);
+    } catch (e: any) {
+      setDdErr(e?.message ?? "Failed to reveal bank details.");
+      setShowBank(false);
+    } finally {
+      setRevealDdLoading(false);
+    }
   }
 
   return (
     <div className="space-y-6">
+      {/* SSN */}
       <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="flex items-start justify-between gap-3">
           <div>
-            <h2 className="text-lg font-extrabold tracking-tight text-slate-900">SSN</h2>
+            <h2 className="text-lg font-extrabold tracking-tight text-slate-900">
+              SSN
+            </h2>
             <div className="mt-2 h-1 w-28 rounded-full" style={brandBar} />
-            <p className="mt-3 text-sm text-slate-600">Masked by default. Use Show to reveal.</p>
+            <p className="mt-3 text-sm text-slate-600">
+              Masked by default. Use Show to reveal.
+            </p>
           </div>
 
-          <button
-            type="button"
-            onClick={toggleShowSsn}
-            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100 disabled:opacity-60"
-            disabled={loading || revealSsnLoading || !ssn.last4}
-            title={!ssn.last4 ? "No SSN on file" : ""}
-          >
-            {showSsn ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-            {revealSsnLoading ? "Revealing…" : showSsn ? "Hide" : "Show"}
-          </button>
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span>
+                  <button
+                    type="button"
+                    onClick={toggleShowSsn}
+                    className={showBtnClass}
+                    style={{ background: BRAND.pink }}
+                    title="Show / Hide SSN"
+                  >
+                    {showSsn ? (
+                      <EyeOff className="h-4 w-4" />
+                    ) : (
+                      <Eye className="h-4 w-4" />
+                    )}
+                    {revealSsnLoading
+                      ? "Revealing…"
+                      : showSsn
+                        ? "Hide"
+                        : "Show"}
+                  </button>
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>
+                {showSsn ? "Hide SSN" : "Reveal SSN (ADMIN/SUPERADMIN only)"}
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
         </div>
 
         <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-800">
           {ssn.last4 ? <>On file: {ssnDisplay}</> : <>No SSN on file.</>}
         </div>
+
+        {ssnErr ? <p className="mt-3 text-sm text-red-600">{ssnErr}</p> : null}
       </div>
 
+      {/* Direct Deposit */}
       <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="flex items-start justify-between gap-3">
           <div>
-            <h2 className="text-lg font-extrabold tracking-tight text-slate-900">Direct Deposit</h2>
+            <h2 className="text-lg font-extrabold tracking-tight text-slate-900">
+              Direct Deposit
+            </h2>
             <div className="mt-2 h-1 w-28 rounded-full" style={brandBar} />
-            <p className="mt-3 text-sm text-slate-600">Masked by default. Use Show to reveal.</p>
+            <p className="mt-3 text-sm text-slate-600">
+              Masked by default. Use Show to reveal.
+            </p>
           </div>
 
           <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
@@ -248,25 +359,33 @@ export default function SensitiveClientInfo({ userId }: { userId: string }) {
         <div className="mt-4 grid gap-3 sm:grid-cols-2">
           <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm">
             <div className="text-xs text-slate-500">Use Direct Deposit</div>
-            <div className="mt-1 font-semibold text-slate-900">{dd.useDirectDeposit ? "Yes" : "No"}</div>
+            <div className="mt-1 font-semibold text-slate-900">
+              {dd.useDirectDeposit ? "Yes" : "No"}
+            </div>
           </div>
 
           <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm">
             <div className="text-xs text-slate-500">Account Type</div>
-            <div className="mt-1 font-semibold text-slate-900">{dd.accountType}</div>
+            <div className="mt-1 font-semibold text-slate-900">
+              {dd.accountType}
+            </div>
           </div>
 
           <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm">
             <div className="text-xs text-slate-500">Account Holder</div>
-            <div className="mt-1 font-semibold text-slate-900">{dd.accountHolderName || "—"}</div>
+            <div className="mt-1 font-semibold text-slate-900">
+              {dd.accountHolderName || "—"}
+            </div>
           </div>
 
           <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm">
             <div className="text-xs text-slate-500">Bank Name</div>
-            <div className="mt-1 font-semibold text-slate-900">{dd.bankName || "—"}</div>
+            <div className="mt-1 font-semibold text-slate-900">
+              {dd.bankName || "—"}
+            </div>
           </div>
 
-          <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm sm:col-span-2">
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm sm:col-span-2">
             <div className="flex items-center justify-between gap-3">
               <div>
                 <div className="text-xs text-slate-500">Numbers</div>
@@ -275,18 +394,47 @@ export default function SensitiveClientInfo({ userId }: { userId: string }) {
                   {routingDisplay && acctDisplay ? " • " : ""}
                   {acctDisplay}
                 </div>
+
+                {process.env.NODE_ENV !== "production" && (
+                  <div className="mt-1 text-[11px] text-slate-500">
+                    debug: hasNumbersOnFile={String(dd.hasNumbersOnFile)}{" "}
+                    routingLast4=
+                    {dd.routingLast4} accountLast4={dd.accountLast4}
+                  </div>
+                )}
               </div>
 
-              <button
-                type="button"
-                onClick={toggleShowBank}
-                className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
-                disabled={loading || revealDdLoading || (!dd.routingLast4 && !dd.accountLast4)}
-                title={!dd.routingLast4 && !dd.accountLast4 ? "No direct deposit numbers on file" : ""}
-              >
-                {showBank ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                {revealDdLoading ? "Revealing…" : showBank ? "Hide" : "Show"}
-              </button>
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span>
+                      <button
+                        type="button"
+                        onClick={toggleShowBank}
+                        className={showBtnClass}
+                        style={{ background: BRAND.pink }}
+                        title="Show / Hide bank numbers"
+                      >
+                        {showBank ? (
+                          <EyeOff className="h-4 w-4" />
+                        ) : (
+                          <Eye className="h-4 w-4" />
+                        )}
+                        {revealDdLoading
+                          ? "Revealing…"
+                          : showBank
+                            ? "Hide"
+                            : "Show"}
+                      </button>
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    {showBank
+                      ? "Hide account numbers"
+                      : "Reveal account numbers (ADMIN/SUPERADMIN only)"}
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
             </div>
 
             {dd.updatedAt ? (
@@ -297,8 +445,10 @@ export default function SensitiveClientInfo({ userId }: { userId: string }) {
           </div>
         </div>
 
-        {err ? <p className="mt-4 text-sm text-red-600">{err}</p> : null}
-        {loading ? <p className="mt-4 text-sm text-slate-600">Loading…</p> : null}
+        {ddErr ? <p className="mt-4 text-sm text-red-600">{ddErr}</p> : null}
+        {loading ? (
+          <p className="mt-4 text-sm text-slate-600">Loading…</p>
+        ) : null}
       </div>
     </div>
   );

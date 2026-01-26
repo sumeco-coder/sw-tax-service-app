@@ -102,6 +102,7 @@ function digitsOnly(v: string, maxLen: number) {
     .replace(/\D/g, "")
     .slice(0, maxLen);
 }
+
 function moneyOnly(v: string) {
   const raw = String(v ?? "").replace(/[^\d.]/g, "");
   const [a, b] = raw.split(".");
@@ -118,16 +119,41 @@ const DOCS_OPTIONS = [
   "Other",
 ] as const;
 
+// ✅ debounce helper
+function useDebouncedCallback<T extends (...args: any[]) => void>(
+  cb: T,
+  delay = 900,
+) {
+  const cbRef = React.useRef(cb);
+  React.useEffect(() => {
+    cbRef.current = cb;
+  }, [cb]);
+
+  const tRef = React.useRef<any>(null);
+
+  return React.useCallback(
+    (...args: Parameters<T>) => {
+      if (tRef.current) clearTimeout(tRef.current);
+      tRef.current = setTimeout(() => cbRef.current(...args), delay);
+    },
+    [delay],
+  );
+}
+
 const schema = z
   .object({
     // ---------- Page 1 ----------
     studentFirstName: z.string().trim().min(1, "Required"),
     studentLastName: z.string().trim().min(1, "Required"),
+
+    // ✅ allow blank; enforce on submit if not on file
     studentSsn: z
       .string()
       .default("")
       .transform((v) => digitsOnly(String(v ?? ""), 9))
-      .refine((v) => v.length === 9, { message: "SSN must be 9 digits" }),
+      .refine((v) => v === "" || v.length === 9, {
+        message: "SSN must be 9 digits",
+      }),
 
     studentState: z.string().min(2, "State is required"),
 
@@ -378,6 +404,7 @@ function CheckboxRow({
 }
 
 type Props = {
+  dependentId: string; // ✅ required
   onSave?: (
     values: EducationCreditsAndDeductionsValues,
   ) => Promise<void> | void;
@@ -385,11 +412,20 @@ type Props = {
 };
 
 export default function EducationCreditsAndDeductions({
+  dependentId,
   onSave,
   initialValues,
 }: Props) {
   const [saveMsg, setSaveMsg] = React.useState<string | null>(null);
   const [saveErr, setSaveErr] = React.useState<string | null>(null);
+
+  const [isAutoSaving, setIsAutoSaving] = React.useState(false);
+  const [lastSavedAt, setLastSavedAt] = React.useState<number | null>(null);
+  const [ssnOnFile, setSsnOnFile] = React.useState(false);
+
+  const lastPayloadRef = React.useRef<string>("");
+  const lastDependentRef = React.useRef<string | null>(null);
+  const didHydrateRef = React.useRef(false);
 
   const resolver: Resolver<EducationCreditsAndDeductionsValues> = zodResolver(
     schema,
@@ -408,46 +444,78 @@ export default function EducationCreditsAndDeductions({
     setValue,
     watch,
     reset,
-    formState: { errors, isSubmitting },
+    formState: { errors, isSubmitting, isDirty },
   } = form;
+
+  const watchedAll = useWatch({ control });
+
+  const apiUrl = React.useMemo(() => {
+    if (!dependentId) return null;
+    return `/api/education-credits?dependentId=${encodeURIComponent(dependentId)}`;
+  }, [dependentId]);
 
   const instIsForeign = watch("instIsForeign");
   const docsReliedOn = watch("docsReliedOn");
-
-  const didHydrateRef = React.useRef(false);
 
   React.useEffect(() => {
     let alive = true;
 
     (async () => {
       try {
+        if (!dependentId || !apiUrl) return;
+
+        // ✅ dependent changed: reset everything so we don't mix data
+        if (lastDependentRef.current !== dependentId) {
+          lastDependentRef.current = dependentId;
+          didHydrateRef.current = false;
+          lastPayloadRef.current = "";
+          setSaveMsg(null);
+          setSaveErr(null);
+          setLastSavedAt(null);
+          setSsnOnFile(false);
+
+          reset({
+            ...defaultValues,
+            studentSsn: "",
+          });
+        }
+
         if (didHydrateRef.current) return;
 
-        // ✅ 1) Prefer parent-provided initialValues (server prefill)
+        // ✅ 1) Prefer parent-provided initialValues
         if (initialValues) {
           didHydrateRef.current = true;
           reset({
             ...defaultValues,
             ...initialValues,
-            // ✅ never hydrate SSN
             studentSsn: "",
           });
           return;
         }
 
-        // ✅ 2) Fallback to GET if no initialValues provided
-        const res = await fetch("/api/education-credits", { method: "GET" });
-        if (!res.ok) return;
+        // ✅ 2) Load from API for this dependent
+        const res = await fetch(apiUrl, { method: "GET" });
+        if (!res.ok) {
+          didHydrateRef.current = true;
+          return;
+        }
 
         const data = await res.json().catch(() => null);
         if (!alive) return;
 
+        setSsnOnFile(!!data?.meta?.ssnOnFile);
+
+        didHydrateRef.current = true;
+
         if (data?.values) {
-          didHydrateRef.current = true;
           reset({
             ...defaultValues,
             ...data.values,
-            // ✅ never hydrate SSN
+            studentSsn: "",
+          });
+        } else {
+          reset({
+            ...defaultValues,
             studentSsn: "",
           });
         }
@@ -459,7 +527,7 @@ export default function EducationCreditsAndDeductions({
     return () => {
       alive = false;
     };
-  }, [initialValues, reset]);
+  }, [dependentId, apiUrl, initialValues, reset]);
 
   const toggleDoc = (doc: (typeof DOCS_OPTIONS)[number]) => {
     const cur = Array.isArray(docsReliedOn) ? docsReliedOn : [];
@@ -475,22 +543,91 @@ export default function EducationCreditsAndDeductions({
     }
   };
 
+  const debouncedAutoSave = useDebouncedCallback(
+    async (vals: EducationCreditsAndDeductionsValues) => {
+      if (!apiUrl) return;
+      if (!didHydrateRef.current) return;
+      if (onSave) return;
+
+      // ✅ never autosave SSN
+      const safeVals = { ...vals, studentSsn: "" };
+
+      const payloadStr = JSON.stringify(safeVals);
+      if (payloadStr === lastPayloadRef.current) return;
+      lastPayloadRef.current = payloadStr;
+
+      try {
+        setIsAutoSaving(true);
+        const res = await fetch(apiUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: payloadStr, // route supports raw when dependentId is in query
+        });
+        if (res.ok) setLastSavedAt(Date.now());
+      } finally {
+        setIsAutoSaving(false);
+      }
+    },
+    900,
+  );
+
+  React.useEffect(() => {
+    if (!apiUrl) return;
+    if (!didHydrateRef.current) return;
+    if (!isDirty) return;
+    if (isSubmitting) return;
+
+    debouncedAutoSave(watchedAll as EducationCreditsAndDeductionsValues);
+  }, [apiUrl, watchedAll, debouncedAutoSave, isDirty, isSubmitting]);
+
   const onSubmit: SubmitHandler<EducationCreditsAndDeductionsValues> = async (
     values,
   ) => {
     setSaveMsg(null);
     setSaveErr(null);
 
+    if (!dependentId || !apiUrl) {
+      setSaveErr("Select a dependent first.");
+      return;
+    }
+
+    // ✅ require SSN only if not on file
+    const ssnDigits = digitsOnly(values.studentSsn ?? "", 9);
+    if (!ssnOnFile && ssnDigits.length !== 9) {
+      setSaveErr("Student SSN is required (9 digits) if not already on file.");
+      return;
+    }
+
+    // OPTIONAL: save SSN to dependent core record (only if your route supports it)
+    // If your /api/dependents/[id] route doesn't accept { ssn }, delete this block.
+    if (ssnDigits.length === 9) {
+      const r = await fetch(`/api/dependents/${dependentId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ssn: ssnDigits }),
+      });
+
+      if (!r.ok) {
+        setSaveErr("Could not save SSN to dependent profile.");
+        return;
+      }
+
+      setSsnOnFile(true);
+    }
+
+    // ✅ save questionnaire WITHOUT SSN
+    const safeVals = { ...values, studentSsn: "" };
+
     if (onSave) {
-      await onSave(values);
+      await onSave(safeVals);
       setSaveMsg("✅ Saved.");
       return;
     }
 
-    const res = await fetch("/api/education-credits", {
+    const res = await fetch(apiUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(values),
+      body: JSON.stringify(safeVals),
     });
 
     if (!res.ok) {
@@ -499,6 +636,7 @@ export default function EducationCreditsAndDeductions({
       return;
     }
 
+    setLastSavedAt(Date.now());
     setSaveMsg("✅ Saved.");
   };
 
@@ -508,7 +646,6 @@ export default function EducationCreditsAndDeductions({
       className="space-y-6"
       noValidate
       onChange={() => {
-        // clear success message when they edit again
         if (saveMsg) setSaveMsg(null);
         if (saveErr) setSaveErr(null);
       }}
@@ -536,10 +673,7 @@ export default function EducationCreditsAndDeductions({
               <CardTitle className="text-slate-900">
                 Education Credits & Deductions
               </CardTitle>
-              <div
-                className="mt-2 h-1 w-36 rounded-full"
-                style={brandGradient}
-              />
+              <div className="mt-2 h-1 w-36 rounded-full" style={brandGradient} />
               <p className="mt-3 text-sm text-slate-600">
                 Student + American Opportunity / Hope Scholarship details.
               </p>
@@ -570,9 +704,7 @@ export default function EducationCreditsAndDeductions({
 
               <FieldRow>
                 <div>
-                  <Label className="text-slate-700">
-                    Student SSN (9 digits)
-                  </Label>
+                  <Label className="text-slate-700">Student SSN (9 digits)</Label>
                   <Input
                     className="mt-1"
                     inputMode="numeric"
@@ -592,6 +724,11 @@ export default function EducationCreditsAndDeductions({
                       {errors.studentSsn.message}
                     </p>
                   )}
+                  {ssnOnFile ? (
+                    <p className="mt-1 text-xs text-slate-600">
+                      SSN is already on file. Leave blank unless you need to update it.
+                    </p>
+                  ) : null}
                 </div>
 
                 <div>
@@ -607,10 +744,7 @@ export default function EducationCreditsAndDeductions({
                         "studentState"
                       >;
                     }) => (
-                      <Select
-                        value={field.value ?? ""}
-                        onValueChange={field.onChange}
-                      >
+                      <Select value={field.value ?? ""} onValueChange={field.onChange}>
                         <SelectTrigger className="mt-1">
                           <SelectValue placeholder="Select state" />
                         </SelectTrigger>
@@ -633,9 +767,7 @@ export default function EducationCreditsAndDeductions({
               </FieldRow>
 
               <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                <p className="text-sm font-semibold text-slate-900">
-                  Yes / No Questions
-                </p>
+                <p className="text-sm font-semibold text-slate-900">Yes / No Questions</p>
                 <p className="mt-1 text-xs text-slate-600">
                   Answer the following for AOTC / Hope Scholarship evaluation.
                 </p>
@@ -680,10 +812,7 @@ export default function EducationCreditsAndDeductions({
                         "aotcYearsClaimed"
                       >;
                     }) => (
-                      <Select
-                        value={field.value ?? "0"}
-                        onValueChange={field.onChange}
-                      >
+                      <Select value={field.value ?? "0"} onValueChange={field.onChange}>
                         <SelectTrigger className="mt-1">
                           <SelectValue placeholder="Select" />
                         </SelectTrigger>
@@ -744,8 +873,8 @@ export default function EducationCreditsAndDeductions({
                 <div className="mt-4 grid grid-cols-1 gap-4">
                   <div>
                     <Label className="text-slate-700">
-                      Total qualified education expenses REQUIRED to be paid
-                      directly to the educational institution
+                      Total qualified education expenses REQUIRED to be paid directly to the
+                      educational institution
                     </Label>
                     <Input
                       className="mt-1"
@@ -769,8 +898,8 @@ export default function EducationCreditsAndDeductions({
 
                   <div>
                     <Label className="text-slate-700">
-                      ADDITIONAL qualified education expenses NOT required to be
-                      paid directly to the educational institution
+                      ADDITIONAL qualified education expenses NOT required to be paid directly
+                      to the educational institution
                     </Label>
                     <Input
                       className="mt-1"
@@ -794,8 +923,8 @@ export default function EducationCreditsAndDeductions({
 
                   <div>
                     <Label className="text-slate-700">
-                      Tax-free education assistance received this year
-                      (allocable to the academic period)
+                      Tax-free education assistance received this year (allocable to the academic
+                      period)
                     </Label>
                     <Input
                       className="mt-1"
@@ -819,9 +948,8 @@ export default function EducationCreditsAndDeductions({
 
                   <div>
                     <Label className="text-slate-700">
-                      Tax-free education assistance received AFTER the tax year
-                      (and before the return is filed) allocable to the academic
-                      period
+                      Tax-free education assistance received AFTER the tax year (and before the
+                      return is filed) allocable to the academic period
                     </Label>
                     <Input
                       className="mt-1"
@@ -845,8 +973,8 @@ export default function EducationCreditsAndDeductions({
 
                   <div>
                     <Label className="text-slate-700">
-                      Refunds of qualified education expenses paid this year (if
-                      refund received before last year’s return is filed)
+                      Refunds of qualified education expenses paid this year (if refund received
+                      before last year’s return is filed)
                     </Label>
                     <Input
                       className="mt-1"
@@ -880,18 +1008,13 @@ export default function EducationCreditsAndDeductions({
               <CardTitle className="text-slate-900">
                 Educational Institution + 8867 Due Diligence
               </CardTitle>
-              <div
-                className="mt-2 h-1 w-36 rounded-full"
-                style={brandGradient}
-              />
+              <div className="mt-2 h-1 w-36 rounded-full" style={brandGradient} />
             </CardHeader>
 
             <CardContent className="space-y-4">
               <FieldRow>
                 <div>
-                  <Label className="text-slate-700">
-                    Educational Institution EIN
-                  </Label>
+                  <Label className="text-slate-700">Educational Institution EIN</Label>
                   <Input
                     className="mt-1"
                     inputMode="numeric"
@@ -914,9 +1037,7 @@ export default function EducationCreditsAndDeductions({
                 </div>
 
                 <div>
-                  <Label className="text-slate-700">
-                    Educational Institution Name
-                  </Label>
+                  <Label className="text-slate-700">Educational Institution Name</Label>
                   <Input className="mt-1" {...register("institutionName")} />
                 </div>
               </FieldRow>
@@ -934,10 +1055,7 @@ export default function EducationCreditsAndDeductions({
                   control={control}
                   name="instIsForeign"
                   render={({ field }) => (
-                    <Switch
-                      checked={!!field.value}
-                      onCheckedChange={field.onChange}
-                    />
+                    <Switch checked={!!field.value} onCheckedChange={field.onChange} />
                   )}
                 />
               </div>
@@ -967,9 +1085,7 @@ export default function EducationCreditsAndDeductions({
 
                   <FieldRow>
                     <div>
-                      <Label className="text-slate-700">
-                        State (U.S. only)
-                      </Label>
+                      <Label className="text-slate-700">State (U.S. only)</Label>
                       <Controller
                         control={control}
                         name="instState"
@@ -981,10 +1097,7 @@ export default function EducationCreditsAndDeductions({
                             "instState"
                           >;
                         }) => (
-                          <Select
-                            value={field.value ?? ""}
-                            onValueChange={field.onChange}
-                          >
+                          <Select value={field.value ?? ""} onValueChange={field.onChange}>
                             <SelectTrigger className="mt-1">
                               <SelectValue placeholder="Select state" />
                             </SelectTrigger>
@@ -1039,14 +1152,8 @@ export default function EducationCreditsAndDeductions({
                       <Input className="mt-1" {...register("instProvince")} />
                     </div>
                     <div>
-                      <Label className="text-slate-700">
-                        Country (Foreign only)
-                      </Label>
-                      <Input
-                        className="mt-1"
-                        placeholder="Country"
-                        {...register("instCountry")}
-                      />
+                      <Label className="text-slate-700">Country (Foreign only)</Label>
+                      <Input className="mt-1" placeholder="Country" {...register("instCountry")} />
                       {errors.instCountry && (
                         <p className="mt-1 text-xs text-red-600">
                           {errors.instCountry.message}
@@ -1056,18 +1163,14 @@ export default function EducationCreditsAndDeductions({
                   </FieldRow>
 
                   <div>
-                    <Label className="text-slate-700">
-                      Postal Code (Foreign only)
-                    </Label>
+                    <Label className="text-slate-700">Postal Code (Foreign only)</Label>
                     <Input className="mt-1" {...register("instPostalCode")} />
                   </div>
                 </>
               )}
 
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <p className="text-sm font-semibold text-slate-900">
-                  Form 1098-T
-                </p>
+                <p className="text-sm font-semibold text-slate-900">Form 1098-T</p>
                 <div className="mt-4 grid grid-cols-1 gap-4">
                   <YesNoField<EducationCreditsAndDeductionsValues>
                     label="Did the student receive Form 1098-T from this institution for this year?"
@@ -1129,9 +1232,7 @@ export default function EducationCreditsAndDeductions({
               </div>
 
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <p className="text-sm font-semibold text-slate-900">
-                  Other Flags
-                </p>
+                <p className="text-sm font-semibold text-slate-900">Other Flags</p>
                 <div className="mt-4 grid grid-cols-1 gap-3">
                   <Controller
                     control={control}
@@ -1197,6 +1298,7 @@ export default function EducationCreditsAndDeductions({
               });
               setSaveMsg(null);
               setSaveErr(null);
+              setLastSavedAt(null);
             }}
             disabled={isSubmitting}
           >
@@ -1211,6 +1313,14 @@ export default function EducationCreditsAndDeductions({
           >
             {isSubmitting ? "Saving…" : "Save"}
           </Button>
+        </div>
+
+        <div className="text-xs text-slate-600">
+          {isAutoSaving
+            ? "Saving…"
+            : lastSavedAt
+              ? `Saved ${new Date(lastSavedAt).toLocaleTimeString()}`
+              : null}
         </div>
 
         {saveErr ? <div className="text-sm text-red-600">{saveErr}</div> : null}
