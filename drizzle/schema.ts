@@ -810,7 +810,7 @@ export const dependents = pgTable(
     dob: date("dob").notNull(),
     ssnEncrypted: text("ssn_encrypted"),
     ssnLast4: varchar("ssn_last4", { length: 4 }),
-ssnSetAt: timestamp("ssn_set_at", { withTimezone: true }),
+    ssnSetAt: timestamp("ssn_set_at", { withTimezone: true }),
 
     appliedButNotReceived: boolean("applied_but_not_received")
       .default(false)

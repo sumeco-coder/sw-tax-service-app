@@ -1,14 +1,13 @@
 // app/(admin)/admin/(protected)/clients/[userId]/dependents/page.tsx
 import { redirect } from "next/navigation";
 import { getServerRole } from "@/lib/auth/roleServer";
-
+import SsnInput from "./SsnInput";
 import {
   listDependents,
   addDependent,
   updateDependent,
   deleteDependent,
 } from "./actions";
-
 import DependentSsnReveal from "./DependentSsnReveal";
 
 const RELATIONSHIP_OPTIONS = [
@@ -37,13 +36,20 @@ const RELATIONSHIP_OPTIONS = [
 ] as const;
 
 function requireAdmin(auth: any) {
-  const role = String(auth?.role ?? "");
+  const role = String(auth?.role ?? "").toUpperCase();
   return (
     role === "ADMIN" ||
     role === "SUPERADMIN" ||
     role === "LMS_ADMIN" ||
     role === "LMS_PREPARER"
   );
+}
+
+function ssnPlaceholder(d: any) {
+  if (d?.appliedButNotReceived) return "SSN pending (applied / not received)";
+  if (d?.ssnLast4) return `SSN (on file: ***-**-${String(d.ssnLast4)})`;
+  if (d?.hasSsn) return "SSN (on file)";
+  return "SSN (9 digits)";
 }
 
 export default async function DependentsPage({
@@ -64,11 +70,13 @@ export default async function DependentsPage({
         <div>
           <h1 className="text-xl font-bold">Dependents</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Add/edit dependents (DOB, relationship, months in home). SSN is reveal-on-click.
+            Add/edit dependents (DOB, relationship, months in home). SSN is
+            reveal-on-click.
           </p>
         </div>
       </header>
 
+      {/* ADD DEPENDENT */}
       <section className="rounded-2xl border bg-card p-4">
         <h2 className="text-sm font-semibold">Add dependent</h2>
 
@@ -103,6 +111,13 @@ export default async function DependentsPage({
             required
           />
 
+          {/* ✅ ADD SSN INPUT HERE */}
+          <SsnInput
+            name="ssn"
+            className="h-10 rounded-xl border px-3"
+            placeholder="SSN (###-##-####)"
+          />
+
           <select
             name="relationship"
             className="h-10 rounded-xl border px-3"
@@ -129,7 +144,11 @@ export default async function DependentsPage({
           />
 
           <label className="flex items-center gap-2 text-sm">
-            <input type="checkbox" name="appliedButNotReceived" className="h-4 w-4" />
+            <input
+              type="checkbox"
+              name="appliedButNotReceived"
+              className="h-4 w-4"
+            />
             Applied but not received SSN
           </label>
 
@@ -149,9 +168,15 @@ export default async function DependentsPage({
               Add dependent
             </button>
           </div>
+
+          <div className="sm:col-span-2 text-xs text-muted-foreground">
+            Tip: SSN accepts digits only; dashes/spaces are okay — we strip them
+            server-side.
+          </div>
         </form>
       </section>
 
+      {/* LIST */}
       <section className="rounded-2xl border bg-card">
         <div className="border-b px-4 py-3 text-sm font-semibold">
           Dependents ({rows.length})
@@ -172,15 +197,19 @@ export default async function DependentsPage({
                       {d.lastName}
                     </div>
 
-                    <div className="mt-1 text-xs text-muted-foreground flex flex-wrap items-center gap-2">
+                    <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                       <span>DOB: {String(d.dob)}</span>
                       <span>•</span>
                       <span>{String(d.relationship)}</span>
                       <span>•</span>
-                      <span>Months in home: {Number(d.monthsInHome ?? 12)}</span>
+                      <span>
+                        Months in home: {Number(d.monthsInHome ?? 12)}
+                      </span>
                       {d.isStudent ? <span>• Student</span> : null}
                       {d.isDisabled ? <span>• Disabled</span> : null}
-                      {d.appliedButNotReceived ? <span>• SSN pending</span> : null}
+                      {d.appliedButNotReceived ? (
+                        <span>• SSN pending</span>
+                      ) : null}
 
                       <span>• SSN:</span>
                       <DependentSsnReveal
@@ -205,6 +234,7 @@ export default async function DependentsPage({
                   </form>
                 </div>
 
+                {/* EDIT */}
                 <details className="mt-3">
                   <summary className="cursor-pointer text-xs font-semibold text-muted-foreground hover:text-foreground">
                     Edit dependent
@@ -240,6 +270,13 @@ export default async function DependentsPage({
                       defaultValue={String(d.dob)}
                       className="h-10 rounded-xl border px-3"
                       required
+                    />
+
+                    {/* ✅ EDIT SSN INPUT */}
+                    <SsnInput
+                      name="ssn"
+                      className="h-10 rounded-xl border px-3"
+                      placeholder="SSN (###-##-####)"
                     />
 
                     <select
@@ -299,6 +336,11 @@ export default async function DependentsPage({
                       <button className="rounded-xl bg-black px-4 py-2 text-sm font-semibold text-white">
                         Save changes
                       </button>
+                    </div>
+
+                    <div className="sm:col-span-2 text-xs text-muted-foreground">
+                      Leave SSN blank to keep what’s already on file. Enter 9
+                      digits to replace it.
                     </div>
                   </form>
                 </details>

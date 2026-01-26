@@ -3,7 +3,17 @@
 
 import { useState, useTransition } from "react";
 import { Eye, EyeOff, RefreshCcw } from "lucide-react";
-import { revealDependentSsn } from "./actions";
+
+function maskSsn(last4?: string | null) {
+  const l4 = String(last4 ?? "").replace(/\D/g, "").slice(-4);
+  return l4 ? `•••-••-${l4}` : "On file";
+}
+
+function formatSsn(digitsOrFormatted: string) {
+  const d = String(digitsOrFormatted ?? "").replace(/\D/g, "").slice(0, 9);
+  if (d.length !== 9) return "";
+  return `${d.slice(0, 3)}-${d.slice(3, 5)}-${d.slice(5)}`;
+}
 
 export default function DependentSsnReveal(props: {
   userId: string;
@@ -16,18 +26,18 @@ export default function DependentSsnReveal(props: {
 
   const [show, setShow] = useState(false);
   const [full, setFull] = useState("");
+  const [err, setErr] = useState("");
   const [isPending, startTransition] = useTransition();
 
-  const masked =
-    appliedButNotReceived
-      ? "Applied / not received"
-      : hasSsn
-        ? last4
-          ? `***-**-${last4}`
-          : "On file"
-        : "Missing";
+  const masked = appliedButNotReceived
+    ? "Applied / not received"
+    : hasSsn
+      ? maskSsn(last4)
+      : "Missing";
 
   async function onToggle() {
+    setErr("");
+
     if (show) {
       setShow(false);
       return;
@@ -36,9 +46,24 @@ export default function DependentSsnReveal(props: {
     if (!hasSsn || appliedButNotReceived) return;
 
     startTransition(async () => {
-      const res = await revealDependentSsn(userId, dependentId);
-      setFull(String((res as any)?.ssn ?? ""));
-      setShow(true);
+      try {
+        const res = await fetch(
+          `/api/admin/clients/${userId}/dependents/${dependentId}/ssn?reveal=1`,
+          { method: "GET", cache: "no-store", credentials: "include" },
+        );
+
+        const json = (await res.json().catch(() => ({}))) as any;
+        if (!res.ok) throw new Error(json?.message ?? json?.error ?? `Request failed (${res.status})`);
+
+        const ssn = formatSsn(String(json?.ssn ?? ""));
+        if (!ssn) throw new Error("No SSN on file to reveal.");
+
+        setFull(ssn);
+        setShow(true);
+      } catch (e: any) {
+        setErr(e?.message ?? "Failed to reveal SSN.");
+        setShow(false);
+      }
     });
   }
 
@@ -65,6 +90,8 @@ export default function DependentSsnReveal(props: {
           )}
         </button>
       ) : null}
+
+      {err ? <span className="text-xs text-red-600">{err}</span> : null}
     </span>
   );
 }

@@ -95,8 +95,12 @@ function decryptSsn(payload: string) {
   return "";
 }
 
+function digitsOnly(v: string) {
+  return String(v ?? "").replace(/\D/g, "");
+}
+
 function formatSsn(digits: string) {
-  const d = String(digits ?? "").replace(/\D/g, "");
+  const d = digitsOnly(digits);
   if (d.length !== 9) return "";
   return `${d.slice(0, 3)}-${d.slice(3, 5)}-${d.slice(5)}`;
 }
@@ -105,7 +109,6 @@ async function resolveUser(idOrSub: string) {
   const key = String(idOrSub || "").trim();
   if (!key) return null;
 
-  // if it's a UUID, try by users.id first
   if (isUuid(key)) {
     const [u1] = await db
       .select({
@@ -121,7 +124,6 @@ async function resolveUser(idOrSub: string) {
     if (u1) return u1;
   }
 
-  // fallback: treat as cognitoSub
   const [u2] = await db
     .select({
       id: users.id,
@@ -141,45 +143,46 @@ export async function GET(
   { params }: { params: Promise<{ userId: string }> },
 ) {
   try {
-    const { userId } = await params; // ✅ FIXED: await params
+    const { userId } = await params;
     const me = await getServerRole();
-    if (!me)
+    if (!me) {
       return NextResponse.json(
         { ok: false, message: "Unauthorized" },
         { status: 401 },
       );
+    }
 
     const role = String((me as any).role ?? "");
-    if (!isAdminRole(role))
+    if (!isAdminRole(role)) {
       return NextResponse.json(
         { ok: false, message: "Forbidden" },
         { status: 403 },
       );
+    }
 
     const url = new URL(req.url);
     const reveal = url.searchParams.get("reveal") === "1";
 
     if (reveal && !requireRevealPrivilege(role)) {
       return NextResponse.json(
-        {
-          ok: false,
-          message: "Forbidden: reveal requires ADMIN or SUPERADMIN",
-        },
+        { ok: false, message: "Forbidden: reveal requires ADMIN or SUPERADMIN" },
         { status: 403 },
       );
     }
 
     const user = await resolveUser(String(userId));
-    if (!user)
+    if (!user) {
       return NextResponse.json(
         { ok: false, message: "User not found." },
         { status: 404 },
       );
+    }
 
     const last4 = String((user as any)?.ssnLast4 ?? "");
-    const hasSsn = Boolean(last4);
+    const enc = String((user as any)?.ssnEncrypted ?? "");
+    const hasSsn = Boolean(last4 || enc);
 
-    // masked only
+    // masked-only
     if (!reveal) {
       return NextResponse.json(
         { ok: true, hasSsn, last4 },
@@ -187,9 +190,8 @@ export async function GET(
       );
     }
 
-    // reveal full if encrypted exists
-    const enc = String((user as any)?.ssnEncrypted ?? "");
-    if (!hasSsn || !enc) {
+    // reveal full
+    if (!enc) {
       return NextResponse.json(
         { ok: true, hasSsn, last4, ssn: "" },
         { headers: { "Cache-Control": "no-store" } },
@@ -199,8 +201,12 @@ export async function GET(
     const digits = decryptSsn(enc);
     const ssn = formatSsn(digits);
 
+    // If last4 is missing but we can decrypt, derive it (nice for UI)
+    const derivedLast4 = digitsOnly(digits).slice(-4);
+    const safeLast4 = last4 || derivedLast4;
+
     return NextResponse.json(
-      { ok: true, hasSsn, last4, ssn },
+      { ok: true, hasSsn, last4: safeLast4, ssn },
       { headers: { "Cache-Control": "no-store" } },
     );
   } catch (e: any) {

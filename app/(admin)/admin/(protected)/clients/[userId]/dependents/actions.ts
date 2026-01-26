@@ -1,9 +1,8 @@
-// app/(admin)/admin/(protected)/clients/[userId]/dependents/actions.ts
 "use server";
 
 import crypto from "crypto";
 import { db } from "@/drizzle/db";
-import { dependents, users } from "@/drizzle/schema";
+import { dependents } from "@/drizzle/schema";
 import { and, desc, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { getServerRole } from "@/lib/auth/roleServer";
@@ -21,12 +20,16 @@ function asBool(v: FormDataEntryValue | null) {
   return v === "on" || v === "true" || v === "1";
 }
 
+function digitsOnly(v: unknown, maxLen: number) {
+  return String(v ?? "").replace(/\D/g, "").slice(0, maxLen);
+}
+
 function dependentsPath(userId: string) {
   return `/admin/clients/${userId}/dependents`;
 }
 
 function requireAdmin(auth: any) {
-  const role = String(auth?.role ?? "");
+  const role = String(auth?.role ?? "").toUpperCase();
   return (
     role === "ADMIN" ||
     role === "SUPERADMIN" ||
@@ -68,6 +71,20 @@ function readAes256Key(envName: string): Buffer {
 }
 
 /** dependents format: v1.<iv_b64url>.<tag_b64url>.<ct_b64url> */
+function encryptDependentSsn(digits: string) {
+  const d = digitsOnly(digits, 9);
+  if (d.length !== 9) return "";
+
+  const key = readAes256Key("SSN_ENCRYPTION_KEY");
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
+
+  const ct = Buffer.concat([cipher.update(d, "utf8"), cipher.final()]);
+  const tag = cipher.getAuthTag();
+
+  return `v1.${iv.toString("base64url")}.${tag.toString("base64url")}.${ct.toString("base64url")}`;
+}
+
 function decryptDependentSsn(payload: string) {
   const raw = String(payload ?? "");
   if (!raw.startsWith("v1.")) return "";
@@ -98,6 +115,7 @@ export async function addDependent(userId: string, formData: FormData) {
   const firstName = asString(formData.get("firstName"));
   const middleName = asString(formData.get("middleName"));
   const lastName = asString(formData.get("lastName"));
+
   const dob = asString(formData.get("dob"));
   const relationship = asString(formData.get("relationship"));
   const monthsInHome = asInt(formData.get("monthsInHome"), 12);
@@ -106,13 +124,26 @@ export async function addDependent(userId: string, formData: FormData) {
   const isStudent = asBool(formData.get("isStudent"));
   const isDisabled = asBool(formData.get("isDisabled"));
 
+  // optional SSN field (9 digits)
+ const ssnRaw = asString(formData.get("ssn")); // may be "123-45-6789"
+const ssnDigits = ssnRaw.replace(/\D/g, "").slice(0, 9);
+
+if (ssnRaw && ssnDigits.length !== 9) {
+  throw new Error("SSN must be 9 digits (###-##-####).");
+}
+if (appliedButNotReceived && ssnDigits.length) {
+  throw new Error("SSN is marked as pending. Uncheck “Applied but not received” to save SSN.");
+}
+
   if (!firstName || !lastName || !dob || !relationship) {
     throw new Error("Missing required fields (first, last, DOB, relationship).");
   }
-
   if (monthsInHome < 0 || monthsInHome > 12) {
     throw new Error("Months in home must be between 0 and 12.");
   }
+
+
+  const canStoreSsn = !appliedButNotReceived && ssnDigits.length === 9;
 
   await db.insert(dependents).values({
     userId,
@@ -125,13 +156,23 @@ export async function addDependent(userId: string, formData: FormData) {
     appliedButNotReceived,
     isStudent,
     isDisabled,
+
+    // ✅ match your schema (nullable)
+    ssnEncrypted: canStoreSsn ? encryptDependentSsn(ssnDigits) : null,
+    ssnLast4: canStoreSsn ? ssnDigits.slice(-4) : null,
+    ssnSetAt: canStoreSsn ? new Date() : null,
+
     updatedAt: new Date(),
   } as any);
 
   revalidatePath(dependentsPath(userId));
 }
 
-export async function updateDependent(userId: string, dependentId: string, formData: FormData) {
+export async function updateDependent(
+  userId: string,
+  dependentId: string,
+  formData: FormData,
+) {
   await adminGate();
 
   const firstName = asString(formData.get("firstName"));
@@ -145,28 +186,49 @@ export async function updateDependent(userId: string, dependentId: string, formD
   const isStudent = asBool(formData.get("isStudent"));
   const isDisabled = asBool(formData.get("isDisabled"));
 
+  const ssnRaw = asString(formData.get("ssn"));
+  const ssnDigits = digitsOnly(asString(formData.get("ssn")), 9);
+
+  if (ssnRaw && ssnDigits.length !== 9) {
+  throw new Error("SSN must be 9 digits (###-##-####).");
+}
+
   if (!firstName || !lastName || !dob || !relationship) {
     throw new Error("Missing required fields (first, last, DOB, relationship).");
   }
-
   if (monthsInHome < 0 || monthsInHome > 12) {
     throw new Error("Months in home must be between 0 and 12.");
   }
 
+  const setObj: any = {
+    firstName,
+    middleName,
+    lastName,
+    dob,
+    relationship,
+    monthsInHome,
+    appliedButNotReceived,
+    isStudent,
+    isDisabled,
+    updatedAt: new Date(),
+  };
+
+  // ✅ If SSN pending, scrub stored SSN
+  if (appliedButNotReceived) {
+    setObj.ssnEncrypted = null;
+    setObj.ssnLast4 = null;
+    setObj.ssnSetAt = null;
+  } else if (ssnDigits.length === 9) {
+    // ✅ If user typed SSN, store it and stamp ssnSetAt
+    setObj.ssnEncrypted = encryptDependentSsn(ssnDigits);
+    setObj.ssnLast4 = ssnDigits.slice(-4);
+    setObj.ssnSetAt = new Date();
+  }
+  // else: leave SSN columns as-is
+
   await db
     .update(dependents)
-    .set({
-      firstName,
-      middleName,
-      lastName,
-      dob,
-      relationship,
-      monthsInHome,
-      appliedButNotReceived,
-      isStudent,
-      isDisabled,
-      updatedAt: new Date(),
-    } as any)
+    .set(setObj)
     .where(and(eq(dependents.id, dependentId), eq(dependents.userId, userId)));
 
   revalidatePath(dependentsPath(userId));
@@ -198,9 +260,13 @@ export async function listDependents(userId: string) {
       isStudent: dependents.isStudent,
       isDisabled: dependents.isDisabled,
       appliedButNotReceived: dependents.appliedButNotReceived,
+
       ssnEncrypted: dependents.ssnEncrypted,
-      ssnLast4: (dependents as any).ssnLast4,
+      ssnLast4: dependents.ssnLast4,
+      ssnSetAt: (dependents as any).ssnSetAt,
+
       createdAt: dependents.createdAt,
+      updatedAt: dependents.updatedAt,
     } as any)
     .from(dependents)
     .where(eq(dependents.userId, userId))
@@ -209,8 +275,9 @@ export async function listDependents(userId: string) {
   return rows.map((r: any) => ({
     ...r,
     dob: r?.dob ? String(r.dob).slice(0, 10) : "",
-    hasSsn: Boolean(r?.ssnEncrypted),
+    hasSsn: Boolean(r?.ssnEncrypted || r?.ssnLast4),
     ssnLast4: r?.ssnLast4 ? String(r.ssnLast4) : null,
+    ssnSetAt: r?.ssnSetAt ? String(r.ssnSetAt) : null,
   }));
 }
 
@@ -221,6 +288,7 @@ export async function revealDependentSsn(userId: string, dependentId: string) {
     .select({
       ssnEncrypted: dependents.ssnEncrypted,
       appliedButNotReceived: dependents.appliedButNotReceived,
+      ssnLast4: dependents.ssnLast4,
     } as any)
     .from(dependents)
     .where(and(eq(dependents.id, dependentId), eq(dependents.userId, userId)))
