@@ -50,7 +50,7 @@ export default function OnboardingDocumentsClient() {
         setError(e?.message || "Failed to load documents.")
       );
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, []);
 
   async function uploadOne(file: File) {
