@@ -8,6 +8,7 @@ import crypto from "crypto";
 import { db } from "@/drizzle/db";
 import { users, invites } from "@/drizzle/schema";
 import { and, eq } from "drizzle-orm";
+import outputs from "@/amplify_outputs.json";
 
 import { requireAdminOrRedirect, revalidateClientPaths } from "./_helpers";
 
@@ -159,16 +160,41 @@ function getAttr(
    Cognito + Branded invite primitives
 ───────────────────────────────────────────── */
 
+function getCognitoConfig() {
+  const region = String(
+    process.env.COGNITO_REGION ??
+      (outputs as any)?.auth?.aws_region ??
+      "",
+  ).trim();
+
+  const poolId = String(
+    process.env.COGNITO_USER_POOL_ID ??
+      (outputs as any)?.auth?.user_pool_id ??
+      "",
+  ).trim();
+
+  if (!region) {
+    throw new Error(
+      "Missing region (COGNITO_REGION or outputs.auth.aws_region)",
+    );
+  }
+
+  if (!poolId) {
+    throw new Error(
+      "Missing COGNITO_USER_POOL_ID (or outputs.auth.user_pool_id)",
+    );
+  }
+
+  return { region, poolId };
+}
+
 function cognitoClient() {
-  const region = process.env.AWS_REGION!;
-  if (!region) throw new Error("Missing AWS_REGION");
+  const { region } = getCognitoConfig();
   return new CognitoIdentityProviderClient({ region });
 }
 
 function userPoolId() {
-  const id = process.env.COGNITO_USER_POOL_ID!;
-  if (!id) throw new Error("Missing COGNITO_USER_POOL_ID");
-  return id;
+  return getCognitoConfig().poolId;
 }
 
 async function ensureCognitoUserAndAttributes(opts: {
