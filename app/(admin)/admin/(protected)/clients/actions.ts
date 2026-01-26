@@ -36,7 +36,6 @@ function normalizeBaseUrl(raw: unknown) {
 async function getOriginServer() {
   try {
     // Next 14: headers() is sync, Next 15: async — awaiting is safe either way
-     
     const h = await headers();
     const host = (h.get("x-forwarded-host") || h.get("host") || "").trim();
     if (host) {
@@ -80,6 +79,38 @@ function qs(path: string, params: Record<string, string | undefined>) {
 }
 
 /* ─────────────────────────────────────────────
+   Invite destination (NEXT) rules
+───────────────────────────────────────────── */
+
+// ✅ Keep this SAFE + controlled (no free-form strings)
+const InviteNextSchema = z.enum([
+  "/onboarding/profile",
+  "/dashboard",
+  "/agency",
+  "/taxpayer/onboarding-sign-up",
+]);
+
+type InviteNext = z.infer<typeof InviteNextSchema>;
+
+function normalizeInviteNext(role: UserRole, inviteNext?: InviteNext) {
+  // ✅ LMS always goes to /agency
+  if (role === "LMS_PREPARER") return "/agency" as const;
+
+  // ✅ Taxpayer allowed: /onboarding/profile or /dashboard
+  if (inviteNext === "/dashboard") return "/dashboard" as const;
+
+  // ⚠️ IMPORTANT:
+  // /taxpayer/onboarding-sign-up is an ENTRY route handled by /invite/consume for pending invites.
+  // It should NOT be used as the post-signup "next" or you can cause loops.
+  // So we normalize it to the real destination (profile).
+  if (inviteNext === "/taxpayer/onboarding-sign-up")
+    return "/onboarding/profile" as const;
+
+  // default
+  return "/onboarding/profile" as const;
+}
+
+/* ─────────────────────────────────────────────
    Zod schemas
 ───────────────────────────────────────────── */
 
@@ -93,6 +124,7 @@ const CreateClientSchema = z.object({
   role: UserRoleSchema.optional(),
   agencyId: z.string().uuid().optional(),
   inviteMode: z.enum(["cognito", "branded"]).optional(),
+  inviteNext: InviteNextSchema.optional(),
 });
 
 const ResendSchema = z.object({
@@ -101,6 +133,7 @@ const ResendSchema = z.object({
   firstName: z.string().optional(),
   role: UserRoleSchema.optional(),
   agencyId: z.string().uuid().optional(),
+  inviteNext: InviteNextSchema.optional(),
 });
 
 const StatusSchema = z.object({
@@ -117,7 +150,7 @@ const ProfileSchema = z.object({
 
 function getAttr(
   attrs: { Name?: string; Value?: string }[] | undefined,
-  name: string
+  name: string,
 ) {
   return attrs?.find((a) => a.Name === name)?.Value ?? null;
 }
@@ -153,13 +186,15 @@ async function ensureCognitoUserAndAttributes(opts: {
     ...(opts.branded ? [{ Name: "email_verified", Value: "true" }] : []),
     ...(opts.phone ? [{ Name: "phone_number", Value: opts.phone }] : []),
     { Name: "custom:role", Value: opts.role },
-    ...(opts.agencyId ? [{ Name: "custom:agencyId", Value: opts.agencyId }] : []),
+    ...(opts.agencyId
+      ? [{ Name: "custom:agencyId", Value: opts.agencyId }]
+      : []),
   ];
 
   try {
     // exists?
     await cognito.send(
-      new AdminGetUserCommand({ UserPoolId: pool, Username: opts.email })
+      new AdminGetUserCommand({ UserPoolId: pool, Username: opts.email }),
     );
 
     // exists -> update attributes
@@ -168,7 +203,7 @@ async function ensureCognitoUserAndAttributes(opts: {
         UserPoolId: pool,
         Username: opts.email,
         UserAttributes: attrs,
-      })
+      }),
     );
 
     return { existed: true };
@@ -185,7 +220,7 @@ async function ensureCognitoUserAndAttributes(opts: {
         MessageAction: opts.branded ? "SUPPRESS" : undefined,
         DesiredDeliveryMediums: opts.branded ? undefined : ["EMAIL"],
         UserAttributes: attrs,
-      })
+      }),
     );
 
     return { existed: false };
@@ -197,7 +232,7 @@ async function getCognitoSub(email: string) {
   const pool = userPoolId();
 
   const res = await cognito.send(
-    new AdminGetUserCommand({ UserPoolId: pool, Username: email })
+    new AdminGetUserCommand({ UserPoolId: pool, Username: email }),
   );
 
   const sub = getAttr(res.UserAttributes, "sub");
@@ -211,8 +246,8 @@ async function sendBrandedInviteEmail(opts: {
   phone?: string;
   role: UserRole;
   agencyId?: string | null;
+  inviteNext?: InviteNext;
 }) {
-  // Ensure cognito user exists + correct attributes + email_verified=true
   await ensureCognitoUserAndAttributes({
     email: opts.email,
     phone: opts.phone,
@@ -223,6 +258,7 @@ async function sendBrandedInviteEmail(opts: {
 
   // Create a new DB invite token and email it
   const inviteType = roleToInviteType(opts.role);
+
   const token = makeToken();
 
   // revoke old pending invites for this email/type
@@ -233,8 +269,8 @@ async function sendBrandedInviteEmail(opts: {
       and(
         eq(invites.email, opts.email),
         eq(invites.type, inviteType),
-        eq(invites.status, "pending")
-      )
+        eq(invites.status, "pending"),
+      ),
     );
 
   const expiresAt =
@@ -242,6 +278,12 @@ async function sendBrandedInviteEmail(opts: {
       ? new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
       : null;
 
+  const next = normalizeInviteNext(
+    opts.role,
+    opts.inviteNext ?? (defaultNextForInviteType(inviteType) as InviteNext),
+  );
+
+  // ✅ Store token + inviteNext in meta (requires schema meta typing update)
   await db.insert(invites).values({
     email: opts.email,
     type: inviteType,
@@ -249,11 +291,10 @@ async function sendBrandedInviteEmail(opts: {
     token,
     status: "pending",
     expiresAt,
-    meta: { invitedBy: "admin" },
-  });
+    meta: { invitedBy: "admin", inviteNext: next },
+  } as any);
 
   const origin = await getOriginServer();
-  const next = defaultNextForInviteType(inviteType);
 
   await sendPortalInviteEmail({
     to: opts.email,
@@ -263,7 +304,7 @@ async function sendBrandedInviteEmail(opts: {
     next,
   });
 
-  return { token };
+  return { token, next };
 }
 
 async function sendCognitoInviteEmail(opts: {
@@ -292,7 +333,7 @@ async function sendCognitoInviteEmail(opts: {
           UserPoolId: pool,
           Username: opts.email,
           MessageAction: "RESEND",
-        })
+        }),
       );
       return { fallback: undefined as string | undefined };
     } catch {
@@ -300,7 +341,7 @@ async function sendCognitoInviteEmail(opts: {
         new AdminResetUserPasswordCommand({
           UserPoolId: pool,
           Username: opts.email,
-        })
+        }),
       );
       return { fallback: "reset_password" };
     }
@@ -324,6 +365,8 @@ async function createClientInternal(formData: FormData) {
     agencyId: String(formData.get("agencyId") ?? "").trim() || undefined,
     inviteMode: (String(formData.get("inviteMode") ?? "").trim() ||
       undefined) as any,
+    inviteNext: (String(formData.get("inviteNext") ?? "").trim() ||
+      undefined) as any, // ✅ ADD
   });
 
   if (!parsed.success) {
@@ -334,6 +377,8 @@ async function createClientInternal(formData: FormData) {
   const inviteMode: InviteMode = parsed.data.inviteMode ?? "branded";
   const role: UserRole = parsed.data.role ?? "TAXPAYER";
 
+  const inviteNext = normalizeInviteNext(role, parsed.data.inviteNext);
+
   try {
     if (inviteMode === "branded") {
       await sendBrandedInviteEmail({
@@ -342,8 +387,11 @@ async function createClientInternal(formData: FormData) {
         firstName,
         role,
         agencyId: agencyId ?? null,
+        inviteNext, // ✅ ADD
       });
     } else {
+      // Cognito email is managed by Cognito (temp password flow)
+      // inviteNext isn't embedded here unless you build a custom sign-in link flow.
       await sendCognitoInviteEmail({
         email,
         phone,
@@ -401,7 +449,7 @@ async function createClientInternal(formData: FormData) {
 }
 
 export async function adminCreateClientAndRedirect(
-  formData: FormData
+  formData: FormData,
 ): Promise<void> {
   await requireAdminOrRedirect();
 
@@ -415,7 +463,7 @@ export async function adminCreateClientAndRedirect(
     qs(`/admin/clients/${res.userId}`, {
       toast: "create_ok",
       mode: res.inviteMode,
-    })
+    }),
   );
 }
 
@@ -424,7 +472,7 @@ export async function adminCreateClientAndRedirect(
 ───────────────────────────────────────────── */
 
 export async function adminResendClientInviteFromForm(
-  formData: FormData
+  formData: FormData,
 ): Promise<void> {
   await requireAdminOrRedirect();
 
@@ -434,11 +482,13 @@ export async function adminResendClientInviteFromForm(
     firstName: String(formData.get("firstName") ?? "").trim() || undefined,
     role: (String(formData.get("role") ?? "").trim() || undefined) as any,
     agencyId: String(formData.get("agencyId") ?? "").trim() || undefined,
+    inviteNext: (String(formData.get("inviteNext") ?? "").trim() ||
+      undefined) as any, // ✅ ADD
   });
 
   if (!parsed.success) {
     redirect(
-      qs("/admin/clients", { toast: "resend_failed", msg: "Invalid input." })
+      qs("/admin/clients", { toast: "resend_failed", msg: "Invalid input." }),
     );
   }
 
@@ -447,6 +497,8 @@ export async function adminResendClientInviteFromForm(
   const role: UserRole = parsed.data.role ?? "TAXPAYER";
   const agencyId = parsed.data.agencyId ?? null;
 
+  const inviteNext = normalizeInviteNext(role, parsed.data.inviteNext);
+
   try {
     if (inviteMode === "branded") {
       await sendBrandedInviteEmail({
@@ -454,6 +506,7 @@ export async function adminResendClientInviteFromForm(
         firstName: parsed.data.firstName,
         role,
         agencyId,
+        inviteNext: inviteNext as any,
       });
 
       redirect(qs("/admin/clients", { toast: "resend_ok", mode: "branded" }));
@@ -469,7 +522,7 @@ export async function adminResendClientInviteFromForm(
           toast: "resend_ok",
           mode: "cognito",
           fallback: r.fallback,
-        })
+        }),
       );
     }
   } catch (e: any) {
@@ -477,7 +530,7 @@ export async function adminResendClientInviteFromForm(
       qs("/admin/clients", {
         toast: "resend_failed",
         msg: e?.message ?? "Resend failed.",
-      })
+      }),
     );
   }
 }

@@ -109,7 +109,8 @@ export const invites = pgTable("invites", {
   meta: jsonb("meta").$type<{
     waitlistId?: string;
     plan?: string;
-    invitedBy?: string; // admin, system, etc.
+    invitedBy?: string; 
+    inviteNext?: string;
   }>(),
 
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
@@ -117,6 +118,7 @@ export const invites = pgTable("invites", {
     () => new Date(),
   ),
 });
+
 // =========================
 // WAITLIST ENUMS
 // =========================
