@@ -7,12 +7,11 @@ import { desc, eq, and } from "drizzle-orm";
 import { db } from "@/drizzle/db";
 import { users, documents } from "@/drizzle/schema";
 import { getServerRole } from "@/lib/auth/roleServer";
-
-import { createPresignedPost } from "@aws-sdk/s3-presigned-post";
 import {
   S3Client,
   GetObjectCommand,
   DeleteObjectCommand,
+  PutObjectCommand,
   HeadObjectCommand,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
@@ -148,8 +147,6 @@ export async function createUploadUrl(input: {
   const fileName = sanitizeFileName(input.fileName);
   if (!fileName) throw new Error("Missing file name.");
 
-  const contentType = String(input.contentType ?? "application/octet-stream").trim();
-
   // Determine who the upload is for
   let targetUserId = String(userRow.id);
   if (input.targetUserId) {
@@ -162,20 +159,19 @@ export async function createUploadUrl(input: {
 
   const s3 = new S3Client({ region });
 
-  const post = await createPresignedPost(s3, {
-    Bucket: bucket,
-    Key: key,
-    Expires: 60 * 5,
-    Fields: {
-      "Content-Type": contentType,
-    },
-    Conditions: [
-      ["content-length-range", 0, 25 * 1024 * 1024], // 25MB cap (adjust)
-      ["eq", "$Content-Type", contentType],
-    ],
-  });
+  // ✅ Presigned PUT URL (works with fetch PUT)
+  const url = await getSignedUrl(
+    s3,
+    new PutObjectCommand({
+      Bucket: bucket,
+      Key: key,
+      // optional (strict): ContentType: String(input.contentType ?? "application/octet-stream").trim(),
+    }),
+    { expiresIn: 60 * 5 }
+  );
 
-  return { key, url: post.url, fields: post.fields };
+  // keep shape compatible
+  return { key, url, fields: {} as Record<string, string> };
 }
 
 export async function finalizeUpload(input: {

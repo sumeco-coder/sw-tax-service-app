@@ -8,10 +8,8 @@ import { db } from "@/drizzle/db";
 import { users, documents } from "@/drizzle/schema";
 import { getServerRole } from "@/lib/auth/roleServer";
 
-import { S3Client, GetObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, GetObjectCommand, HeadObjectCommand, PutObjectCommand, } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { createPresignedPost } from "@aws-sdk/s3-presigned-post";
-
 /* -------------------------------------------------------------------------- */
 /* Types */
 /* -------------------------------------------------------------------------- */
@@ -138,7 +136,7 @@ export async function onboardingListMyDocuments(): Promise<ActionResult<ListItem
 
 export async function onboardingCreateMyUploadUrl(input: {
   fileName: string;
-  contentType?: string;
+  contentType?: string; // still accept it, but don't sign it
 }): Promise<ActionResult<PresignedPostOut>> {
   try {
     const viewer = await getViewer();
@@ -154,31 +152,27 @@ export async function onboardingCreateMyUploadUrl(input: {
     }
 
     const fileName = sanitizeFileName(rawName);
-    const contentType = String(input.contentType ?? "application/octet-stream").trim();
-
     const key = `${viewer.userId}/${crypto.randomUUID()}-${fileName}`;
 
     const s3 = new S3Client({ region: cfg.region });
 
-    const post = await createPresignedPost(s3, {
-      Bucket: cfg.bucket,
-      Key: key,
-      Expires: 60 * 5,
-      Fields: {
-        "Content-Type": contentType,
-      },
-      Conditions: [
-        ["content-length-range", 0, 25 * 1024 * 1024], // 25MB cap
-        ["eq", "$Content-Type", contentType],
-      ],
-    });
+    // ✅ Presigned PUT (no ContentType to avoid SignatureDoesNotMatch)
+    const url = await getSignedUrl(
+      s3,
+      new PutObjectCommand({
+        Bucket: cfg.bucket,
+        Key: key,
+      }),
+      { expiresIn: 60 * 5 }
+    );
 
-    return { ok: true, data: { key, url: post.url, fields: post.fields } };
+    return { ok: true, data: { key, url, fields: {} } };
   } catch (e) {
     console.error("[onboardingCreateMyUploadUrl]", e);
     return { ok: false, code: "ERROR" };
   }
 }
+
 
 /* -------------------------------------------------------------------------- */
 /* Finalize upload (DB WRITE AFTER UPLOAD EXISTS) */
