@@ -6,11 +6,16 @@ import {
   AdminUpdateUserAttributesCommand,
 } from "@aws-sdk/client-cognito-identity-provider";
 
+// In Lambda, region is automatically available via AWS_REGION.
+// Keeping {} is fine, but explicitly setting region is also OK.
+// const cognito = new CognitoIdentityProviderClient({ region: process.env.AWS_REGION });
 const cognito = new CognitoIdentityProviderClient({});
 
 const ROLES = ["taxpayer", "lms-preparer", "lms-admin", "admin", "unknown"] as const;
 type AnyRole = (typeof ROLES)[number];
 type GroupRole = Exclude<AnyRole, "unknown">;
+
+const GROUP_ROLES = new Set<GroupRole>(["taxpayer", "lms-preparer", "lms-admin", "admin"]);
 
 function normalizeEmail(s: unknown) {
   return String(s ?? "").trim().toLowerCase();
@@ -27,6 +32,33 @@ function parseEmailList(csv: string) {
       .map((s) => s.trim().toLowerCase())
       .filter(Boolean)
   );
+}
+
+/**
+ * Accepts values like:
+ * - "taxpayer"
+ * - "TAXPAYER"
+ * - "lms-preparer"
+ * - "LMS_PREPARER"
+ * - "lms_preparer"
+ * and normalizes to a GroupRole if possible.
+ */
+function normalizeRoleValue(v: unknown): GroupRole | null {
+  const raw = safeTrim(v);
+  if (!raw) return null;
+
+  let r = raw.toLowerCase();
+
+  // normalize common separators
+  r = r.replace(/_/g, "-");
+
+  // map your uppercase enum values (from admin tooling) to group-style names
+  if (r === "taxpayer") return "taxpayer";
+  if (r === "lms-preparer") return "lms-preparer";
+  if (r === "lms-admin") return "lms-admin";
+  if (r === "admin") return "admin";
+
+  return null;
 }
 
 function decideRole(opts: {
@@ -81,34 +113,40 @@ export const handler: PostConfirmationTriggerHandler = async (event) => {
   const lmsAdminInviteCode = safeTrim(process.env.INVITE_CODE_LMS_ADMIN);
   const preparerInviteCode = safeTrim(process.env.INVITE_CODE_LMS_PREPARER);
 
-  // We support AnyRole in types, but actual assignment is always a real group role.
-  const desiredGroupRole: GroupRole = decideRole({
-    email,
-    inviteCode,
-    adminEmails,
-    adminInviteCode,
-    lmsAdminInviteCode,
-    preparerInviteCode,
-  });
+  // ✅ If admin/invite tooling already set custom:role, honor it
+  const presetRole = normalizeRoleValue(attrs["custom:role"]);
+
+  const desiredGroupRole: GroupRole =
+    presetRole ??
+    decideRole({
+      email,
+      inviteCode,
+      adminEmails,
+      adminInviteCode,
+      lmsAdminInviteCode,
+      preparerInviteCode,
+    });
 
   // If you still want a "desiredRole" variable that can be "unknown" elsewhere:
-  const desiredRole: AnyRole = desiredGroupRole; // never "unknown" here
+  const desiredRole: AnyRole = desiredGroupRole;
 
   // 1) Add user to group (never "unknown")
   try {
-    await cognito.send(
-      new AdminAddUserToGroupCommand({
-        GroupName: desiredGroupRole,
-        Username: username,
-        UserPoolId: userPoolId,
-      })
-    );
-    console.log(`✅ Added user ${username} to group ${desiredGroupRole}`);
+    if (GROUP_ROLES.has(desiredGroupRole)) {
+      await cognito.send(
+        new AdminAddUserToGroupCommand({
+          GroupName: desiredGroupRole,
+          Username: username,
+          UserPoolId: userPoolId,
+        })
+      );
+      console.log(`✅ Added user ${username} to group ${desiredGroupRole}`);
+    }
   } catch (err) {
     console.error("❌ Error adding user to group", err);
   }
 
-  // 2) Sync custom:role attribute
+  // 2) Sync custom:role attribute (keep it consistent with group)
   try {
     await cognito.send(
       new AdminUpdateUserAttributesCommand({

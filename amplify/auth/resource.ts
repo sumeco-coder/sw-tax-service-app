@@ -9,11 +9,12 @@ export const auth = defineAuth({
   loginWith: {
     email: true,
   },
-    // All the groups you plan to use
-  groups: ["admin", "lms-admin", "lms-preparer", "taxpayer"],           // optional, for future admin-only pages
-  // No identityPool config here — it's automatic when public rules exist
 
-   userAttributes: {
+  // All the groups you plan to use
+  groups: ["admin", "lms-admin", "lms-preparer", "taxpayer"],
+
+  // ✅ Add custom attributes to the User Pool schema
+  userAttributes: {
     "custom:role": {
       dataType: "String",
       mutable: true,
@@ -26,12 +27,17 @@ export const auth = defineAuth({
       minLen: 1,
       maxLen: 64,
     },
-
-    // OPTIONAL (only include if your app already uses these)
-    // "custom:onboardingComplete": { dataType: "Boolean", mutable: true },
-    // "custom:goal": { dataType: "String", mutable: true, maxLen: 64 },
   },
-   triggers: {
+
+  // ✅ Give the postConfirmation Lambda permission to update users + groups
+  access: (allow) => [
+    allow.resource(assignRoleOnConfirm).to([
+      "manageUsers",
+      "manageGroupMembership",
+    ]),
+  ],
+
+  triggers: {
     postConfirmation: assignRoleOnConfirm,
   },
 });
