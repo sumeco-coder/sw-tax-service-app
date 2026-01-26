@@ -22,6 +22,7 @@ import {
   sendNowDirectResend,
   scheduleDirectResend,
 } from "./actions/send-actions";
+import { headers } from "next/headers";
 
 // ✅ NEW imports for preview rendering
 import { EMAIL_DEFAULTS } from "@/lib/constants/email-defaults";
@@ -30,6 +31,19 @@ import { buildEmailFooterHTML, buildEmailFooterText } from "@/lib/email/footer";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
+
+async function logAction(name: string, extra?: Record<string, any>) {
+  const h = await headers();
+  console.log(`[CampaignAction:${name}]`, {
+    campaignId: extra?.campaignId,
+    host: h.get("x-forwarded-host") || h.get("host"),
+    proto: h.get("x-forwarded-proto"),
+    referer: h.get("referer"),
+    ua: h.get("user-agent"),
+    ...extra,
+  });
+}
+
 
 type PageProps = {
   params: { campaignId: string } | Promise<{ campaignId: string }>;
@@ -155,24 +169,27 @@ export default async function CampaignDetailPage({ params }: PageProps) {
     )
     .filter(Boolean);
 
-  // ✅ Bind server actions (so ConfirmActionButton works clean)
-  async function retryFailedAction() {
-    "use server";
-    await retryFailed(campaign.id);
-  }
+// ✅ Bind server actions (so ConfirmActionButton works clean)
+async function retryFailedAction() {
+  "use server";
+  await logAction("retry_failed", { campaignId: campaign.id });
+  await retryFailed(campaign.id);
+}
 
-  // ✅ Send actions (two different paths)
-  async function resendCopyAction() {
-    "use server";
-    await resendWholeCampaignAsCopy(campaign.id);
-  }
+// ✅ Send actions (two different paths)
+async function resendCopyAction() {
+  "use server";
+  await logAction("resend_new_copy", { campaignId: campaign.id });
+  await resendWholeCampaignAsCopy(campaign.id);
+}
 
-  async function sendDirectResendAction() {
-    "use server";
-    await sendNowDirectResend(campaign.id);
-  }
+async function sendDirectResendAction(formData: FormData) {
+  "use server";
+  await logAction("send_now_direct_resend", { campaignId: campaign.id });
+  await sendNowDirectResend(campaign.id);
+}
 
-  async function scheduleDirectResendAction(formData: FormData) {
+async function scheduleDirectResendAction(formData: FormData) {
   "use server";
 
   const local = String(formData.get("sendAtIso") ?? "").trim(); // e.g. 2026-01-22T09:00
@@ -186,8 +203,15 @@ export default async function CampaignDetailPage({ params }: PageProps) {
 
   if (!sendAtUtcIso) throw new Error("Invalid date/time.");
 
+  await logAction("schedule_direct_resend", {
+    campaignId: campaign.id,
+    sendAtLocal: local,
+    sendAtUtcIso,
+  });
+
   await scheduleDirectResend(campaign.id, sendAtUtcIso);
 }
+
 
   /* =========================
      ✅ PREVIEW RENDER (server)
