@@ -106,12 +106,11 @@ export async function sendPortalInviteEmail(opts: {
   });
 
   const from =
-  process.env.RESEND_FROM ??
-  process.env.RESEND_FROM_EMAIL ??
-  "SW Tax Service <no-reply@swtaxservice.com>";
+    process.env.RESEND_FROM ??
+    process.env.RESEND_FROM_EMAIL ??
+    "SW Tax Service <no-reply@swtaxservice.com>";
 
-if (!from) throw new Error("Missing RESEND_FROM/RESEND_FROM_EMAIL");
-
+  if (!from) throw new Error("Missing RESEND_FROM/RESEND_FROM_EMAIL");
 
   const { data, error } = await resend.emails.send({
     from,
