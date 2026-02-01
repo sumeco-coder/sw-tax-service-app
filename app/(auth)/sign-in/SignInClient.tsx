@@ -33,7 +33,12 @@ const brandGradient = {
   background: `linear-gradient(135deg, ${BRAND.pink}, ${BRAND.copper})`,
 };
 
-type View = "signin" | "confirmSignIn" | "confirmSignUp" | "forgot";
+type View =
+  | "signin"
+  | "confirmSignIn"
+  | "confirmSignUp"
+  | "newPassword"
+  | "forgot";
 
 function cleanEmail(v: string) {
   return v.trim().toLowerCase();
@@ -79,14 +84,20 @@ async function syncServerCookiesFromSession(): Promise<boolean> {
   return !!res && res.ok;
 }
 
-
 export default function SigninClient() {
   const router = useRouter();
   const searchParams = useSearchParams();
+
   const [showPassword, setShowPassword] = useState(false);
+  const [showNewPassword, setShowNewPassword] = useState(false);
+
   const [view, setView] = useState<View>("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmNewPassword, setConfirmNewPassword] = useState("");
+
   const [code, setCode] = useState("");
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState("");
@@ -98,31 +109,30 @@ export default function SigninClient() {
   // Invite context (token from your DB invite links can be passed as ?invite=TOKEN)
   const invite = useMemo(
     () => (searchParams.get("invite") ?? "").trim(),
-    [searchParams]
+    [searchParams],
   );
 
   // support both next & redirect
   const nextParam = useMemo(
     () => searchParams.get("next") ?? searchParams.get("redirect"),
-    [searchParams]
+    [searchParams],
   );
 
   // optional: show message if they were auto-logged-out
   const reason = useMemo(
     () => (searchParams.get("reason") ?? "").trim(),
-    [searchParams]
+    [searchParams],
   );
 
-   const emailParam = useMemo(
+  const emailParam = useMemo(
     () => (searchParams.get("email") ?? "").trim(),
-    [searchParams]
+    [searchParams],
   );
 
- useEffect(() => {
-  if (!emailParam) return;
-  setEmail((prev) => (prev ? prev : emailParam));
-}, [emailParam, setEmail]);
-
+  useEffect(() => {
+    if (!emailParam) return;
+    setEmail((prev) => (prev ? prev : emailParam));
+  }, [emailParam, setEmail]);
 
   // ✅ This is the destination AFTER onboarding is complete
   const intendedAfterOnboarding = useMemo(() => {
@@ -143,8 +153,6 @@ export default function SigninClient() {
     return `${base}${qs ? `?${qs}` : ""}`;
   }, [invite, intendedAfterOnboarding]);
 
-  
-
   const [checkingSession, setCheckingSession] = useState(true);
 
   const username = cleanEmail(email);
@@ -153,9 +161,11 @@ export default function SigninClient() {
     setView("signin");
     setMsg("");
     setCode("");
+    setNewPassword("");
+    setConfirmNewPassword("");
+    setShowNewPassword(false);
   }
 
-  /** ✅ Force onboarding for taxpayers (or invite flow) until onboardingComplete=true */
   /** ✅ Force onboarding for taxpayers (or invite flow) until onboardingComplete=true */
   async function routeAfterAuth() {
     const intended = intendedAfterOnboarding || "/dashboard";
@@ -173,7 +183,7 @@ export default function SigninClient() {
 
         if ((invite || roleClaim === "taxpayer") && !onboardingComplete) {
           router.push(
-            `/onboarding/profile?next=${encodeURIComponent(intended)}`
+            `/onboarding/profile?next=${encodeURIComponent(intended)}`,
           );
           return;
         }
@@ -215,7 +225,6 @@ export default function SigninClient() {
       cancelled = true;
     };
   }, [invite, intendedAfterOnboarding]);
-  // affects routeAfterAuth behavior
 
   async function handleSignIn(e: React.FormEvent) {
     e.preventDefault();
@@ -232,12 +241,31 @@ export default function SigninClient() {
       const res = await signIn({ username, password });
 
       if (res.isSignedIn) {
-        await syncServerCookiesFromSession();
+        const ok = await syncServerCookiesFromSession();
+        if (!ok) {
+          setMsg("Session sync failed. Please refresh and sign in again.");
+          await signOut().catch(() => {});
+          return;
+        }
         await routeAfterAuth();
         return;
       }
 
       const step = res.nextStep?.signInStep;
+
+      if (step === "CONFIRM_SIGN_IN_WITH_NEW_PASSWORD_REQUIRED") {
+        setView("newPassword");
+        setMsg(
+          "For security, you need to create a new password to finish signing in.",
+        );
+
+        setCode("");
+        setNewPassword("");
+        setConfirmNewPassword("");
+        setShowNewPassword(false);
+
+        return;
+      }
 
       if (
         step === "CONFIRM_SIGN_IN_WITH_SMS_CODE" ||
@@ -252,14 +280,14 @@ export default function SigninClient() {
       if (step === "CONFIRM_SIGN_UP") {
         setView("confirmSignUp");
         setMsg(
-          "Your account isn’t confirmed yet. Enter your confirmation code."
+          "Your account isn’t confirmed yet. Enter your confirmation code.",
         );
         return;
       }
 
-      setView("confirmSignIn");
+      setView("forgot");
       setMsg(
-        step ? `Additional sign-in step required: ${step}` : "Continue sign-in."
+        "We need one more step to sign you in. Please reset your password to continue.",
       );
     } catch (e: unknown) {
       const m = getErrMsg(e);
@@ -309,6 +337,55 @@ export default function SigninClient() {
         return;
       }
       setMsg("Not signed in yet. Please try again.");
+    } catch (e: unknown) {
+      setMsg(getErrMsg(e));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleSetNewPassword(e: React.FormEvent) {
+    e.preventDefault();
+    setMsg("");
+
+    if (newPassword.length < 8) {
+      setMsg("Password must be at least 8 characters.");
+      return;
+    }
+    if (newPassword !== confirmNewPassword) {
+      setMsg("Passwords do not match.");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      // ✅ For NEW_PASSWORD_REQUIRED, challengeResponse is the NEW password
+      const res = await confirmSignIn({ challengeResponse: newPassword });
+
+      if (res.isSignedIn) {
+        const ok = await syncServerCookiesFromSession();
+        if (!ok) {
+          setMsg("Session sync failed. Please refresh and sign in again.");
+          await signOut().catch(() => {});
+          return;
+        }
+        await routeAfterAuth();
+        return;
+      }
+
+      // If Cognito asks for another step after setting password:
+      const step = res.nextStep?.signInStep;
+      if (
+        step === "CONFIRM_SIGN_IN_WITH_SMS_CODE" ||
+        step === "CONFIRM_SIGN_IN_WITH_EMAIL_CODE" ||
+        step === "CONFIRM_SIGN_IN_WITH_TOTP_CODE"
+      ) {
+        setView("confirmSignIn");
+        setMsg("Enter the verification code you received.");
+        return;
+      }
+
+      setMsg("Please complete the next sign-in step.");
     } catch (e: unknown) {
       setMsg(getErrMsg(e));
     } finally {
@@ -370,8 +447,18 @@ export default function SigninClient() {
     );
   }
 
+   const title =
+    view === "signin"
+      ? invite
+        ? "Sign in to continue onboarding"
+        : "Sign in"
+      : view === "newPassword"
+        ? "Create your password"
+        : "Account access";
+
+
   return (
-    <div
+   <div
       className="min-h-screen flex items-center justify-center px-4"
       style={{
         background: `radial-gradient(1200px 700px at 15% 0%, rgba(230,42,104,0.18), transparent 60%),
@@ -398,27 +485,16 @@ export default function SigninClient() {
           </div>
 
           <div className="text-center">
-            <div className="text-sm font-semibold text-slate-900">
-              SW Tax Service
-            </div>
-            <div className="text-[11px] text-slate-500">
-              Secure client portal
-            </div>
+            <div className="text-sm font-semibold text-slate-900">SW Tax Service</div>
+            <div className="text-[11px] text-slate-500">Secure client portal</div>
           </div>
         </div>
 
         <h1 className="mt-6 text-2xl font-extrabold text-slate-900 text-center">
-          {view === "signin"
-            ? invite
-              ? "Sign in to continue onboarding"
-              : "Sign in"
-            : "Account access"}
+          {title}
         </h1>
 
-        <div
-          className="mt-3 h-1 w-24 mx-auto rounded-full"
-          style={brandGradient}
-        />
+        <div className="mt-3 h-1 w-24 mx-auto rounded-full" style={brandGradient} />
 
         {reason === "timeout" && (
           <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
@@ -516,7 +592,6 @@ export default function SigninClient() {
               </button>
             </div>
 
-            {/* ✅ Use the href so it’s not “declared but never read” */}
             <div className="pt-1 text-center text-sm text-slate-700">
               {invite ? (
                 <>
@@ -543,7 +618,6 @@ export default function SigninClient() {
           </form>
         )}
 
-        {/* confirmSignIn / confirmSignUp buttons: swap blue for gradient */}
         {view === "confirmSignIn" && (
           <form onSubmit={handleConfirmSignIn} className="mt-6 space-y-4">
             <input
@@ -569,6 +643,80 @@ export default function SigninClient() {
             <button
               type="button"
               className="w-full rounded-xl border border-slate-200 bg-white py-2.5 text-slate-900 hover:bg-slate-50 disabled:opacity-60"
+              disabled={loading}
+              onClick={backToSignIn}
+            >
+              Back to sign in
+            </button>
+          </form>
+        )}
+
+        {/* ✅ NEW: New password required (force change password) */}
+        {view === "newPassword" && (
+          <form onSubmit={handleSetNewPassword} className="mt-6 space-y-4">
+            <div className="text-sm text-slate-700">
+              Create a new password to finish signing in.
+            </div>
+
+            <div>
+              <label className="mb-1 block text-xs font-semibold text-slate-700">
+                New password
+              </label>
+
+              <div className="relative">
+                <input
+                  className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 pr-11"
+                  type={showNewPassword ? "text" : "password"}
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  autoComplete="new-password"
+                  required
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowNewPassword((v) => !v)}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 rounded-lg p-2 text-slate-600 hover:bg-slate-100"
+                  aria-label={showNewPassword ? "Hide password" : "Show password"}
+                >
+                  {showNewPassword ? (
+                    <EyeOff className="h-5 w-5" />
+                  ) : (
+                    <Eye className="h-5 w-5" />
+                  )}
+                </button>
+              </div>
+
+              <p className="mt-1 text-[11px] text-slate-500">
+                Use 8+ characters. Add a number or symbol for stronger security.
+              </p>
+            </div>
+
+            <div>
+              <label className="mb-1 block text-xs font-semibold text-slate-700">
+                Confirm new password
+              </label>
+              <input
+                className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5"
+                type={showNewPassword ? "text" : "password"}
+                value={confirmNewPassword}
+                onChange={(e) => setConfirmNewPassword(e.target.value)}
+                autoComplete="new-password"
+                required
+              />
+            </div>
+
+            <button
+              type="submit"
+              className="w-full rounded-xl py-2.5 text-white font-semibold shadow-sm transition disabled:opacity-60"
+              style={brandGradient}
+              disabled={loading}
+            >
+              {loading ? "Saving..." : "Save new password"}
+            </button>
+
+            <button
+              type="button"
+              className="w-full rounded-xl border border-slate-200 bg-white py-2.5 text-slate-900 hover:bg-slate-50"
               disabled={loading}
               onClick={backToSignIn}
             >

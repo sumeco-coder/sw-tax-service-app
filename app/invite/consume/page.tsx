@@ -45,6 +45,7 @@ export default async function InviteConsumePage({
       email: invites.email,
       expiresAt: invites.expiresAt,
       agencyId: invites.agencyId,
+      meta: invites.meta, // ✅ needed to detect admin-created invites
     })
     .from(invites)
     .where(eq(invites.token, token))
@@ -59,7 +60,10 @@ export default async function InviteConsumePage({
   const isExpired = !!row.expiresAt && row.expiresAt.getTime() < now.getTime();
 
   if (isExpired && row.status === "pending") {
-    await db.update(invites).set({ status: "expired", updatedAt: now }).where(eq(invites.id, row.id));
+    await db
+      .update(invites)
+      .set({ status: "expired", updatedAt: now })
+      .where(eq(invites.id, row.id));
   }
 
   if (row.status === "revoked" || row.status === "expired" || isExpired) {
@@ -75,20 +79,46 @@ export default async function InviteConsumePage({
 
   const next = safeInternalPath(searchParams.next, defaultNext);
 
+  // ✅ If already accepted, just sign in normally
   if (row.status === "accepted") {
     redirect(buildUrl("/sign-in", { next, email: row.email }));
   }
 
-  if (row.type === "taxpayer" && row.status === "pending") {
-    redirect(
-      buildUrl("/taxpayer/onboarding-sign-up", {
-        invite: token,
-        next,
-        agencyId: row.agencyId ?? undefined,
-        email: row.email, // ✅ prefill
-      })
-    );
+  // ✅ Pending invite routing:
+  // - Admin-created invites: go to set-password flow (Branded Resend)
+  // - Campaign taxpayer invites: go to onboarding sign-up flow
+  const invitedBy = String((row.meta as any)?.invitedBy ?? "").toLowerCase();
+  const isAdminInvite = invitedBy === "admin";
+
+  if (row.status === "pending") {
+    if (isAdminInvite) {
+      // Branded Resend flow -> set password first
+      redirect(
+        buildUrl("/sign-in", {
+          start: "setpw",
+          invite: token,
+          next,
+          email: row.email,
+        }),
+      );
+    }
+
+    // Campaign (or non-admin) taxpayer invites -> onboarding sign-up
+    if (row.type === "taxpayer") {
+      redirect(
+        buildUrl("/taxpayer/onboarding-sign-up", {
+          invite: token,
+          next,
+          agencyId: row.agencyId ?? undefined,
+          email: row.email, // prefill
+        }),
+      );
+    }
+
+    // fallback for other types
+    redirect(buildUrl("/sign-in", { invite: token, next, email: row.email }));
   }
 
-  redirect(buildUrl("/sign-in", { invite: token, next, email: row.email }));
+  // safety fallback
+  redirect(buildUrl("/sign-in", { next, email: row.email }));
 }

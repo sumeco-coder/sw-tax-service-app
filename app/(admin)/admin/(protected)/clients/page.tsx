@@ -9,6 +9,7 @@ import InviteEmailPreviewButton from "./_components/InviteEmailPreviewButton";
 import {
   adminCreateClientAndRedirect,
   adminResendClientInviteFromForm,
+  adminResetClientPasswordFromForm,
 } from "./actions";
 
 export const runtime = "nodejs";
@@ -162,7 +163,11 @@ export default async function ClientActivityReportPage({
           ? `Invite resent (${mode || "branded"}${fallback ? `, fallback=${fallback}` : ""}).`
           : toast === "resend_failed"
             ? `Resend failed: ${msg || "Unknown error"}`
-            : "";
+            : toast === "pw_reset_ok"
+              ? "Password reset email sent."
+              : toast === "pw_reset_failed"
+                ? `Reset failed: ${msg || "Unknown error"}`
+                : "";
 
   return (
     <div className="p-6 space-y-6">
@@ -342,19 +347,24 @@ export default async function ClientActivityReportPage({
           label="Onboarding: DONE"
           value={fmt.format(onboardingMap.get("DONE") ?? 0)}
         />
-        {/* ✅ Returns (this year) */}
-    <Card
-      label="Returns: IN_PROGRESS (this year)"
-      value={fmt.format(returnsInProgress)}
-    />
-    <Card
-      label="Returns: FILED (this year)"
-      value={fmt.format(returnsFiled)}
-    />
-    <Card
-      label="Returns: ACCEPTED (this year)"
-      value={fmt.format(returnsAccepted)}
-    />
+
+        <Card
+          label="Returns: IN_PROGRESS (this year)"
+          value={fmt.format(returnsInProgress)}
+        />
+        <Card
+          label="Returns: FILED (this year)"
+          value={fmt.format(returnsFiled)}
+        />
+        <Card
+          label="Returns: ACCEPTED (this year)"
+          value={fmt.format(returnsAccepted)}
+        />
+
+        <Card
+          label="Returns: TOTAL (this year)"
+          value={fmt.format(returnsTotal)}
+        />
       </div>
 
       <div className="rounded-2xl border bg-background/80 shadow-sm overflow-x-auto">
@@ -372,6 +382,7 @@ export default async function ClientActivityReportPage({
               <th className="p-3 text-left">Dependents</th>
               <th className="p-3 text-left">Sensitive</th>
               <th className="p-3 text-left">Resend invite</th>
+              <th className="p-3 text-left">Reset</th>
             </tr>
           </thead>
 
@@ -458,13 +469,26 @@ export default async function ClientActivityReportPage({
                       </button>
                     </form>
                   </td>
+
+                  <td className="p-3">
+                    <form action={adminResetClientPasswordFromForm}>
+                      <input
+                        type="hidden"
+                        name="email"
+                        value={String(u.email)}
+                      />
+                      <button className="h-9 rounded-md border px-3 text-xs font-medium">
+                        Reset
+                      </button>
+                    </form>
+                  </td>
                 </tr>
               );
             })}
 
             {!newestClients.length ? (
               <tr>
-                <td className="p-3 text-muted-foreground" colSpan={7}>
+                <td className="p-3 text-muted-foreground" colSpan={8}>
                   No clients yet.
                 </td>
               </tr>

@@ -5,6 +5,12 @@ import { db } from "@/drizzle/db";
 import { users } from "@/drizzle/schema";
 import { eq } from "drizzle-orm";
 import { requireAdminOrRedirect, revalidateClientPaths } from "../_helpers";
+import outputs from "@/amplify_outputs.json";
+
+import {
+  CognitoIdentityProviderClient,
+  AdminResetUserPasswordCommand,
+} from "@aws-sdk/client-cognito-identity-provider";
 
 function normalizeEmail(v: string) {
   return String(v ?? "").trim().toLowerCase();
@@ -27,7 +33,10 @@ async function sendResendEmail(to: string) {
   if (!apiKey) throw new Error("Missing RESEND_API_KEY env var.");
 
   const baseUrl = getBaseUrl();
-  if (!baseUrl) throw new Error("Missing site URL env var (NEXT_PUBLIC_APP_URL / SITE_URL / APP_URL).");
+  if (!baseUrl)
+    throw new Error(
+      "Missing site URL env var (NEXT_PUBLIC_APP_URL / SITE_URL / APP_URL).",
+    );
 
   // Adjust this path if your invite link is different
   const link = `${baseUrl}/sign-in`;
@@ -67,6 +76,34 @@ async function sendResendEmail(to: string) {
   }
 }
 
+/* ─────────────────────────────────────────────
+   Cognito helpers
+───────────────────────────────────────────── */
+
+function getCognitoConfig() {
+  const region = String(
+    process.env.COGNITO_REGION ?? (outputs as any)?.auth?.aws_region ?? "",
+  ).trim();
+
+  const poolId = String(
+    process.env.COGNITO_USER_POOL_ID ?? (outputs as any)?.auth?.user_pool_id ?? "",
+  ).trim();
+
+  if (!region) throw new Error("Missing Cognito region (COGNITO_REGION or outputs.auth.aws_region).");
+  if (!poolId) throw new Error("Missing Cognito User Pool Id (COGNITO_USER_POOL_ID or outputs.auth.user_pool_id).");
+
+  return { region, poolId };
+}
+
+function cognitoClient() {
+  const { region } = getCognitoConfig();
+  return new CognitoIdentityProviderClient({ region });
+}
+
+/* ─────────────────────────────────────────────
+   Actions
+───────────────────────────────────────────── */
+
 export async function adminResendClientInvite(email: string) {
   await requireAdminOrRedirect();
 
@@ -74,6 +111,31 @@ export async function adminResendClientInvite(email: string) {
   if (!to || !to.includes("@")) throw new Error("Invalid email.");
 
   await sendResendEmail(to);
+  return { ok: true };
+}
+
+/**
+ * ✅ Reset password (Cognito) — use with <form action={adminResetClientPasswordFromForm}>
+ * This sends Cognito's reset flow email to the user.
+ */
+export async function adminResetClientPasswordFromForm(formData: FormData) {
+  await requireAdminOrRedirect();
+
+  const email = normalizeEmail(String(formData.get("email") ?? ""));
+  if (!email || !email.includes("@")) throw new Error("Invalid email.");
+
+  const { poolId } = getCognitoConfig();
+  const cognito = cognitoClient();
+
+  await cognito.send(
+    new AdminResetUserPasswordCommand({
+      UserPoolId: poolId,
+      Username: email, // ✅ your pool uses email as username (matches your other code)
+    }),
+  );
+
+  // no DB change needed, but keeping this for consistency if you show UI changes
+  // revalidateClientPaths(userId) not available here unless you pass it
   return { ok: true };
 }
 
@@ -88,7 +150,7 @@ export async function adminUpdateClientProfile(
     state?: string;
     zip?: string;
     filingStatus?: string;
-  }
+  },
 ) {
   await requireAdminOrRedirect();
 

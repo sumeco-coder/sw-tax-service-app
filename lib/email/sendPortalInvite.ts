@@ -3,6 +3,15 @@ import { Resend } from "resend";
 
 const resend = new Resend(process.env.RESEND_API_KEY!);
 
+/** Only allow internal app paths to avoid open-redirect attacks */
+function safeInternalPath(input: unknown, fallback: string) {
+  const raw = String(input ?? "").trim();
+  if (!raw) return fallback;
+  if (!raw.startsWith("/")) return fallback;
+  if (raw.startsWith("//")) return fallback;
+  return raw;
+}
+
 export function buildPortalInviteEmail(opts: {
   to: string;
   firstName?: string;
@@ -13,9 +22,17 @@ export function buildPortalInviteEmail(opts: {
   const appUrl = String(opts.appUrl ?? "").replace(/\/$/, "");
   if (!appUrl) throw new Error("Missing APP_URL/appUrl");
 
+  // ✅ Branded invite now starts on the set-password flow inside /sign-in
+  // /sign-in?start=setpw&invite=TOKEN&email=client@email.com&next=/onboarding/profile
+  const next = safeInternalPath(opts.next, "/dashboard");
+
+
   const inviteUrl =
-    `${appUrl}/invite/consume?token=${encodeURIComponent(opts.inviteToken)}` +
-    (opts.next ? `&next=${encodeURIComponent(opts.next)}` : "");
+    `${appUrl}/sign-in` +
+    `?start=setpw` +
+    `&invite=${encodeURIComponent(opts.inviteToken)}` +
+    `&email=${encodeURIComponent(String(opts.to ?? "").trim().toLowerCase())}` +
+    (next ? `&next=${encodeURIComponent(next)}` : "");
 
   // ✅ Use public PNG (SVG can be blocked by email clients)
   const logoUrl = `${appUrl}/swtax-favicon-pack/android-chrome-192x192.png`;
@@ -54,10 +71,14 @@ export function buildPortalInviteEmail(opts: {
             You’ve been invited to access your <strong>secure client portal</strong> to complete onboarding, upload documents, and track progress.
           </p>
 
+          <p style="margin:0 0 14px 0; font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial; font-size:13px; color:#374151; line-height:1.6;">
+            First step: create your password to activate your portal access.
+          </p>
+
           <div style="margin:18px 0 14px 0;">
             <a href="${inviteUrl}"
                style="display:inline-block; background:#E00040; color:#ffffff; text-decoration:none; padding:12px 16px; border-radius:12px; font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial; font-size:14px; font-weight:700;">
-              Accept Invite
+              Set Password &amp; Continue
             </a>
           </div>
 
