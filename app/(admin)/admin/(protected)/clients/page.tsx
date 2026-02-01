@@ -121,10 +121,16 @@ export default async function ClientActivityReportPage({
         lastSeenAt: users.lastSeenAt,
 
         dependentsCount: sql<number>`
-          (select count(*)
-           from ${dependents}
-           where ${dependents.userId} = ${users.id})
-        `.mapWith(Number),
+      (select count(*)
+       from ${dependents}
+       where ${dependents.userId} = ${users.id})
+    `.mapWith(Number),
+
+        documentsCount: sql<number>`
+      (select count(*)
+       from ${documents}
+       where ${documents.userId} = ${users.id})
+    `.mapWith(Number),
       })
       .from(users)
       .orderBy(desc(users.createdAt))
@@ -380,6 +386,7 @@ export default async function ClientActivityReportPage({
               <th className="p-3 text-left">Onboarding</th>
               <th className="p-3 text-left">Created</th>
               <th className="p-3 text-left">Dependents</th>
+              <th className="p-3 text-left">Docs</th>
               <th className="p-3 text-left">Sensitive</th>
               <th className="p-3 text-left">Resend invite</th>
               <th className="p-3 text-left">Reset</th>
@@ -407,6 +414,15 @@ export default async function ClientActivityReportPage({
                       href={`/admin/clients/${u.id}/dependents`}
                     >
                       View ({Number((u as any).dependentsCount ?? 0)})
+                    </Link>
+                  </td>
+
+                  <td className="p-3">
+                    <Link
+                      className="text-xs font-medium underline underline-offset-4"
+                      href={`/admin/clients/${u.id}/documents`}
+                    >
+                      View ({Number((u as any).documentsCount ?? 0)})
                     </Link>
                   </td>
 
@@ -488,7 +504,7 @@ export default async function ClientActivityReportPage({
 
             {!newestClients.length ? (
               <tr>
-                <td className="p-3 text-muted-foreground" colSpan={8}>
+                <td className="p-3 text-muted-foreground" colSpan={9}>
                   No clients yet.
                 </td>
               </tr>
