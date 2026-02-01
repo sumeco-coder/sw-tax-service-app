@@ -100,14 +100,9 @@ const InviteNextSchema = z.enum([
 
 type InviteNext = z.infer<typeof InviteNextSchema>;
 
-function normalizeInviteNext(role: UserRole, inviteNext?: InviteNext) {
-  if (role === "LMS_PREPARER") return "/agency" as const;
-  if (inviteNext === "/dashboard") return "/dashboard" as const;
-
-  if (inviteNext === "/taxpayer/onboarding-sign-up")
-    return "/onboarding/profile" as const;
-
-  return "/onboarding/profile" as const;
+function normalizeInviteNext(role: UserRole, inviteNext?: InviteNext): InviteNext {
+  if (role === "LMS_PREPARER") return "/agency";
+  return inviteNext ?? "/onboarding/profile";
 }
 
 /* ─────────────────────────────────────────────
