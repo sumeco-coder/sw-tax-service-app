@@ -10,6 +10,7 @@ import {
   adminCreateClientAndRedirect,
   adminResendClientInviteFromForm,
   adminResetClientPasswordFromForm,
+  adminDeleteTestUserFromForm,
 } from "./actions";
 
 export const runtime = "nodejs";
@@ -26,6 +27,17 @@ function getStr(v: unknown) {
   return typeof v === "string" ? v : "";
 }
 
+function looksLikeTestEmail(email: string) {
+  const e = String(email || "").toLowerCase();
+  return (
+    e.includes("+test") ||
+    e.includes("+qa") ||
+    e.includes("+dev") ||
+    e.endsWith("@example.com") ||
+    e.endsWith("@test.com")
+  );
+}
+
 type SP = Record<string, string | string[] | undefined>;
 
 export default async function ClientActivityReportPage({
@@ -35,6 +47,7 @@ export default async function ClientActivityReportPage({
 }) {
   const me = await getServerRole();
   if (!me?.sub) redirect("/admin/sign-in");
+
   const role = String(me?.role ?? "").toLowerCase();
   if (!(role === "admin" || role === "superadmin")) redirect("/not-authorized");
 
@@ -140,21 +153,15 @@ export default async function ClientActivityReportPage({
   const onboardingMap = new Map<string, number>();
   for (const r of onboardingCounts) onboardingMap.set(String(r.step), r.c ?? 0);
 
-  // ✅ Returns by status (this year)
   const returnsStatusMap = new Map<string, number>();
   for (const r of returnsByStatusThisYear) {
     returnsStatusMap.set(String(r.status), r.c ?? 0);
   }
 
-  // helper
   const byStatus = (status: string) => returnsStatusMap.get(status) ?? 0;
-
-  // pick the statuses you care about (match your enum values exactly)
   const returnsInProgress = byStatus("IN_PROGRESS");
   const returnsFiled = byStatus("FILED");
   const returnsAccepted = byStatus("ACCEPTED");
-
-  // optional: total
   const returnsTotal = Array.from(returnsStatusMap.values()).reduce(
     (a, b) => a + b,
     0,
@@ -166,14 +173,20 @@ export default async function ClientActivityReportPage({
       : toast === "create_failed"
         ? `Create failed: ${msg || "Unknown error"}`
         : toast === "resend_ok"
-          ? `Invite resent (${mode || "branded"}${fallback ? `, fallback=${fallback}` : ""}).`
+          ? `Invite resent (${mode || "branded"}${
+              fallback ? `, fallback=${fallback}` : ""
+            }).`
           : toast === "resend_failed"
             ? `Resend failed: ${msg || "Unknown error"}`
             : toast === "pw_reset_ok"
               ? "Password reset email sent."
               : toast === "pw_reset_failed"
                 ? `Reset failed: ${msg || "Unknown error"}`
-                : "";
+                : toast === "delete_ok"
+                  ? "Test user deleted."
+                  : toast === "delete_failed"
+                    ? `Delete failed: ${msg || "Unknown error"}`
+                    : "";
 
   return (
     <div className="p-6 space-y-6">
@@ -353,7 +366,6 @@ export default async function ClientActivityReportPage({
           label="Onboarding: DONE"
           value={fmt.format(onboardingMap.get("DONE") ?? 0)}
         />
-
         <Card
           label="Returns: IN_PROGRESS (this year)"
           value={fmt.format(returnsInProgress)}
@@ -366,7 +378,6 @@ export default async function ClientActivityReportPage({
           label="Returns: ACCEPTED (this year)"
           value={fmt.format(returnsAccepted)}
         />
-
         <Card
           label="Returns: TOTAL (this year)"
           value={fmt.format(returnsTotal)}
@@ -390,6 +401,7 @@ export default async function ClientActivityReportPage({
               <th className="p-3 text-left">Sensitive</th>
               <th className="p-3 text-left">Resend invite</th>
               <th className="p-3 text-left">Reset</th>
+              <th className="p-3 text-left">Delete (test)</th>
             </tr>
           </thead>
 
@@ -398,10 +410,12 @@ export default async function ClientActivityReportPage({
               const r = String(u.role ?? "TAXPAYER");
               const defaultInviteNext =
                 r === "LMS_PREPARER" ? "/agency" : "/onboarding/profile";
+              const email = String(u.email ?? "");
+              const canDelete = looksLikeTestEmail(email);
 
               return (
                 <tr key={u.id} className="border-b last:border-0">
-                  <td className="p-3">{u.email}</td>
+                  <td className="p-3">{email}</td>
                   <td className="p-3">{r}</td>
                   <td className="p-3">{String(u.onboardingStep)}</td>
                   <td className="p-3">
@@ -440,11 +454,7 @@ export default async function ClientActivityReportPage({
                       action={adminResendClientInviteFromForm}
                       className="flex items-center gap-2"
                     >
-                      <input
-                        type="hidden"
-                        name="email"
-                        value={String(u.email)}
-                      />
+                      <input type="hidden" name="email" value={email} />
                       <input
                         type="hidden"
                         name="firstName"
@@ -488,15 +498,36 @@ export default async function ClientActivityReportPage({
 
                   <td className="p-3">
                     <form action={adminResetClientPasswordFromForm}>
+                      <input type="hidden" name="email" value={email} />
                       <input
                         type="hidden"
-                        name="email"
-                        value={String(u.email)}
+                        name="returnTo"
+                        value="/admin/clients"
                       />
                       <button className="h-9 rounded-md border px-3 text-xs font-medium">
                         Reset
                       </button>
                     </form>
+                  </td>
+
+                  <td className="p-3">
+                    {canDelete ? (
+                      <form action={adminDeleteTestUserFromForm}>
+                        <input type="hidden" name="email" value={email} />
+                        <input type="hidden" name="confirm" value="DELETE" />
+                        <input type="hidden" name="deleteCognito" value="on" />
+                        <input
+                          type="hidden"
+                          name="returnTo"
+                          value="/admin/clients"
+                        />
+                        <button className="h-9 rounded-md border px-3 text-xs font-medium">
+                          Delete
+                        </button>
+                      </form>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">—</span>
+                    )}
                   </td>
                 </tr>
               );
@@ -504,7 +535,7 @@ export default async function ClientActivityReportPage({
 
             {!newestClients.length ? (
               <tr>
-                <td className="p-3 text-muted-foreground" colSpan={9}>
+                <td className="p-3 text-muted-foreground" colSpan={10}>
                   No clients yet.
                 </td>
               </tr>

@@ -57,6 +57,15 @@ export default function ForgotPasswordForm({
       // ✅ Keep message generic for security
       setMsg("If an account exists, a reset code was sent to your email.");
     } catch (err: any) {
+      const name = String(err?.name ?? "");
+      if (name === "NotAuthorizedException") {
+        setMsg(
+          "This account was invited and needs an initial password set first. " +
+            "Please use your invite link (or ask us to resend your invite).",
+        );
+        return;
+      }
+
       setMsg(err?.message ?? "Could not send reset code.");
     } finally {
       setLoading(false);
