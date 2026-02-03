@@ -11,8 +11,24 @@ export const revalidate = 0;
 
 const fmt = new Intl.NumberFormat("en-US");
 
+// ✅ controls "Online now"
+const ONLINE_WINDOW_MINUTES = 2;
+const ONLINE_MS = ONLINE_WINDOW_MINUTES * 60 * 1000;
+
 function daysAgo(n: number) {
   return new Date(Date.now() - n * 24 * 60 * 60 * 1000);
+}
+
+function isOnline(ts: unknown) {
+  if (!ts) return false;
+  const t = new Date(ts as any).getTime();
+  return Number.isFinite(t) && t > Date.now() - ONLINE_MS;
+}
+
+function fmtDate(ts: unknown) {
+  if (!ts) return "—";
+  const d = new Date(ts as any);
+  return Number.isFinite(d.getTime()) ? d.toLocaleString("en-US") : "—";
 }
 
 export default async function ClientActivityReportPage() {
@@ -28,6 +44,7 @@ export default async function ClientActivityReportPage() {
   const [
     totals,
     new7,
+    onlineNow,
     active7,
     active30,
     onboardingCounts,
@@ -35,29 +52,43 @@ export default async function ClientActivityReportPage() {
     latestClients,
     returnsByStatusThisYear,
   ] = await Promise.all([
+    // total clients
     db
       .select({ count: sql<number>`count(*)`.mapWith(Number) })
       .from(users)
       .then((r) => r[0]?.count ?? 0),
 
+    // new last 7 days
     db
       .select({ count: sql<number>`count(*)`.mapWith(Number) })
       .from(users)
       .where(sql`${users.createdAt} >= ${since7}`)
       .then((r) => r[0]?.count ?? 0),
 
+    // ✅ online now (lastSeenAt within X minutes)
+    db
+      .select({ count: sql<number>`count(*)`.mapWith(Number) })
+      .from(users)
+      .where(
+        sql`${users.lastSeenAt} is not null and ${users.lastSeenAt} >= now() - interval '${ONLINE_WINDOW_MINUTES} minutes'`
+      )
+      .then((r) => r[0]?.count ?? 0),
+
+    // active last 7 days
     db
       .select({ count: sql<number>`count(*)`.mapWith(Number) })
       .from(users)
       .where(sql`${users.lastSeenAt} is not null and ${users.lastSeenAt} >= ${since7}`)
       .then((r) => r[0]?.count ?? 0),
 
+    // active last 30 days
     db
       .select({ count: sql<number>`count(*)`.mapWith(Number) })
       .from(users)
       .where(sql`${users.lastSeenAt} is not null and ${users.lastSeenAt} >= ${since30}`)
       .then((r) => r[0]?.count ?? 0),
 
+    // onboarding distribution
     db
       .select({
         step: users.onboardingStep,
@@ -66,12 +97,14 @@ export default async function ClientActivityReportPage() {
       .from(users)
       .groupBy(users.onboardingStep),
 
+    // docs uploaded last 7 days
     db
       .select({ count: sql<number>`count(*)`.mapWith(Number) })
       .from(documents)
       .where(sql`${documents.uploadedAt} >= ${since7}`)
       .then((r) => r[0]?.count ?? 0),
 
+    // newest clients
     db
       .select({
         id: users.id,
@@ -85,7 +118,7 @@ export default async function ClientActivityReportPage() {
       .orderBy(desc(users.createdAt))
       .limit(10),
 
-    // quick view of return pipeline by status for current year
+    // returns pipeline by status for current year
     db
       .select({
         status: taxReturns.status,
@@ -124,21 +157,13 @@ export default async function ClientActivityReportPage() {
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Card label="Total clients" value={fmt.format(totals)} />
         <Card label="New (last 7 days)" value={fmt.format(new7)} />
+        <Card label="Online now" value={fmt.format(onlineNow)} />
         <Card label="Active (last 7 days)" value={fmt.format(active7)} />
         <Card label="Active (last 30 days)" value={fmt.format(active30)} />
         <Card label="Docs uploaded (7 days)" value={fmt.format(docs7)} />
-        <Card
-          label="Onboarding: PROFILE"
-          value={fmt.format(onboardingMap.get("PROFILE") ?? 0)}
-        />
-        <Card
-          label="Onboarding: DOCUMENTS"
-          value={fmt.format(onboardingMap.get("DOCUMENTS") ?? 0)}
-        />
-        <Card
-          label="Onboarding: COMPLETE"
-          value={fmt.format(onboardingMap.get("COMPLETE") ?? 0)}
-        />
+        <Card label="Onboarding: PROFILE" value={fmt.format(onboardingMap.get("PROFILE") ?? 0)} />
+        <Card label="Onboarding: DOCUMENTS" value={fmt.format(onboardingMap.get("DOCUMENTS") ?? 0)} />
+        <Card label="Onboarding: COMPLETE" value={fmt.format(onboardingMap.get("COMPLETE") ?? 0)} />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
@@ -210,9 +235,20 @@ export default async function ClientActivityReportPage() {
                 <td className="p-3">{u.email}</td>
                 <td className="p-3">{u.name ?? "—"}</td>
                 <td className="p-3">{String(u.onboardingStep)}</td>
-                <td className="p-3">{new Date(u.createdAt as any).toLocaleString("en-US")}</td>
+                <td className="p-3">{fmtDate(u.createdAt)}</td>
                 <td className="p-3">
-                  {u.lastSeenAt ? new Date(u.lastSeenAt as any).toLocaleString("en-US") : "—"}
+                  <div className="flex items-center gap-2">
+                    {isOnline(u.lastSeenAt) ? (
+                      <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700">
+                        Online
+                      </span>
+                    ) : (
+                      <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
+                        Offline
+                      </span>
+                    )}
+                    <span>{fmtDate(u.lastSeenAt)}</span>
+                  </div>
                 </td>
               </tr>
             ))}
@@ -228,8 +264,8 @@ export default async function ClientActivityReportPage() {
       </div>
 
       <p className="text-xs text-muted-foreground">
-        “Portal logins” are approximated using <code>users.lastSeenAt</code>. If you want true login events, we can add a
-        simple <code>user_events</code> table later.
+        “Online now” = seen within {ONLINE_WINDOW_MINUTES} minutes. “Active” counts use lastSeenAt.
+        For true login history, add a <code>user_events</code> table later.
       </p>
     </div>
   );

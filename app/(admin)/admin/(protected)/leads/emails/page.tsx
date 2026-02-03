@@ -1,8 +1,21 @@
 import { db } from "@/drizzle/db";
 import { emailLeads } from "@/drizzle/schema";
-import { and, desc, eq, ilike, or } from "drizzle-orm";
+import { and, desc, eq, ilike, or, sql } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
+
+const LEAD_ACTIVE_MINUTES = 10;
+const LEAD_ACTIVE_MS = LEAD_ACTIVE_MINUTES * 60 * 1000;
+
+function leadIsActive(ts: any) {
+  if (!ts) return false;
+  return new Date(ts).getTime() > Date.now() - LEAD_ACTIVE_MS;
+}
+
+function fmtDate(ts: any) {
+  if (!ts) return "—";
+  return new Date(ts as any).toLocaleString("en-US");
+}
 
 export default async function EmailLeadsAdminPage({
   searchParams,
@@ -29,7 +42,8 @@ export default async function EmailLeadsAdminPage({
     .select()
     .from(emailLeads)
     .where(where)
-    .orderBy(desc(emailLeads.lastSeenAt))
+    // ✅ stable sort even if lastSeenAt is null
+    .orderBy(desc(sql`coalesce(${emailLeads.lastSeenAt}, ${emailLeads.firstSeenAt})`))
     .limit(500);
 
   // pull distinct sources for dropdown (simple + safe)
@@ -115,11 +129,22 @@ export default async function EmailLeadsAdminPage({
                 <td className="p-3">{r.marketingOptIn ? "Yes" : "No"}</td>
                 <td className="p-3">{r.source}</td>
                 <td className="p-3">{r.submitCount}</td>
+                <td className="p-3">{fmtDate(r.firstSeenAt)}</td>
+
+                {/* ✅ "Active" badge + timestamp */}
                 <td className="p-3">
-                  {new Date(r.firstSeenAt as any).toLocaleString("en-US")}
-                </td>
-                <td className="p-3">
-                  {new Date(r.lastSeenAt as any).toLocaleString("en-US")}
+                  <div className="flex items-center gap-2">
+                    {leadIsActive(r.lastSeenAt) ? (
+                      <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700">
+                        Active
+                      </span>
+                    ) : (
+                      <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
+                        —
+                      </span>
+                    )}
+                    <span>{fmtDate(r.lastSeenAt)}</span>
+                  </div>
                 </td>
               </tr>
             ))}
@@ -136,7 +161,8 @@ export default async function EmailLeadsAdminPage({
       </div>
 
       <p className="mt-3 text-xs text-muted-foreground">
-        Showing {rows.length} rows (max 500).
+        Showing {rows.length} rows (max 500). “Active” means last seen within{" "}
+        {LEAD_ACTIVE_MINUTES} minutes.
       </p>
     </div>
   );

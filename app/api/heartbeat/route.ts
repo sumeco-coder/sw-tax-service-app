@@ -1,8 +1,9 @@
+// app/api/heartbeat/route.ts
 import { NextResponse, type NextRequest } from "next/server";
 import { db } from "@/drizzle/db";
 import { users } from "@/drizzle/schema";
-import { eq } from "drizzle-orm";
 import { jwtVerify, createRemoteJWKSet } from "jose";
+import { sql } from "drizzle-orm";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -13,14 +14,12 @@ const ISSUER = `https://cognito-idp.${REGION}.amazonaws.com/${USER_POOL_ID}`;
 const JWKS = createRemoteJWKSet(new URL(`${ISSUER}/.well-known/jwks.json`));
 
 function getToken(req: NextRequest) {
-  // 1) Cookie tokens (your app style)
   const cookieToken =
     req.cookies.get("accessToken")?.value ||
     req.cookies.get("idToken")?.value;
 
   if (cookieToken) return cookieToken;
 
-  // 2) Optional Bearer token support
   const auth = req.headers.get("authorization") || "";
   return auth.startsWith("Bearer ") ? auth.slice(7) : "";
 }
@@ -29,7 +28,6 @@ export async function POST(req: NextRequest) {
   const token = getToken(req);
 
   if (!token) {
-    // If heartbeat is called when logged out, return 200 (don’t spam 401s)
     return NextResponse.json({ ok: true, authenticated: false }, { status: 200 });
   }
 
@@ -41,14 +39,19 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true, authenticated: false }, { status: 200 });
     }
 
-    await db
-      .update(users)
-      .set({ lastSeenAt: new Date() })
-      .where(eq(users.cognitoSub, sub));
+    // ✅ Throttle DB writes: only update if lastSeenAt is null or older than 30s
+    await db.execute(sql`
+      update ${users}
+      set ${users.lastSeenAt} = now()
+      where ${users.cognitoSub} = ${sub}
+        and (
+          ${users.lastSeenAt} is null
+          or ${users.lastSeenAt} < now() - interval '30 seconds'
+        )
+    `);
 
-    return NextResponse.json({ ok: true, authenticated: true });
+    return NextResponse.json({ ok: true, authenticated: true }, { status: 200 });
   } catch {
-    // Token invalid/expired -> treat as logged out
     return NextResponse.json({ ok: true, authenticated: false }, { status: 200 });
   }
 }
