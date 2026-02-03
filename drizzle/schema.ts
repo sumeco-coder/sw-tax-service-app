@@ -109,7 +109,7 @@ export const invites = pgTable("invites", {
   meta: jsonb("meta").$type<{
     waitlistId?: string;
     plan?: string;
-    invitedBy?: string; 
+    invitedBy?: string;
     inviteNext?: string;
   }>(),
 
@@ -928,6 +928,12 @@ export const taxReturns = pgTable(
 // ===================================================
 // DOCUMENTS, INVOICES, TASKS, MESSAGES, USER SETTINGS
 // ===================================================
+export const documentStatusEnum = pgEnum("document_status", [
+  "new",
+  "reviewed",
+  "needs_attention",
+]);
+
 export const documents = pgTable(
   "documents",
   {
@@ -949,11 +955,19 @@ export const documents = pgTable(
     uploadedAt: timestamp("uploaded_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
+
+    status: documentStatusEnum("status").notNull().default("new"),
+    reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
+    reviewedBy: uuid("reviewed_by").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    attentionNote: text("attention_note"),
   },
   (t) => ({
     userIdx: index("documents_user_idx").on(t.userId),
     returnIdx: index("documents_return_idx").on(t.taxReturnId),
     keyUniq: unique("documents_key_uniq").on(t.key),
+    statusIdx: index("documents_status_idx").on(t.status),
   }),
 );
 

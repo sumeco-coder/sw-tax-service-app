@@ -267,6 +267,13 @@
       "when": 1769305241204,
       "tag": "0037_boring_madripoor",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1770152867354,
+      "tag": "0038_nosy_luckman",
+      "breakpoints": true
     }
   ]
 }

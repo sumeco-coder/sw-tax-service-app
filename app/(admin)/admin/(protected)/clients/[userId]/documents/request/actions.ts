@@ -25,6 +25,7 @@ export async function getClientBasics(userId: string) {
       id: users.id,
       name: users.name,
       email: users.email,
+      cognitoSub: users.cognitoSub,
     })
     .from(users)
     .where(eq(users.id, userId))

@@ -1,10 +1,17 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { db } from "@/drizzle/db";
+import { users, documents } from "@/drizzle/schema";
 import { getServerRole } from "@/lib/auth/roleServer";
 import { Search, Inbox, FileText, ArrowRight } from "lucide-react";
+import { and, desc, eq, sql } from "drizzle-orm";
+
+import DocRowActions from "./_components/DocRowActions";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
+
+type StatusKey = "new" | "reviewed" | "needs_attention";
 
 type DocRow = {
   id: string;
@@ -13,17 +20,38 @@ type DocRow = {
   email: string | null;
   taxYear: number | null;
   docType: string | null;
+  fileName: string | null;
+  displayName: string | null;
   createdAt: string;
-  status: "new" | "reviewed" | "needs_attention";
+  status: StatusKey;
+  attentionNote: string | null;
 };
 
-function pill(status: DocRow["status"]) {
+function pill(status: StatusKey) {
   const base =
     "inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ring-1";
-  if (status === "new") return <span className={`${base} bg-blue-500/10 text-blue-700 ring-blue-500/20`}>New</span>;
+  if (status === "new")
+    return (
+      <span className={`${base} bg-blue-500/10 text-blue-700 ring-blue-500/20`}>
+        New
+      </span>
+    );
   if (status === "needs_attention")
-    return <span className={`${base} bg-red-500/10 text-red-700 ring-red-500/20`}>Needs attention</span>;
-  return <span className={`${base} bg-emerald-500/10 text-emerald-700 ring-emerald-500/20`}>Reviewed</span>;
+    return (
+      <span className={`${base} bg-red-500/10 text-red-700 ring-red-500/20`}>
+        Needs attention
+      </span>
+    );
+  return (
+    <span className={`${base} bg-emerald-500/10 text-emerald-700 ring-emerald-500/20`}>
+      Reviewed
+    </span>
+  );
+}
+
+function escapeLike(s: string) {
+  // escape %, _, and backslash for LIKE ... ESCAPE '\'
+  return s.replace(/[%_\\]/g, "\\$&");
 }
 
 export default async function AdminDocumentsInboxPage({
@@ -32,7 +60,7 @@ export default async function AdminDocumentsInboxPage({
   searchParams?: { q?: string; status?: string };
 }) {
   const auth = await getServerRole();
-  if (!auth) return redirect("/admin/sign-in");
+  if (!auth?.sub) return redirect("/admin/sign-in");
 
   const isAdmin =
     auth.role === "ADMIN" ||
@@ -43,16 +71,12 @@ export default async function AdminDocumentsInboxPage({
   if (!isAdmin) return redirect("/admin");
 
   const q = (searchParams?.q ?? "").trim();
-  const status = (searchParams?.status ?? "all").trim();
+  const rawStatus = (searchParams?.status ?? "all").trim();
 
-  // TODO: replace with DB query
-  const rows: DocRow[] = [];
-
-  const counts = {
-    total: rows.length,
-    new: rows.filter((r) => r.status === "new").length,
-    needs: rows.filter((r) => r.status === "needs_attention").length,
-  };
+  const allowedStatuses = new Set(["all", "new", "reviewed", "needs_attention"]);
+  const status = (allowedStatuses.has(rawStatus) ? rawStatus : "all") as
+    | "all"
+    | StatusKey;
 
   const hrefWith = (next: Partial<{ q: string; status: string }>) => {
     const params = new URLSearchParams();
@@ -63,6 +87,105 @@ export default async function AdminDocumentsInboxPage({
     const s = params.toString();
     return s ? `/admin/documents?${s}` : "/admin/documents";
   };
+
+  // preserve current filters after action submits
+  const returnTo = hrefWith({});
+
+  // --- Base WHERE (search only) ---
+  const baseConds: any[] = [];
+
+  if (q) {
+    const like = `%${escapeLike(q)}%`;
+    baseConds.push(sql`
+      (
+        lower(${users.email}) like lower(${like}) escape '\\'
+        or lower(coalesce(${users.name}, '')) like lower(${like}) escape '\\'
+        or lower(coalesce(${users.firstName}, '')) like lower(${like}) escape '\\'
+        or lower(coalesce(${users.lastName}, '')) like lower(${like}) escape '\\'
+      )
+    `);
+  }
+
+  const baseWhere = baseConds.length ? and(...baseConds) : undefined;
+
+  // --- List WHERE (search + status filter) ---
+  const listConds = [...baseConds];
+  if (status !== "all") {
+    listConds.push(eq(documents.status as any, status as any));
+  }
+  const listWhere = listConds.length ? and(...listConds) : undefined;
+
+  // --- Counts (based on search only; not locked to status filter) ---
+  const [countsRow] = await db
+    .select({
+      total: sql<number>`count(*)`.mapWith(Number),
+      new: sql<number>`count(*) filter (where ${documents.status} = 'new')`.mapWith(
+        Number,
+      ),
+      reviewed: sql<number>`count(*) filter (where ${documents.status} = 'reviewed')`.mapWith(
+        Number,
+      ),
+      needs: sql<number>`count(*) filter (where ${documents.status} = 'needs_attention')`.mapWith(
+        Number,
+      ),
+    })
+    .from(documents)
+    .innerJoin(users, eq(users.id, documents.userId))
+    .where(baseWhere);
+
+  const counts = {
+    total: countsRow?.total ?? 0,
+    new: countsRow?.new ?? 0,
+    reviewed: countsRow?.reviewed ?? 0,
+    needs: countsRow?.needs ?? 0,
+  };
+
+  // --- Rows (search + status filter) ---
+  const raw = await db
+    .select({
+      id: documents.id,
+      userId: documents.userId,
+      email: users.email,
+      clientName: sql<string | null>`
+        nullif(
+          coalesce(
+            nullif(${users.name}, ''),
+            nullif(trim(concat_ws(' ', ${users.firstName}, ${users.lastName})), ''),
+            ${users.email}
+          ),
+          ''
+        )
+      `,
+      taxYear: documents.taxYear,
+      docType: documents.docType,
+      fileName: documents.fileName,
+      displayName: documents.displayName,
+      createdAt: documents.uploadedAt,
+      status: documents.status as any,
+      attentionNote: documents.attentionNote as any,
+    })
+    .from(documents)
+    .innerJoin(users, eq(users.id, documents.userId))
+    .where(listWhere)
+    .orderBy(desc(documents.uploadedAt))
+    .limit(200);
+
+  const rows: DocRow[] = raw.map((r) => ({
+    id: String(r.id),
+    userId: String(r.userId),
+    clientName: r.clientName ? String(r.clientName) : null,
+    email: r.email ? String(r.email) : null,
+    taxYear: r.taxYear == null ? null : Number(r.taxYear),
+    docType: r.docType ? String(r.docType) : null,
+    fileName: r.fileName ? String(r.fileName) : null,
+    displayName: r.displayName ? String(r.displayName) : null,
+    createdAt:
+      r.createdAt instanceof Date
+        ? r.createdAt.toISOString()
+        : new Date(r.createdAt as any).toISOString(),
+    status: (String(r.status) as StatusKey) ?? "new",
+    attentionNote: r.attentionNote ? String(r.attentionNote) : null,
+  }));
 
   const filterBtn = (label: string, key: string) => {
     const active = status === key;
@@ -94,14 +217,15 @@ export default async function AdminDocumentsInboxPage({
           <div>
             <h1 className="text-2xl font-black tracking-tight">Inbox</h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              Total: {counts.total} • New: {counts.new} • Needs attention: {counts.needs}
+              Total: {counts.total} • New: {counts.new} • Reviewed:{" "}
+              {counts.reviewed} • Needs attention: {counts.needs}
             </p>
           </div>
 
           <div className="flex gap-2">
             <Link
               href="/admin/documents/missing"
-              className="h-10 inline-flex items-center gap- Fairfield rounded-2xl border bg-background px-4 text-sm font-semibold hover:bg-muted"
+              className="h-10 inline-flex items-center gap-2 rounded-2xl border bg-background px-4 text-sm font-semibold hover:bg-muted"
             >
               Missing tracker <ArrowRight className="h-4 w-4" />
             </Link>
@@ -120,7 +244,10 @@ export default async function AdminDocumentsInboxPage({
         <div className="rounded-3xl border bg-background/80 backdrop-blur supports-[backdrop-filter]:bg-background/60 shadow-sm">
           <div className="flex flex-col gap-3 p-3 sm:p-4 lg:flex-row lg:items-center lg:justify-between">
             {/* Search */}
-            <form className="flex w-full items-center gap-2 lg:max-w-[560px]" method="GET">
+            <form
+              className="flex w-full items-center gap-2 lg:max-w-[560px]"
+              method="GET"
+            >
               <input type="hidden" name="status" value={status} />
               <div className="relative flex-1 min-w-[200px]">
                 <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -145,9 +272,10 @@ export default async function AdminDocumentsInboxPage({
             </form>
 
             {/* Filters */}
-            <div className="grid grid-cols-3 gap-2 sm:flex sm:flex-nowrap">
+            <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-nowrap">
               {filterBtn("All", "all")}
               {filterBtn("New", "new")}
+              {filterBtn("Reviewed", "reviewed")}
               {filterBtn("Needs", "needs_attention")}
             </div>
           </div>
@@ -161,7 +289,7 @@ export default async function AdminDocumentsInboxPage({
           <div className="col-span-3">Doc</div>
           <div className="col-span-2">Year</div>
           <div className="col-span-2">Status</div>
-          <div className="col-span-1 text-right">Open</div>
+          <div className="col-span-1 text-right">Actions</div>
         </div>
 
         {rows.length === 0 ? (
@@ -170,34 +298,54 @@ export default async function AdminDocumentsInboxPage({
           </div>
         ) : (
           <ul className="divide-y">
-            {rows.map((d) => (
-              <li key={d.id} className="px-4 py-4 hover:bg-muted/30 transition">
-                <div className="flex flex-col gap-2 lg:grid lg:grid-cols-12 lg:items-center">
-                  <div className="lg:col-span-4 min-w-0">
-                    <div className="font-semibold truncate">{d.clientName ?? "Client"}</div>
-                    <div className="text-xs text-muted-foreground truncate">{d.email ?? "—"}</div>
+            {rows.map((d) => {
+              const docName = d.displayName ?? d.fileName ?? null;
+
+              return (
+                <li
+                  key={d.id}
+                  className="px-4 py-4 hover:bg-muted/30 transition"
+                >
+                  <div className="flex flex-col gap-2 lg:grid lg:grid-cols-12 lg:items-center">
+                    <div className="lg:col-span-4 min-w-0">
+                      <div className="font-semibold truncate">
+                        {d.clientName ?? "Client"}
+                      </div>
+                      <div className="text-xs text-muted-foreground truncate">
+                        {d.email ?? "—"}
+                      </div>
+                    </div>
+
+                    <div className="lg:col-span-3 text-sm text-muted-foreground flex items-start gap-2 min-w-0">
+                      <FileText className="h-4 w-4 shrink-0 mt-0.5" />
+                      <div className="min-w-0">
+                        <div className="truncate">{d.docType ?? "Document"}</div>
+                        {docName ? (
+                          <div className="text-xs text-muted-foreground/80 truncate">
+                            {docName}
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+
+                    <div className="lg:col-span-2 text-sm">{d.taxYear ?? "—"}</div>
+
+                    <div className="lg:col-span-2">{pill(d.status)}</div>
+
+                    {/* ✅ Actions (modal-based Needs) */}
+                    <div className="lg:col-span-1 lg:text-right">
+                      <DocRowActions
+                        docId={d.id}
+                        userId={d.userId}
+                        status={d.status}
+                        attentionNote={d.attentionNote}
+                        returnTo={returnTo}
+                      />
+                    </div>
                   </div>
-
-                  <div className="lg:col-span-3 text-sm text-muted-foreground flex items-center gap-2">
-                    <FileText className="h-4 w-4" />
-                    <span className="truncate">{d.docType ?? "Document"}</span>
-                  </div>
-
-                  <div className="lg:col-span-2 text-sm">{d.taxYear ?? "—"}</div>
-
-                  <div className="lg:col-span-2">{pill(d.status)}</div>
-
-                  <div className="lg:col-span-1 lg:text-right">
-                    <Link
-                      href={`/admin/clients/${d.userId}/documents`}
-                      className="inline-flex items-center rounded-2xl border bg-background px-3 py-1.5 text-xs font-semibold hover:bg-muted"
-                    >
-                      Open
-                    </Link>
-                  </div>
-                </div>
-              </li>
-            ))}
+                </li>
+              );
+            })}
           </ul>
         )}
       </div>

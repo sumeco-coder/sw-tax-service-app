@@ -1,11 +1,17 @@
 // app/(admin)/admin/(protected)/clients/[userId]/documents/request/_components/WatermarkTool.tsx
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
-import { createUploadUrl } from "@/app/(client)/(protected)/(app)/documents/actions";
+import { useMemo, useRef, useState, useTransition, useEffect } from "react";
+import Link from "next/link";
+
+import {
+  createUploadUrl,
+  finalizeUpload,
+} from "@/app/(client)/(protected)/(app)/files/actions";
 
 type Props = {
-  userId: string;
+  targetUserIdOrSub: string; // ✅ can be cognitoSub (preferred) or legacy users.id
+  clientDbUserId: string; // ✅ for linking to admin pages
 };
 
 function downloadBlob(blob: Blob, name: string) {
@@ -22,28 +28,35 @@ function downloadBlob(blob: Blob, name: string) {
 async function fileToImageBitmap(file: File) {
   const buf = await file.arrayBuffer();
   const blob = new Blob([buf], { type: file.type });
-  const bmp = await createImageBitmap(blob);
-  return bmp;
+  return await createImageBitmap(blob);
 }
 
-export default function WatermarkTool({ userId }: Props) {
+export default function WatermarkTool({ targetUserIdOrSub, clientDbUserId }: Props) {
   const [busy, startTransition] = useTransition();
   const [file, setFile] = useState<File | null>(null);
   const [err, setErr] = useState("");
+  const [ok, setOk] = useState("");
   const [wmText, setWmText] = useState("SW TAX SERVICE • CONFIDENTIAL");
   const [opacity, setOpacity] = useState(0.18);
   const [scale, setScale] = useState(1);
   const [repeat, setRepeat] = useState(true);
 
-  const canProcess = useMemo(() => {
-    if (!file) return false;
-    return file.type.startsWith("image/");
-  }, [file]);
+  const canProcess = useMemo(() => !!file && file.type.startsWith("image/"), [file]);
 
-  async function buildWatermarkedImageBlob(): Promise<{ blob: Blob; outName: string; contentType: string }> {
+  useEffect(() => {
+    if (!ok) return;
+    const t = setTimeout(() => setOk(""), 2500);
+    return () => clearTimeout(t);
+  }, [ok]);
+
+  async function buildWatermarkedImageBlob(): Promise<{
+    blob: Blob;
+    outName: string;
+    contentType: string;
+  }> {
     if (!file) throw new Error("Choose a file first.");
     if (!file.type.startsWith("image/")) {
-      throw new Error("Watermark tool currently supports images only (PNG/JPG/WebP).");
+      throw new Error("Watermark tool supports images only (PNG/JPG/WebP).");
     }
 
     const bmp = await fileToImageBitmap(file);
@@ -53,13 +66,12 @@ export default function WatermarkTool({ userId }: Props) {
     const canvas = document.createElement("canvas");
     canvas.width = w;
     canvas.height = h;
+
     const ctx = canvas.getContext("2d");
     if (!ctx) throw new Error("Canvas not supported.");
 
-    // draw base
     ctx.drawImage(bmp, 0, 0, w, h);
 
-    // watermark
     ctx.save();
     ctx.globalAlpha = Math.max(0.05, Math.min(0.4, opacity));
     ctx.fillStyle = "#000";
@@ -69,7 +81,6 @@ export default function WatermarkTool({ userId }: Props) {
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
 
-    // rotate around center
     ctx.translate(w / 2, h / 2);
     ctx.rotate((-25 * Math.PI) / 180);
 
@@ -78,7 +89,6 @@ export default function WatermarkTool({ userId }: Props) {
     if (repeat) {
       const stepX = Math.max(240, Math.round(w * 0.35));
       const stepY = Math.max(180, Math.round(h * 0.25));
-
       for (let y = -h; y <= h; y += stepY) {
         for (let x = -w; x <= w; x += stepX) {
           ctx.fillText(text, x, y);
@@ -91,9 +101,13 @@ export default function WatermarkTool({ userId }: Props) {
     ctx.restore();
 
     const contentType = file.type === "image/png" ? "image/png" : "image/jpeg";
-    const blob: Blob = await new Promise((resolve) =>
-      canvas.toBlob((b) => resolve(b as Blob), contentType, 0.92)
-    );
+
+    const blob = await new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob((b) => {
+        if (!b) return reject(new Error("Failed to create image blob."));
+        resolve(b);
+      }, contentType, 0.92);
+    });
 
     const base = file.name.replace(/\.(png|jpg|jpeg|webp)$/i, "");
     const ext = contentType === "image/png" ? "png" : "jpg";
@@ -104,10 +118,13 @@ export default function WatermarkTool({ userId }: Props) {
 
   async function uploadToClientFolder() {
     setErr("");
+    setOk("");
+
     const { blob, outName, contentType } = await buildWatermarkedImageBlob();
 
+    // ✅ Files module expects: targetUserIdOrSub
     const out = await createUploadUrl({
-      targetUserId: userId,
+      targetUserIdOrSub,
       fileName: outName,
       contentType,
     });
@@ -119,6 +136,15 @@ export default function WatermarkTool({ userId }: Props) {
     });
 
     if (!put.ok) throw new Error("Upload failed.");
+
+    // ✅ optional but recommended (verifies it exists)
+    await finalizeUpload({
+      targetUserIdOrSub,
+      key: out.key,
+      fileName: outName,
+    });
+
+    setOk("Uploaded ✅");
   }
 
   return (
@@ -126,13 +152,22 @@ export default function WatermarkTool({ userId }: Props) {
       <div>
         <h2 className="text-sm font-semibold">Watermark tool (optional)</h2>
         <p className="text-xs text-muted-foreground">
-          Adds a watermark to images and lets you upload the watermarked copy into the client’s folder.
+          Adds a watermark to images, then uploads the copy into the client’s <span className="font-semibold">Uploads</span> folder.
         </p>
       </div>
 
       {err ? (
         <div className="rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
           {err}
+        </div>
+      ) : null}
+
+      {ok ? (
+        <div className="rounded-xl border bg-emerald-500/10 p-3 text-sm text-emerald-700">
+          {ok}{" "}
+          <Link className="underline" href={`/admin/clients/${clientDbUserId}/files`}>
+            View uploads
+          </Link>
         </div>
       ) : null}
 
@@ -145,6 +180,7 @@ export default function WatermarkTool({ userId }: Props) {
           const f = e.target.files?.[0] ?? null;
           setFile(f);
           setErr("");
+          setOk("");
         }}
       />
 
@@ -207,6 +243,7 @@ export default function WatermarkTool({ userId }: Props) {
           onClick={() =>
             startTransition(() => {
               setErr("");
+              setOk("");
               buildWatermarkedImageBlob()
                 .then(({ blob, outName }) => downloadBlob(blob, outName))
                 .catch((e: any) => setErr(e?.message ?? "Failed to watermark."));
@@ -221,10 +258,9 @@ export default function WatermarkTool({ userId }: Props) {
           className="rounded-xl border bg-background px-4 py-2 text-sm font-semibold hover:bg-muted disabled:opacity-60"
           onClick={() =>
             startTransition(() => {
-              setErr("");
-              uploadToClientFolder()
-                .then(() => {})
-                .catch((e: any) => setErr(e?.message ?? "Upload failed."));
+              uploadToClientFolder().catch((e: any) =>
+                setErr(e?.message ?? "Upload failed."),
+              );
             })
           }
         >

@@ -6,8 +6,6 @@ import { getServerRole } from "@/lib/auth/roleServer";
 import { getClientBasics, redirectToRequestPreview } from "./actions";
 import { buildUploadLink, buildRequestDraft } from "./_lib";
 
-
-
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
@@ -54,7 +52,8 @@ export default async function AdminClientDocRequestPage({
   const note = String(searchParams?.note ?? "").trim();
 
   const uploadLink = buildUploadLink();
-  const displayName = (client.name ?? client.email ?? "there").split(" ")[0] ?? "there";
+  const displayName =
+    (client.name ?? client.email ?? "there").split(" ")[0] ?? "there";
 
   const draft = buildRequestDraft({
     clientName: displayName,
@@ -75,10 +74,15 @@ export default async function AdminClientDocRequestPage({
     <div className="space-y-6">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Client documents</p>
-          <h1 className="text-2xl font-black tracking-tight">Request documents</h1>
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Client documents
+          </p>
+          <h1 className="text-2xl font-black tracking-tight">
+            Request documents
+          </h1>
           <p className="text-sm text-muted-foreground">
-            Build a request email for <span className="font-semibold">{client.email}</span>
+            Build a request email for{" "}
+            <span className="font-semibold">{client.email}</span>
           </p>
         </div>
 
@@ -116,7 +120,9 @@ export default async function AdminClientDocRequestPage({
             >
               <div className="grid gap-2 sm:grid-cols-2">
                 <div className="space-y-1">
-                  <label className="text-xs font-semibold text-muted-foreground">Due date (optional)</label>
+                  <label className="text-xs font-semibold text-muted-foreground">
+                    Due date (optional)
+                  </label>
                   <input
                     type="date"
                     name="due"
@@ -126,10 +132,17 @@ export default async function AdminClientDocRequestPage({
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-xs font-semibold text-muted-foreground">Quick pick</label>
+                  <label className="text-xs font-semibold text-muted-foreground">
+                    Quick pick
+                  </label>
                   <Link
                     href={`/admin/clients/${params.userId}/documents/request?items=${encodeURIComponent(
-                      ["W-2 (wage statement)", "1099-NEC / 1099-MISC", "Photo ID (front/back)", "Last-year tax return (prior-year 1040)"].join(",")
+                      [
+                        "W-2 (wage statement)",
+                        "1099-NEC / 1099-MISC",
+                        "Photo ID (front/back)",
+                        "Last-year tax return (prior-year 1040)",
+                      ].join(","),
                     )}`}
                     className="h-10 inline-flex items-center justify-center rounded-xl border bg-background px-3 text-sm font-semibold hover:bg-muted"
                   >
@@ -139,10 +152,15 @@ export default async function AdminClientDocRequestPage({
               </div>
 
               <div className="rounded-2xl border bg-muted/20 p-3">
-                <div className="text-xs font-semibold text-muted-foreground mb-2">Items</div>
+                <div className="text-xs font-semibold text-muted-foreground mb-2">
+                  Items
+                </div>
                 <div className="grid gap-2 sm:grid-cols-2">
                   {COMMON_ITEMS.map((label) => (
-                    <label key={label} className="flex items-center gap-2 text-sm">
+                    <label
+                      key={label}
+                      className="flex items-center gap-2 text-sm"
+                    >
                       <input
                         type="checkbox"
                         name="items"
@@ -157,7 +175,9 @@ export default async function AdminClientDocRequestPage({
               </div>
 
               <div className="space-y-1">
-                <label className="text-xs font-semibold text-muted-foreground">Note (optional)</label>
+                <label className="text-xs font-semibold text-muted-foreground">
+                  Note (optional)
+                </label>
                 <textarea
                   name="note"
                   defaultValue={note}
@@ -176,19 +196,30 @@ export default async function AdminClientDocRequestPage({
           {/* Preview */}
           <section className="rounded-2xl border bg-card p-4 space-y-4">
             <div>
-              <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Subject</div>
-              <div className="mt-1 rounded-xl border bg-muted/30 p-3 text-sm font-semibold">{draft.subject}</div>
-            </div>
-
-            <div>
-              <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">HTML preview</div>
-              <div className="mt-1 rounded-xl border bg-background p-4">
-                <div className="prose max-w-none" dangerouslySetInnerHTML={{ __html: draft.html }} />
+              <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Subject
+              </div>
+              <div className="mt-1 rounded-xl border bg-muted/30 p-3 text-sm font-semibold">
+                {draft.subject}
               </div>
             </div>
 
             <div>
-              <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Text version</div>
+              <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                HTML preview
+              </div>
+              <div className="mt-1 rounded-xl border bg-background p-4">
+                <div
+                  className="prose max-w-none"
+                  dangerouslySetInnerHTML={{ __html: draft.html }}
+                />
+              </div>
+            </div>
+
+            <div>
+              <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Text version
+              </div>
               <textarea
                 readOnly
                 className="mt-1 min-h-[220px] w-full rounded-xl border bg-muted/30 p-3 text-xs"
@@ -196,7 +227,12 @@ export default async function AdminClientDocRequestPage({
               />
               <div className="mt-2 text-[11px] text-muted-foreground">
                 Upload link:{" "}
-                <a className="font-semibold underline" href={uploadLink} target="_blank" rel="noreferrer">
+                <a
+                  className="font-semibold underline"
+                  href={uploadLink}
+                  target="_blank"
+                  rel="noreferrer"
+                >
                   {uploadLink}
                 </a>
               </div>
@@ -206,12 +242,16 @@ export default async function AdminClientDocRequestPage({
 
         {/* Tools */}
         <div className="space-y-4">
-          <WatermarkTool userId={params.userId} />
+          <WatermarkTool
+            clientDbUserId={params.userId}
+            targetUserIdOrSub={client.cognitoSub ?? client.id}
+          />
 
           <div className="rounded-2xl border bg-muted/30 p-4 text-xs text-muted-foreground">
             <div className="font-semibold text-foreground mb-1">Tip</div>
-            If you want these requests to show up in the client portal as a checklist, we can later add a small DB table
-            (request items + status) and render it on the client documents page.
+            If you want these requests to show up in the client portal as a
+            checklist, we can later add a small DB table (request items +
+            status) and render it on the client documents page.
           </div>
         </div>
       </div>
