@@ -104,6 +104,14 @@ export default async function AdminClientDocumentsPage({
               </button>
             </form>
 
+            {/* ✅ NEW: View uploads */}
+            <Link
+              href={`/admin/clients/${userId}/files`}
+              className="inline-flex h-10 items-center gap-2 rounded-2xl border bg-background px-4 text-sm font-semibold hover:bg-muted"
+            >
+              View uploads
+            </Link>
+
             <Link
               href={`/admin/clients/${userId}/documents/request`}
               className="inline-flex h-10 items-center gap-2 rounded-2xl bg-foreground px-4 text-sm font-semibold text-background hover:opacity-90"
