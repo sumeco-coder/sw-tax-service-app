@@ -152,6 +152,7 @@ type OnFile = {
   routingLast4: string;
   accountLast4: string;
   updatedAt: string | null;
+  hasNumbersOnFile: boolean;
 };
 
 type OnFileFull = {
@@ -189,6 +190,7 @@ export default function DirectDepositInformation({
     routingLast4: "",
     accountLast4: "",
     updatedAt: null,
+    hasNumbersOnFile: false,
   });
 
   // ✅ NEW: reveal state for "On file"
@@ -241,13 +243,12 @@ export default function DirectDepositInformation({
       });
 
       // also refresh last4 if present
-      setOnFile((prev) => ({
-        routingLast4: String(data?.routingLast4 ?? prev.routingLast4 ?? ""),
-        accountLast4: String(data?.accountLast4 ?? prev.accountLast4 ?? ""),
-        updatedAt: data?.updatedAt
-          ? String(data.updatedAt)
-          : (prev.updatedAt ?? null),
-      }));
+      setOnFile({
+        routingLast4: String(data?.routingLast4 ?? ""),
+        accountLast4: String(data?.accountLast4 ?? ""),
+        updatedAt: data?.updatedAt ? String(data.updatedAt) : null,
+        hasNumbersOnFile: Boolean(data?.hasNumbersOnFile),
+      });
     } finally {
       setOnFileFullLoading(false);
     }
@@ -297,6 +298,7 @@ export default function DirectDepositInformation({
       routingLast4: String(data?.routingLast4 ?? ""),
       accountLast4: String(data?.accountLast4 ?? ""),
       updatedAt: data?.updatedAt ? String(data.updatedAt) : null,
+      hasNumbersOnFile: Boolean(data?.hasNumbersOnFile),
     });
 
     if (!nextUseDirectDeposit) {
@@ -338,6 +340,7 @@ export default function DirectDepositInformation({
         routingLast4: String(data?.routingLast4 ?? ""),
         accountLast4: String(data?.accountLast4 ?? ""),
         updatedAt: data?.updatedAt ? String(data.updatedAt) : null,
+        hasNumbersOnFile: Boolean(data?.hasNumbersOnFile),
       });
 
       // reset safe fields only (no full numbers)
@@ -362,9 +365,8 @@ export default function DirectDepositInformation({
 
   React.useEffect(() => {
     if (!autoLoad) return;
-    if (initialValues) return;
     void loadSaved();
-  }, [autoLoad, initialValues, loadSaved]);
+  }, [autoLoad, loadSaved]);
 
   const submit: SubmitHandler<DirectDepositValues> = async (values) => {
     setMsg("");
@@ -405,6 +407,7 @@ export default function DirectDepositInformation({
         routingLast4: String(data?.routingLast4 ?? ""),
         accountLast4: String(data?.accountLast4 ?? ""),
         updatedAt: data?.updatedAt ? String(data.updatedAt) : null,
+        hasNumbersOnFile: Boolean(data?.hasNumbersOnFile),
       });
 
       // ✅ If user just saved numbers, we can set onFileFull immediately (no extra fetch)
@@ -415,7 +418,7 @@ export default function DirectDepositInformation({
         });
       } else {
         // ✅ turned off → clear everything
-        setOnFile({ routingLast4: "", accountLast4: "", updatedAt: null });
+        setOnFile({ routingLast4: "", accountLast4: "", updatedAt: null, hasNumbersOnFile: false });
         setOnFileFull({ routingNumber: "", accountNumber: "" });
       }
 
@@ -540,6 +543,23 @@ export default function DirectDepositInformation({
                     try {
                       field.onChange(v);
 
+                      const hasNumbers =
+                        onFile.hasNumbersOnFile ||
+                        !!onFile.routingLast4 ||
+                        !!onFile.accountLast4;
+
+                      // ✅ FIX: If turning ON and nothing is on file, DO NOT POST {useDirectDeposit:true}
+                      // Just let them fill details and hit Save.
+                      if (v && !hasNumbers) {
+                        setMsg(
+                          "✅ Direct deposit selected. Enter your bank details below and click Save to enable it.",
+                        );
+                        return;
+                      }
+
+                      // ✅ If turning OFF, only clear local UI AFTER the server call succeeds
+                      await saveToggle(v);
+
                       if (!v) {
                         setValue("accountHolderName", "");
                         setValue("bankName", "");
@@ -552,17 +572,20 @@ export default function DirectDepositInformation({
                           routingLast4: "",
                           accountLast4: "",
                           updatedAt: null,
+                          hasNumbersOnFile: false,
                         });
+
                         setRevealOnFile(false);
                         setOnFileFull({ routingNumber: "", accountNumber: "" });
-                      }
 
-                      await saveToggle(v);
-                      setMsg(
-                        v
-                          ? "✅ Direct deposit enabled. Finish entering your bank details and click Save. You can view them in Profile → Bank Details."
-                          : "✅ Direct deposit turned off. Bank details cleared from Profile → Bank Details.",
-                      );
+                        setMsg(
+                          "✅ Direct deposit turned off. Bank details cleared from Profile → Bank Details.",
+                        );
+                      } else {
+                        setMsg(
+                          "✅ Direct deposit enabled. If you need to update bank details, enter them and click Save.",
+                        );
+                      }
                     } catch (e: any) {
                       field.onChange(prev);
                       setMsg(`❌ ${e?.message ?? "Save failed"}`);

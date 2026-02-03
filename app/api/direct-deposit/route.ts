@@ -181,8 +181,9 @@ async function readDirectDepositSafe(userId: string) {
 export async function GET(_req: NextRequest) {
   try {
     const auth = await requireAuthUser();
-    if (!auth)
+    if (!auth) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
 
     const u = await getOrCreateUserBySub(auth.sub, auth.email);
     const safe = await readDirectDepositSafe(u.id);
@@ -200,8 +201,9 @@ export async function GET(_req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const auth = await requireAuthUser();
-    if (!auth)
+    if (!auth) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
 
     const u = await getOrCreateUserBySub(auth.sub, auth.email);
 
@@ -221,21 +223,29 @@ export async function POST(req: NextRequest) {
     const account = digitsOnly(raw.accountNumber, 25);
     const confirm = digitsOnly(raw.confirmAccountNumber, 25);
 
-    // ✅ Enable-only toggle (ONLY if numbers already exist on file)
+    // ✅ Enable-only toggle request (often sent by autosave when user flips the toggle)
     const enablingOnly = raw.useDirectDeposit && !routing && !account && !confirm;
 
     if (enablingOnly) {
       const existingSafe = await readDirectDepositSafe(u.id);
+
+      // ✅ FIX: Do NOT throw 400 when none on file.
+      // Return OK + flags so the UI can prompt for bank details.
       if (!existingSafe.hasNumbersOnFile) {
         return NextResponse.json(
           {
-            error:
-              "To enable direct deposit, please enter routing and account numbers (none are currently on file).",
+            ok: true,
+            ...existingSafe,
+            requestedUseDirectDeposit: true,
+            needsBankDetails: true,
+            message:
+              "Direct deposit requires routing and account numbers before it can be enabled.",
           },
-          { status: 400, headers: NO_STORE_HEADERS },
+          { headers: NO_STORE_HEADERS },
         );
       }
 
+      // Numbers exist -> allow enabling without resending numbers
       await db.execute(sql`
         INSERT INTO direct_deposit (user_id, use_direct_deposit, created_at, updated_at)
         VALUES (${u.id}, true, NOW(), NOW())

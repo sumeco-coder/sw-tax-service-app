@@ -6,13 +6,7 @@ import { headers } from "next/headers";
 import crypto from "crypto";
 
 import { db } from "@/drizzle/db";
-import {
-  users,
-  invites,
-  documents,
-  dependents,
-  taxReturns,
-} from "@/drizzle/schema";
+import { users, invites, documents, dependents, taxReturns } from "@/drizzle/schema";
 import { and, eq, sql } from "drizzle-orm";
 import outputs from "@/amplify_outputs.json";
 
@@ -25,9 +19,11 @@ import {
   AdminResetUserPasswordCommand,
   AdminUpdateUserAttributesCommand,
   AdminDeleteUserCommand,
+  AdminSetUserPasswordCommand,
 } from "@aws-sdk/client-cognito-identity-provider";
 
 import { sendPortalInviteEmail } from "@/lib/email/sendPortalInvite";
+import { sendTempPasswordInviteEmail } from "@/lib/email/sendTempPasswordInvite";
 
 /* ─────────────────────────────────────────────
    Helpers: origin + invite token + mappings
@@ -66,27 +62,15 @@ function makeToken() {
   return crypto.randomBytes(32).toString("hex");
 }
 
+function makeTempPassword() {
+  // ✅ Strong temp password that passes typical Cognito policies
+  // (upper/lower/number/special + length)
+  const rand = crypto.randomBytes(9).toString("base64url");
+  return `TempSW!${rand}#9a`;
+}
+
 function normEmail(v: unknown) {
   return String(v ?? "").trim().toLowerCase();
-}
-
-type UserRole = "TAXPAYER" | "LMS_PREPARER";
-type InviteMode = "cognito" | "branded";
-type InviteType = "taxpayer" | "lms-preparer";
-
-function roleToInviteType(role: UserRole): InviteType {
-  return role === "LMS_PREPARER" ? "lms-preparer" : "taxpayer";
-}
-
-function defaultNextForInviteType(type: InviteType) {
-  return type === "lms-preparer" ? "/agency" : "/onboarding/profile";
-}
-
-function qs(path: string, params: Record<string, string | undefined>) {
-  const sp = new URLSearchParams();
-  for (const [k, v] of Object.entries(params)) if (v) sp.set(k, v);
-  const s = sp.toString();
-  return `${path}${s ? `?${s}` : ""}`;
 }
 
 /** Only allow internal app paths to avoid open-redirect attacks */
@@ -97,6 +81,21 @@ function safeInternalPath(input: unknown, fallback: string) {
   if (raw.startsWith("//")) return fallback;
   return raw;
 }
+
+function qs(path: string, params: Record<string, string | undefined>) {
+  const sp = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) if (v) sp.set(k, v);
+  const s = sp.toString();
+  return `${path}${s ? `?${s}` : ""}`;
+}
+
+/* ─────────────────────────────────────────────
+   Types
+───────────────────────────────────────────── */
+
+type UserRole = "TAXPAYER" | "LMS_PREPARER";
+type InviteMode = "cognito" | "branded";
+type InviteType = "taxpayer" | "lms-preparer";
 
 /* ─────────────────────────────────────────────
    Invite destination (NEXT) rules
@@ -111,9 +110,28 @@ const InviteNextSchema = z.enum([
 
 type InviteNext = z.infer<typeof InviteNextSchema>;
 
+function roleToInviteType(role: UserRole): InviteType {
+  return role === "LMS_PREPARER" ? "lms-preparer" : "taxpayer";
+}
+
+function defaultNextForInviteType(type: InviteType) {
+  return type === "lms-preparer" ? "/agency" : "/onboarding/profile";
+}
+
 function normalizeInviteNext(role: UserRole, inviteNext?: InviteNext): InviteNext {
   if (role === "LMS_PREPARER") return "/agency";
   return inviteNext ?? "/onboarding/profile";
+}
+
+// ✅ For TEMP-PASSWORD invite: "next" means AFTER onboarding (never onboarding routes)
+function nextAfterOnboardingForRole(role: UserRole, inviteNext?: InviteNext) {
+  const fallback = role === "LMS_PREPARER" ? "/agency" : "/dashboard";
+  const n = safeInternalPath(inviteNext ?? fallback, fallback);
+
+  if (n.startsWith("/onboarding")) return fallback;
+  if (n === "/taxpayer/onboarding-sign-up") return fallback;
+
+  return n;
 }
 
 /* ─────────────────────────────────────────────
@@ -142,7 +160,6 @@ const ResendSchema = z.object({
   inviteNext: InviteNextSchema.optional(),
 });
 
-// ✅ Reset password schema (form-safe)
 const ResetPwSchema = z.object({
   email: z.string().email(),
   returnTo: z.string().optional(),
@@ -160,15 +177,12 @@ const ProfileSchema = z.object({
   adminNotes: z.string().max(2000).optional(),
 });
 
-function getAttr(
-  attrs: { Name?: string; Value?: string }[] | undefined,
-  name: string,
-) {
+function getAttr(attrs: { Name?: string; Value?: string }[] | undefined, name: string) {
   return attrs?.find((a) => a.Name === name)?.Value ?? null;
 }
 
 /* ─────────────────────────────────────────────
-   Cognito + Branded invite primitives
+   Cognito config
 ───────────────────────────────────────────── */
 
 function getCognitoConfig() {
@@ -180,13 +194,8 @@ function getCognitoConfig() {
     process.env.COGNITO_USER_POOL_ID ?? (outputs as any)?.auth?.user_pool_id ?? "",
   ).trim();
 
-  if (!region) {
-    throw new Error("Missing region (COGNITO_REGION or outputs.auth.aws_region)");
-  }
-
-  if (!poolId) {
-    throw new Error("Missing COGNITO_USER_POOL_ID (or outputs.auth.user_pool_id)");
-  }
+  if (!region) throw new Error("Missing region (COGNITO_REGION or outputs.auth.aws_region)");
+  if (!poolId) throw new Error("Missing COGNITO_USER_POOL_ID (or outputs.auth.user_pool_id)");
 
   return { region, poolId };
 }
@@ -200,6 +209,28 @@ function userPoolId() {
   return getCognitoConfig().poolId;
 }
 
+async function safeUpdateAttrs(
+  cognito: CognitoIdentityProviderClient,
+  poolId: string,
+  email: string,
+  attrs: { Name: string; Value: string }[],
+) {
+  try {
+    await cognito.send(
+      new AdminUpdateUserAttributesCommand({
+        UserPoolId: poolId,
+        Username: email,
+        UserAttributes: attrs,
+      }),
+    );
+  } catch (e: any) {
+    const name = String(e?.name ?? "");
+    // custom attr missing in pool => don't block invite
+    if (name === "InvalidParameterException") return;
+    throw e;
+  }
+}
+
 async function ensureCognitoUserAndAttributes(opts: {
   email: string;
   phone?: string;
@@ -209,30 +240,22 @@ async function ensureCognitoUserAndAttributes(opts: {
 }) {
   const cognito = cognitoClient();
   const pool = userPoolId();
-
   const email = normEmail(opts.email);
 
-  const attrs = [
+  const baseAttrs = [
     { Name: "email", Value: email },
     ...(opts.branded ? [{ Name: "email_verified", Value: "true" }] : []),
     ...(opts.phone ? [{ Name: "phone_number", Value: opts.phone }] : []),
+  ];
+
+  const customAttrs = [
     { Name: "custom:role", Value: opts.role },
     ...(opts.agencyId ? [{ Name: "custom:agencyId", Value: opts.agencyId }] : []),
   ];
 
   try {
-    await cognito.send(
-      new AdminGetUserCommand({ UserPoolId: pool, Username: email }),
-    );
-
-    await cognito.send(
-      new AdminUpdateUserAttributesCommand({
-        UserPoolId: pool,
-        Username: email,
-        UserAttributes: attrs,
-      }),
-    );
-
+    await cognito.send(new AdminGetUserCommand({ UserPoolId: pool, Username: email }));
+    await safeUpdateAttrs(cognito, pool, email, [...baseAttrs, ...customAttrs]);
     return { existed: true };
   } catch (e: any) {
     if (e?.name !== "UserNotFoundException") throw e;
@@ -241,12 +264,14 @@ async function ensureCognitoUserAndAttributes(opts: {
       new AdminCreateUserCommand({
         UserPoolId: pool,
         Username: email,
+        // branded => suppress Cognito email; non-branded => allow normal Cognito delivery
         MessageAction: opts.branded ? "SUPPRESS" : undefined,
         DesiredDeliveryMediums: opts.branded ? undefined : ["EMAIL"],
-        UserAttributes: attrs,
+        UserAttributes: baseAttrs,
       }),
     );
 
+    await safeUpdateAttrs(cognito, pool, email, [...baseAttrs, ...customAttrs]);
     return { existed: false };
   }
 }
@@ -256,14 +281,16 @@ async function getCognitoSub(emailRaw: string) {
   const pool = userPoolId();
   const email = normEmail(emailRaw);
 
-  const res = await cognito.send(
-    new AdminGetUserCommand({ UserPoolId: pool, Username: email }),
-  );
+  const res = await cognito.send(new AdminGetUserCommand({ UserPoolId: pool, Username: email }));
 
   const sub = getAttr(res.UserAttributes, "sub");
   if (!sub) throw new Error("Could not read Cognito sub.");
   return sub;
 }
+
+/* ─────────────────────────────────────────────
+   BRANDED INVITE (DB token + set-password flow)
+───────────────────────────────────────────── */
 
 async function sendBrandedInviteEmail(opts: {
   email: string;
@@ -286,6 +313,7 @@ async function sendBrandedInviteEmail(opts: {
   const inviteType = roleToInviteType(opts.role);
   const token = makeToken();
 
+  // revoke any pending invites for same email + type
   await db
     .update(invites)
     .set({ status: "revoked", updatedAt: new Date() })
@@ -298,9 +326,7 @@ async function sendBrandedInviteEmail(opts: {
     );
 
   const expiresAt =
-    inviteType === "taxpayer"
-      ? new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
-      : null;
+    inviteType === "taxpayer" ? new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) : null;
 
   const next = normalizeInviteNext(
     opts.role,
@@ -330,55 +356,98 @@ async function sendBrandedInviteEmail(opts: {
   return { token, next };
 }
 
+/* ─────────────────────────────────────────────
+   COGNITO INVITE (Choice B)
+   ✅ SUPPRESS Cognito email
+   ✅ Create/Reset temp password
+   ✅ Send ONE Resend email containing SAME temp password + link
+───────────────────────────────────────────── */
+
 async function sendCognitoInviteEmail(opts: {
   email: string;
+  firstName?: string;
   phone?: string;
   role: UserRole;
   agencyId?: string | null;
+  inviteNext?: InviteNext;
 }) {
   const cognito = cognitoClient();
   const pool = userPoolId();
   const email = normEmail(opts.email);
 
-  const ensured = await ensureCognitoUserAndAttributes({
-    email,
-    phone: opts.phone,
-    role: opts.role,
-    agencyId: opts.agencyId ?? null,
-    branded: false,
-  });
+  const tempPassword = makeTempPassword();
 
-  if (ensured.existed) {
-    try {
-      await cognito.send(
-        new AdminCreateUserCommand({
-          UserPoolId: pool,
-          Username: email,
-          MessageAction: "RESEND",
-        }),
-      );
-      return { fallback: undefined as string | undefined };
-    } catch {
-      await cognito.send(
-        new AdminResetUserPasswordCommand({
-          UserPoolId: pool,
-          Username: email,
-        }),
-      );
-      return { fallback: "reset_password" };
-    }
+  // ✅ Only SAFE attrs during AdminCreateUser (no custom attrs here)
+  const baseAttrs = [
+    { Name: "email", Value: email },
+    { Name: "email_verified", Value: "true" },
+    ...(opts.phone ? [{ Name: "phone_number", Value: opts.phone }] : []),
+  ];
+
+  // ✅ Custom attrs set AFTER create (safeUpdateAttrs ignores InvalidParameterException)
+  const customAttrs = [
+    { Name: "custom:role", Value: opts.role },
+    ...(opts.agencyId ? [{ Name: "custom:agencyId", Value: opts.agencyId }] : []),
+    { Name: "custom:onboardingComplete", Value: "false" },
+  ];
+
+  // 1) Determine existence
+  let existed = true;
+  try {
+    await cognito.send(new AdminGetUserCommand({ UserPoolId: pool, Username: email }));
+  } catch (e: any) {
+    const name = String(e?.name ?? "");
+    if (name === "UserNotFoundException") existed = false;
+    else throw e;
   }
 
-  return { fallback: undefined as string | undefined };
+  if (!existed) {
+    // ✅ Create user with SAME temp password you email
+    await cognito.send(
+      new AdminCreateUserCommand({
+        UserPoolId: pool,
+        Username: email,
+        TemporaryPassword: tempPassword,
+        MessageAction: "SUPPRESS", // ✅ do NOT send Cognito email
+        UserAttributes: baseAttrs,
+      }),
+    );
+
+    await safeUpdateAttrs(cognito, pool, email, [...baseAttrs, ...customAttrs]);
+  } else {
+    // ✅ Existing user: force NEW_PASSWORD_REQUIRED
+    await cognito.send(
+      new AdminSetUserPasswordCommand({
+        UserPoolId: pool,
+        Username: email,
+        Password: tempPassword,
+        Permanent: false,
+      }),
+    );
+
+    await safeUpdateAttrs(cognito, pool, email, [...baseAttrs, ...customAttrs]);
+  }
+
+  // 2) Send ONE branded email (temp pw + sign-in link)
+  const origin = await getOriginServer();
+  const next = nextAfterOnboardingForRole(opts.role, opts.inviteNext);
+
+  await sendTempPasswordInviteEmail({
+    to: email,
+    firstName: opts.firstName,
+    appUrl: origin,
+    tempPassword,
+    next,
+  });
+
+  return { ok: true as const, existed };
 }
 
 /* ─────────────────────────────────────────────
-   RESET PASSWORD (Form Action) — returns void
+   RESET PASSWORD (Form Action)
 ───────────────────────────────────────────── */
 
-export async function adminResetClientPasswordFromForm(
-  formData: FormData,
-): Promise<void> {
+export async function adminResetClientPasswordFromForm(formData: FormData): Promise<void> {
   await requireAdminOrRedirect();
 
   const returnToRaw = String(formData.get("returnTo") ?? "").trim();
@@ -390,9 +459,7 @@ export async function adminResetClientPasswordFromForm(
   });
 
   if (!parsed.success) {
-    redirect(
-      `${returnTo}?toast=pw_reset_failed&msg=${encodeURIComponent("Invalid email.")}`,
-    );
+    redirect(`${returnTo}?toast=pw_reset_failed&msg=${encodeURIComponent("Invalid email.")}`);
   }
 
   const email = normEmail(parsed.data.email);
@@ -401,25 +468,17 @@ export async function adminResetClientPasswordFromForm(
     const cognito = cognitoClient();
     const pool = userPoolId();
 
-    await cognito.send(
-      new AdminResetUserPasswordCommand({
-        UserPoolId: pool,
-        Username: email,
-      }),
-    );
-
+    await cognito.send(new AdminResetUserPasswordCommand({ UserPoolId: pool, Username: email }));
     redirect(`${returnTo}?toast=pw_reset_ok`);
   } catch (e: any) {
     redirect(
-      `${returnTo}?toast=pw_reset_failed&msg=${encodeURIComponent(
-        e?.message ?? "Reset failed.",
-      )}`,
+      `${returnTo}?toast=pw_reset_failed&msg=${encodeURIComponent(e?.message ?? "Reset failed.")}`,
     );
   }
 }
 
 /* ─────────────────────────────────────────────
-   CREATE CLIENT (Form Action) — returns void
+   CREATE CLIENT (Form Action)
 ───────────────────────────────────────────── */
 
 async function createClientInternal(formData: FormData) {
@@ -430,15 +489,11 @@ async function createClientInternal(formData: FormData) {
     lastName: String(formData.get("lastName") ?? "").trim() || undefined,
     role: (String(formData.get("role") ?? "").trim() || undefined) as any,
     agencyId: String(formData.get("agencyId") ?? "").trim() || undefined,
-    inviteMode: (String(formData.get("inviteMode") ?? "").trim() ||
-      undefined) as any,
-    inviteNext: (String(formData.get("inviteNext") ?? "").trim() ||
-      undefined) as any,
+    inviteMode: (String(formData.get("inviteMode") ?? "").trim() || undefined) as any,
+    inviteNext: (String(formData.get("inviteNext") ?? "").trim() || undefined) as any,
   });
 
-  if (!parsed.success) {
-    return { ok: false as const, error: "Invalid input." };
-  }
+  if (!parsed.success) return { ok: false as const, error: "Invalid input." };
 
   const email = normEmail(parsed.data.email);
   const { phone, firstName, lastName, agencyId } = parsed.data;
@@ -460,26 +515,22 @@ async function createClientInternal(formData: FormData) {
     } else {
       await sendCognitoInviteEmail({
         email,
+        firstName, // ✅ keep
         phone,
         role,
         agencyId: agencyId ?? null,
+        inviteNext,
       });
     }
   } catch (e: any) {
-    return {
-      ok: false as const,
-      error: e?.message ?? "Failed to create/send invite.",
-    };
+    return { ok: false as const, error: e?.message ?? "Failed to create/send invite." };
   }
 
   let sub: string;
   try {
     sub = await getCognitoSub(email);
   } catch (e: any) {
-    return {
-      ok: false as const,
-      error: e?.message ?? "Could not read Cognito sub.",
-    };
+    return { ok: false as const, error: e?.message ?? "Could not read Cognito sub." };
   }
 
   const [row] = await db
@@ -513,9 +564,7 @@ async function createClientInternal(formData: FormData) {
   return { ok: true as const, userId: String(row.id), inviteMode };
 }
 
-export async function adminCreateClientAndRedirect(
-  formData: FormData,
-): Promise<void> {
+export async function adminCreateClientAndRedirect(formData: FormData): Promise<void> {
   await requireAdminOrRedirect();
 
   const res = await createClientInternal(formData);
@@ -524,21 +573,14 @@ export async function adminCreateClientAndRedirect(
     redirect(qs("/admin/clients", { toast: "create_failed", msg: res.error }));
   }
 
-  redirect(
-    qs(`/admin/clients/${res.userId}`, {
-      toast: "create_ok",
-      mode: res.inviteMode,
-    }),
-  );
+  redirect(qs(`/admin/clients/${res.userId}`, { toast: "create_ok", mode: res.inviteMode }));
 }
 
 /* ─────────────────────────────────────────────
-   RESEND INVITE (Form Action) — returns void
+   RESEND INVITE (Form Action)
 ───────────────────────────────────────────── */
 
-export async function adminResendClientInviteFromForm(
-  formData: FormData,
-): Promise<void> {
+export async function adminResendClientInviteFromForm(formData: FormData): Promise<void> {
   await requireAdminOrRedirect();
 
   const parsed = ResendSchema.safeParse({
@@ -547,14 +589,11 @@ export async function adminResendClientInviteFromForm(
     firstName: String(formData.get("firstName") ?? "").trim() || undefined,
     role: (String(formData.get("role") ?? "").trim() || undefined) as any,
     agencyId: String(formData.get("agencyId") ?? "").trim() || undefined,
-    inviteNext: (String(formData.get("inviteNext") ?? "").trim() ||
-      undefined) as any,
+    inviteNext: (String(formData.get("inviteNext") ?? "").trim() || undefined) as any,
   });
 
   if (!parsed.success) {
-    redirect(
-      qs("/admin/clients", { toast: "resend_failed", msg: "Invalid input." }),
-    );
+    redirect(qs("/admin/clients", { toast: "resend_failed", msg: "Invalid input." }));
   }
 
   const email = normEmail(parsed.data.email);
@@ -576,27 +615,19 @@ export async function adminResendClientInviteFromForm(
 
       redirect(qs("/admin/clients", { toast: "resend_ok", mode: "branded" }));
     } else {
-      const r = await sendCognitoInviteEmail({
+      // ✅ Choice B: SUPPRESS Cognito email + send OUR email (temp pw + link)
+      await sendCognitoInviteEmail({
         email,
+        firstName: parsed.data.firstName,
         role,
         agencyId,
+        inviteNext: inviteNext as any,
       });
 
-      redirect(
-        qs("/admin/clients", {
-          toast: "resend_ok",
-          mode: "cognito",
-          fallback: r.fallback,
-        }),
-      );
+      redirect(qs("/admin/clients", { toast: "resend_ok", mode: "cognito" }));
     }
   } catch (e: any) {
-    redirect(
-      qs("/admin/clients", {
-        toast: "resend_failed",
-        msg: e?.message ?? "Resend failed.",
-      }),
-    );
+    redirect(qs("/admin/clients", { toast: "resend_failed", msg: e?.message ?? "Resend failed." }));
   }
 }
 
@@ -654,7 +685,7 @@ export async function updateClientProfile(formData: FormData) {
 }
 
 /* ─────────────────────────────────────────────
-   DELETE TEST USER (Form Action) — returns void
+   DELETE TEST USER (Form Action)
 ───────────────────────────────────────────── */
 
 const DeleteTestUserSchema = z.object({
@@ -675,9 +706,7 @@ function looksLikeTestEmail(email: string) {
   );
 }
 
-export async function adminDeleteTestUserFromForm(
-  formData: FormData,
-): Promise<void> {
+export async function adminDeleteTestUserFromForm(formData: FormData): Promise<void> {
   await requireAdminOrRedirect();
 
   const returnToRaw = String(formData.get("returnTo") ?? "").trim();
@@ -691,25 +720,17 @@ export async function adminDeleteTestUserFromForm(
   });
 
   if (!parsed.success) {
-    redirect(
-      `${returnTo}?toast=delete_failed&msg=${encodeURIComponent("Invalid input.")}`,
-    );
+    redirect(`${returnTo}?toast=delete_failed&msg=${encodeURIComponent("Invalid input.")}`);
   }
 
   const email = normEmail(parsed.data.email);
   const confirm = (parsed.data.confirm ?? "").toUpperCase();
   const shouldDeleteCognito = parsed.data.deleteCognito === "on";
 
-  // ✅ hard stop unless they typed DELETE
   if (confirm !== "DELETE") {
-    redirect(
-      `${returnTo}?toast=delete_failed&msg=${encodeURIComponent(
-        "Type DELETE to confirm.",
-      )}`,
-    );
+    redirect(`${returnTo}?toast=delete_failed&msg=${encodeURIComponent("Type DELETE to confirm.")}`);
   }
 
-  // ✅ safety: only allow in dev OR test-looking emails
   if (process.env.NODE_ENV === "production" && !looksLikeTestEmail(email)) {
     redirect(
       `${returnTo}?toast=delete_failed&msg=${encodeURIComponent(
@@ -718,20 +739,12 @@ export async function adminDeleteTestUserFromForm(
     );
   }
 
-  // 1) Delete in Cognito (optional)
   if (shouldDeleteCognito) {
     try {
       const cognito = cognitoClient();
       const pool = userPoolId();
-
-      await cognito.send(
-        new AdminDeleteUserCommand({
-          UserPoolId: pool,
-          Username: email,
-        }),
-      );
+      await cognito.send(new AdminDeleteUserCommand({ UserPoolId: pool, Username: email }));
     } catch (e: any) {
-      // ignore if it doesn't exist
       if (String(e?.name ?? "") !== "UserNotFoundException") {
         redirect(
           `${returnTo}?toast=delete_failed&msg=${encodeURIComponent(
@@ -742,25 +755,19 @@ export async function adminDeleteTestUserFromForm(
     }
   }
 
-  // 2) Delete in DB (transaction)
   try {
     await db.transaction(async (tx) => {
-      // delete invites by email (case-insensitive)
       await tx.delete(invites).where(sql`lower(${invites.email}) = ${email}`);
 
-      // select all user rows matching this email (case-insensitive)
       const userRows = await tx
         .select({ id: users.id })
         .from(users)
         .where(sql`lower(${users.email}) = ${email}`);
 
       for (const u of userRows) {
-        // delete known child rows first (avoid FK errors)
         await tx.delete(documents).where(eq(documents.userId, u.id));
         await tx.delete(dependents).where(eq(dependents.userId, u.id));
         await tx.delete(taxReturns).where(eq(taxReturns.userId, u.id));
-
-        // finally delete user
         await tx.delete(users).where(eq(users.id, u.id));
       }
     });
@@ -768,9 +775,7 @@ export async function adminDeleteTestUserFromForm(
     redirect(`${returnTo}?toast=delete_ok`);
   } catch (e: any) {
     redirect(
-      `${returnTo}?toast=delete_failed&msg=${encodeURIComponent(
-        e?.message ?? "DB delete failed.",
-      )}`,
+      `${returnTo}?toast=delete_failed&msg=${encodeURIComponent(e?.message ?? "DB delete failed.")}`,
     );
   }
 }

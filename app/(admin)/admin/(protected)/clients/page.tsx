@@ -56,7 +56,6 @@ export default async function ClientActivityReportPage({
   const toast = getStr(sp.toast);
   const msg = getStr(sp.msg);
   const mode = getStr(sp.mode);
-  const fallback = getStr(sp.fallback);
 
   const since7 = daysAgo(7);
   const since30 = daysAgo(30);
@@ -173,9 +172,7 @@ export default async function ClientActivityReportPage({
       : toast === "create_failed"
         ? `Create failed: ${msg || "Unknown error"}`
         : toast === "resend_ok"
-          ? `Invite resent (${mode || "branded"}${
-              fallback ? `, fallback=${fallback}` : ""
-            }).`
+          ? `Invite resent (${mode || "branded"}).`
           : toast === "resend_failed"
             ? `Resend failed: ${msg || "Unknown error"}`
             : toast === "pw_reset_ok"
@@ -324,9 +321,6 @@ export default async function ClientActivityReportPage({
               </option>
               <option value="/dashboard">Taxpayer → Dashboard</option>
               <option value="/agency">LMS Preparer → /agency</option>
-              <option value="/taxpayer/onboarding-sign-up">
-                Taxpayer → Invite sign-up page
-              </option>
             </select>
 
             <p className="text-[11px] text-muted-foreground">
