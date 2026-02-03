@@ -1,3 +1,4 @@
+// app/(admin)/admin/(protected)/clients/[userId]/files/page.tsx
 import Link from "next/link";
 import { redirect, notFound } from "next/navigation";
 import { ArrowLeft } from "lucide-react";

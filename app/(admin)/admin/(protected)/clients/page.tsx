@@ -392,6 +392,7 @@ export default async function ClientActivityReportPage({
               <th className="p-3 text-left">Created</th>
               <th className="p-3 text-left">Dependents</th>
               <th className="p-3 text-left">Docs</th>
+              <th className="p-3 text-left">Files</th>
               <th className="p-3 text-left">Sensitive</th>
               <th className="p-3 text-left">Resend invite</th>
               <th className="p-3 text-left">Reset</th>
@@ -431,6 +432,15 @@ export default async function ClientActivityReportPage({
                       href={`/admin/clients/${u.id}/documents`}
                     >
                       View ({Number((u as any).documentsCount ?? 0)})
+                    </Link>
+                  </td>
+
+                  <td className="p-3">
+                    <Link
+                      className="text-xs font-medium underline underline-offset-4"
+                      href={`/admin/clients/${u.id}/files`}
+                    >
+                      View uploads
                     </Link>
                   </td>
 

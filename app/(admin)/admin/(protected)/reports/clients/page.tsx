@@ -66,11 +66,12 @@ export default async function ClientActivityReportPage() {
       .then((r) => r[0]?.count ?? 0),
 
     // ✅ online now (lastSeenAt within X minutes)
+    // FIX: do NOT parameterize inside "interval '...'"
     db
       .select({ count: sql<number>`count(*)`.mapWith(Number) })
       .from(users)
       .where(
-        sql`${users.lastSeenAt} is not null and ${users.lastSeenAt} >= now() - interval '${ONLINE_WINDOW_MINUTES} minutes'`
+        sql`${users.lastSeenAt} is not null and ${users.lastSeenAt} >= now() - (${ONLINE_WINDOW_MINUTES}::int * interval '1 minute')`
       )
       .then((r) => r[0]?.count ?? 0),
 
@@ -78,14 +79,18 @@ export default async function ClientActivityReportPage() {
     db
       .select({ count: sql<number>`count(*)`.mapWith(Number) })
       .from(users)
-      .where(sql`${users.lastSeenAt} is not null and ${users.lastSeenAt} >= ${since7}`)
+      .where(
+        sql`${users.lastSeenAt} is not null and ${users.lastSeenAt} >= ${since7}`
+      )
       .then((r) => r[0]?.count ?? 0),
 
     // active last 30 days
     db
       .select({ count: sql<number>`count(*)`.mapWith(Number) })
       .from(users)
-      .where(sql`${users.lastSeenAt} is not null and ${users.lastSeenAt} >= ${since30}`)
+      .where(
+        sql`${users.lastSeenAt} is not null and ${users.lastSeenAt} >= ${since30}`
+      )
       .then((r) => r[0]?.count ?? 0),
 
     // onboarding distribution
@@ -161,9 +166,18 @@ export default async function ClientActivityReportPage() {
         <Card label="Active (last 7 days)" value={fmt.format(active7)} />
         <Card label="Active (last 30 days)" value={fmt.format(active30)} />
         <Card label="Docs uploaded (7 days)" value={fmt.format(docs7)} />
-        <Card label="Onboarding: PROFILE" value={fmt.format(onboardingMap.get("PROFILE") ?? 0)} />
-        <Card label="Onboarding: DOCUMENTS" value={fmt.format(onboardingMap.get("DOCUMENTS") ?? 0)} />
-        <Card label="Onboarding: COMPLETE" value={fmt.format(onboardingMap.get("COMPLETE") ?? 0)} />
+        <Card
+          label="Onboarding: PROFILE"
+          value={fmt.format(onboardingMap.get("PROFILE") ?? 0)}
+        />
+        <Card
+          label="Onboarding: DOCUMENTS"
+          value={fmt.format(onboardingMap.get("DOCUMENTS") ?? 0)}
+        />
+        <Card
+          label="Onboarding: COMPLETE"
+          value={fmt.format(onboardingMap.get("COMPLETE") ?? 0)}
+        />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
@@ -202,7 +216,10 @@ export default async function ClientActivityReportPage() {
             {returnsByStatusThisYear
               .sort((a, b) => (b.count ?? 0) - (a.count ?? 0))
               .map((r) => (
-                <div key={String(r.status)} className="flex items-center justify-between">
+                <div
+                  key={String(r.status)}
+                  className="flex items-center justify-between"
+                >
                   <span className="text-muted-foreground">{String(r.status)}</span>
                   <span className="font-medium">{fmt.format(r.count ?? 0)}</span>
                 </div>
