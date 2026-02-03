@@ -1,4 +1,4 @@
-// app/(client)(protected)/_components/ClientShell.tsx
+// app/(client)/(protected)/_components/ClientShell.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
@@ -8,12 +8,7 @@ import HeaderClient from "./HeaderClient";
 import { ActivityHeartbeat } from "./ActivityHeartbeat";
 import IdleSignOut from "./IdleSignOut";
 import { configureAmplify } from "@/lib/amplifyClient";
-import {
-  getCurrentUser,
-  fetchUserAttributes,
-  signOut,
-  fetchAuthSession,
-} from "aws-amplify/auth";
+import { getCurrentUser, fetchUserAttributes, signOut } from "aws-amplify/auth";
 import {
   LayoutDashboard,
   User2,
@@ -107,9 +102,7 @@ function NavLink({
           background: `linear-gradient(180deg, ${BRAND.pink}, ${BRAND.copper})`,
         }}
       />
-      <Icon
-        className={cx("h-4.5 w-4.5", active ? "opacity-100" : "opacity-85")}
-      />
+      <Icon className={cx("h-4.5 w-4.5", active ? "opacity-100" : "opacity-85")} />
       <span className="flex-1">{item.name}</span>
       <ChevronRight
         className={cx(
@@ -138,10 +131,7 @@ export default function ClientShell({
   // ✅ Build nav: prepend Admin Hub only for admin view
   const nav = useMemo<NavItem[]>(() => {
     if (!isAdmin) return baseNavItems;
-    return [
-      { name: "Admin Hub", href: "/admin", Icon: Shield },
-      ...baseNavItems,
-    ];
+    return [{ name: "Admin Hub", href: "/admin", Icon: Shield }, ...baseNavItems];
   }, [isAdmin]);
 
   const activeItems = useMemo(
@@ -188,60 +178,19 @@ export default function ClientShell({
     };
   }, [router]);
 
-  // ✅ Heartbeat
-  const heartbeat = React.useCallback(async () => {
+  async function handleLogout() {
     try {
-      const session = await fetchAuthSession();
-      const token =
-        session.tokens?.idToken?.toString() ||
-        session.tokens?.accessToken?.toString();
-
-      await fetch("/api/heartbeat", {
-        method: "POST",
-        cache: "no-store",
-        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-      });
-    } catch {}
-  }, []);
-
-  useEffect(() => {
-    if (!authLoading) heartbeat();
-  }, [authLoading, pathname, heartbeat]);
-
-  useEffect(() => {
-    if (authLoading) return;
-
-    const id = setInterval(heartbeat, 60_000);
-
-    const onVis = () => {
-      if (document.visibilityState === "visible") heartbeat();
-    };
-
-    window.addEventListener("focus", heartbeat);
-    document.addEventListener("visibilitychange", onVis);
-
-    return () => {
-      clearInterval(id);
-      window.removeEventListener("focus", heartbeat);
-      document.removeEventListener("visibilitychange", onVis);
-    };
-  }, [authLoading, heartbeat]);
-
- async function handleLogout() {
-  try {
-    await fetch("/api/auth/logout", {
-      method: "POST",
-      cache: "no-store",
-    }).catch(() => {});
-    await signOut();
-  } catch (err) {
-    console.error("Sign-out error:", err);
-  } finally {
-    router.replace("/sign-in");
-    router.refresh();
+      await fetch("/api/auth/logout", { method: "POST", cache: "no-store" }).catch(
+        () => {}
+      );
+      await signOut();
+    } catch (err) {
+      console.error("Sign-out error:", err);
+    } finally {
+      router.replace("/sign-in");
+      router.refresh();
+    }
   }
-}
-
 
   return (
     <div
@@ -252,6 +201,14 @@ export default function ClientShell({
                      linear-gradient(135deg, ${BRAND.charcoal2}, ${BRAND.charcoal})`,
       }}
     >
+      {/* ✅ Mount these ONCE for all client views (desktop + mobile) */}
+      {!authLoading ? (
+        <>
+          <ActivityHeartbeat />
+          <IdleSignOut minutes={20} />
+        </>
+      ) : null}
+
       {/* Top Bar */}
       <header
         className="sticky top-0 z-40 border-b backdrop-blur"
@@ -277,9 +234,7 @@ export default function ClientShell({
               SW
             </div>
             <div className="flex flex-col leading-tight">
-              <span className="text-sm font-semibold tracking-tight">
-                SW Tax Service
-              </span>
+              <span className="text-sm font-semibold tracking-tight">SW Tax Service</span>
               <span className="text-[11px]" style={{ color: BRAND.gray }}>
                 Client Portal{isAdmin ? " (Admin View)" : ""}
               </span>
@@ -336,10 +291,7 @@ export default function ClientShell({
 
         {/* Mobile menu */}
         {mobileOpen && (
-          <div
-            className="md:hidden border-t"
-            style={{ borderColor: "rgba(255,255,255,0.08)" }}
-          >
+          <div className="md:hidden border-t" style={{ borderColor: "rgba(255,255,255,0.08)" }}>
             <div className="mx-auto max-w-6xl px-4 py-3 space-y-3">
               <div
                 className="rounded-2xl border p-3"
@@ -366,9 +318,6 @@ export default function ClientShell({
                   />
                 ))}
               </nav>
-
-              <ActivityHeartbeat />
-              <IdleSignOut minutes={20} />
 
               <button
                 type="button"
