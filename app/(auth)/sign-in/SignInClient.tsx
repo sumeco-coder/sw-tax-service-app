@@ -1,7 +1,7 @@
 // app/(auth)/sign-in/SigninClient.tsx
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import Image from "next/image";
@@ -16,6 +16,7 @@ import {
   signOut,
   fetchAuthSession,
 } from "aws-amplify/auth";
+
 import { configureAmplify } from "@/lib/amplifyClient";
 import ForgotPasswordForm from "@/components/auth/ForgotPasswordForm";
 import { Eye, EyeOff } from "lucide-react";
@@ -38,10 +39,11 @@ type View =
   | "confirmSignIn"
   | "confirmSignUp"
   | "newPassword"
+  | "setpw"
   | "forgot";
 
 function cleanEmail(v: string) {
-  return v.trim().toLowerCase();
+  return String(v ?? "").trim().toLowerCase();
 }
 
 function getErrMsg(e: unknown) {
@@ -88,37 +90,22 @@ export default function SigninClient() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  const [showPassword, setShowPassword] = useState(false);
-  const [showNewPassword, setShowNewPassword] = useState(false);
+  // query params
+  const start = useMemo(
+    () => (searchParams.get("start") ?? "").trim().toLowerCase(),
+    [searchParams],
+  );
 
-  const [view, setView] = useState<View>("signin");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-
-  const [newPassword, setNewPassword] = useState("");
-  const [confirmNewPassword, setConfirmNewPassword] = useState("");
-
-  const [code, setCode] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [msg, setMsg] = useState("");
-
-  useEffect(() => {
-    configureAmplify();
-  }, []);
-
-  // Invite context (token from your DB invite links can be passed as ?invite=TOKEN)
   const invite = useMemo(
     () => (searchParams.get("invite") ?? "").trim(),
     [searchParams],
   );
 
-  // support both next & redirect
   const nextParam = useMemo(
     () => searchParams.get("next") ?? searchParams.get("redirect"),
     [searchParams],
   );
 
-  // optional: show message if they were auto-logged-out
   const reason = useMemo(
     () => (searchParams.get("reason") ?? "").trim(),
     [searchParams],
@@ -129,42 +116,96 @@ export default function SigninClient() {
     [searchParams],
   );
 
+  const emailLocked = !!emailParam;
+
+  // state
+  const [showPassword, setShowPassword] = useState(false);
+  const [showNewPassword, setShowNewPassword] = useState(false);
+
+  const [view, setView] = useState<View>(() =>
+    start === "setpw" ? "setpw" : "signin",
+  );
+
+  const [email, setEmail] = useState(() => emailParam || "");
+  const [password, setPassword] = useState("");
+
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmNewPassword, setConfirmNewPassword] = useState("");
+
+  const [code, setCode] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [msg, setMsg] = useState("");
+
+  const [checkingSession, setCheckingSession] = useState(true);
+
+  // amplify init
+  useEffect(() => {
+    configureAmplify();
+  }, []);
+
+  // keep email in sync if param provided
   useEffect(() => {
     if (!emailParam) return;
     setEmail((prev) => (prev ? prev : emailParam));
-  }, [emailParam, setEmail]);
+  }, [emailParam]);
 
-  // ✅ This is the destination AFTER onboarding is complete
+  const username = useMemo(() => cleanEmail(email), [email]);
+
+  // ✅ Destination AFTER onboarding complete
   const intendedAfterOnboarding = useMemo(() => {
     const safe = safeInternalPath(nextParam, "/dashboard");
     return normalizePostOnboardingTarget(safe);
   }, [nextParam]);
 
-  // ✅ Link shown on sign-in page.
-  // If invite exists, we send them to your invite sign-up page.
-  // Otherwise, go to general /sign-up.
+  /** ✅ Invite users should NOT go to /taxpayer/onboarding-sign-up */
   const createAccountHref = useMemo(() => {
     const params = new URLSearchParams();
-    if (invite) params.set("invite", invite);
+
+    if (invite) {
+      params.set("start", "setpw");
+      params.set("invite", invite);
+      if (emailParam || email) params.set("email", cleanEmail(emailParam || email));
+      if (intendedAfterOnboarding) params.set("next", intendedAfterOnboarding);
+      const qs = params.toString();
+      return `/sign-in${qs ? `?${qs}` : ""}`;
+    }
+
     if (intendedAfterOnboarding) params.set("next", intendedAfterOnboarding);
-
-    const base = invite ? "/taxpayer/onboarding-sign-up" : "/sign-up";
     const qs = params.toString();
-    return `${base}${qs ? `?${qs}` : ""}`;
-  }, [invite, intendedAfterOnboarding]);
+    return `/sign-up${qs ? `?${qs}` : ""}`;
+  }, [invite, intendedAfterOnboarding, emailParam, email]);
 
-  const [checkingSession, setCheckingSession] = useState(true);
-
-  const username = cleanEmail(email);
+  function resetSensitiveFields() {
+    setPassword("");
+    setCode("");
+    setNewPassword("");
+    setConfirmNewPassword("");
+    setShowPassword(false);
+    setShowNewPassword(false);
+  }
 
   function backToSignIn() {
     setView("signin");
     setMsg("");
-    setCode("");
-    setNewPassword("");
-    setConfirmNewPassword("");
-    setShowNewPassword(false);
+    resetSensitiveFields();
   }
+
+  // ✅ If start=setpw, force set-password view every time
+  useEffect(() => {
+  if (start === "setpw") {
+    setView("setpw");
+    setMsg("Your portal is ready. Create your password below to activate your access.");
+    return;
+  }
+
+  // ✅ temp password invite flow (Choice B)
+  if (start === "temp") {
+    setView("signin");
+    setMsg("Use the temporary password from your email. You’ll be prompted to create a new password after signing in.");
+    return;
+  }
+}, [start]);
+
 
   /** ✅ Force onboarding for taxpayers (or invite flow) until onboardingComplete=true */
   async function routeAfterAuth() {
@@ -178,13 +219,10 @@ export default function SigninClient() {
         const payload = decodeJwt(idToken) as Record<string, any>;
         const roleClaim = String(payload["custom:role"] ?? "").toLowerCase();
         const onboardingComplete =
-          String(payload["custom:onboardingComplete"] ?? "").toLowerCase() ===
-          "true";
+          String(payload["custom:onboardingComplete"] ?? "").toLowerCase() === "true";
 
         if ((invite || roleClaim === "taxpayer") && !onboardingComplete) {
-          router.push(
-            `/onboarding/profile?next=${encodeURIComponent(intended)}`,
-          );
+          router.push(`/onboarding/profile?next=${encodeURIComponent(intended)}`);
           return;
         }
       }
@@ -202,7 +240,6 @@ export default function SigninClient() {
     (async () => {
       try {
         await getCurrentUser();
-
         if (cancelled) return;
 
         const ok = await syncServerCookiesFromSession();
@@ -213,9 +250,8 @@ export default function SigninClient() {
         }
 
         await routeAfterAuth();
-        return;
       } catch {
-        // not signed in -> show form
+        // not signed in -> show UI
       } finally {
         if (!cancelled) setCheckingSession(false);
       }
@@ -226,17 +262,14 @@ export default function SigninClient() {
     };
   }, [invite, intendedAfterOnboarding]);
 
-  async function handleSignIn(e: React.FormEvent) {
+  async function handleSignIn(e: FormEvent) {
     e.preventDefault();
     setMsg("");
 
-    if (!username) {
-      setMsg("Please enter your email.");
-      return;
-    }
+    if (!username) return setMsg("Please enter your email.");
+    if (!password) return setMsg("Please enter your password.");
 
     setLoading(true);
-
     try {
       const res = await signIn({ username, password });
 
@@ -255,15 +288,10 @@ export default function SigninClient() {
 
       if (step === "CONFIRM_SIGN_IN_WITH_NEW_PASSWORD_REQUIRED") {
         setView("newPassword");
-        setMsg(
-          "For security, you need to create a new password to finish signing in.",
-        );
-
-        setCode("");
+        setMsg("For security, you need to create a new password to finish signing in.");
         setNewPassword("");
         setConfirmNewPassword("");
         setShowNewPassword(false);
-
         return;
       }
 
@@ -279,26 +307,18 @@ export default function SigninClient() {
 
       if (step === "CONFIRM_SIGN_UP") {
         setView("confirmSignUp");
-        setMsg(
-          "Your account isn’t confirmed yet. Enter your confirmation code.",
-        );
+        setMsg("Your account isn’t confirmed yet. Enter your confirmation code.");
         return;
       }
 
       setView("forgot");
-      setMsg(
-        "We need one more step to sign you in. Please reset your password to continue.",
-      );
+      setMsg("We need one more step to sign you in. Please reset your password to continue.");
     } catch (e: unknown) {
       const m = getErrMsg(e);
 
-      // ✅ if already signed in, just route them in
       if (m.toLowerCase().includes("already a signed in user")) {
         const ok = await syncServerCookiesFromSession();
-        if (!ok) {
-          setMsg("Session sync failed. Please refresh and try again.");
-          return;
-        }
+        if (!ok) return setMsg("Session sync failed. Please refresh and try again.");
         await routeAfterAuth();
         return;
       }
@@ -311,20 +331,14 @@ export default function SigninClient() {
 
   async function hardSignOutToSwitchAccount() {
     try {
-      // 1) Cognito/Amplify sign out
       await signOut({ global: true });
     } finally {
-      // 2) Clear your server cookies
-      await fetch("/api/auth/logout", {
-        method: "POST",
-        cache: "no-store",
-      }).catch(() => {});
-      // 3) Hard reload so SSR picks up cleared cookies
+      await fetch("/api/auth/logout", { method: "POST", cache: "no-store" }).catch(() => {});
       window.location.href = "/sign-in";
     }
   }
 
-  async function handleConfirmSignIn(e: React.FormEvent) {
+  async function handleConfirmSignIn(e: FormEvent) {
     e.preventDefault();
     setMsg("");
     setLoading(true);
@@ -344,22 +358,15 @@ export default function SigninClient() {
     }
   }
 
-  async function handleSetNewPassword(e: React.FormEvent) {
+  async function handleSetNewPassword(e: FormEvent) {
     e.preventDefault();
     setMsg("");
 
-    if (newPassword.length < 8) {
-      setMsg("Password must be at least 8 characters.");
-      return;
-    }
-    if (newPassword !== confirmNewPassword) {
-      setMsg("Passwords do not match.");
-      return;
-    }
+    if (newPassword.length < 8) return setMsg("Password must be at least 8 characters.");
+    if (newPassword !== confirmNewPassword) return setMsg("Passwords do not match.");
 
     setLoading(true);
     try {
-      // ✅ For NEW_PASSWORD_REQUIRED, challengeResponse is the NEW password
       const res = await confirmSignIn({ challengeResponse: newPassword });
 
       if (res.isSignedIn) {
@@ -373,7 +380,6 @@ export default function SigninClient() {
         return;
       }
 
-      // If Cognito asks for another step after setting password:
       const step = res.nextStep?.signInStep;
       if (
         step === "CONFIRM_SIGN_IN_WITH_SMS_CODE" ||
@@ -393,17 +399,68 @@ export default function SigninClient() {
     }
   }
 
-  async function handleConfirmSignUp(e: React.FormEvent) {
+  // ✅ Branded invite: set password without temp password
+  async function handleSetPasswordFromInvite(e: FormEvent) {
     e.preventDefault();
     setMsg("");
 
-    if (!username) {
-      setMsg("Enter your email above first, then your confirmation code.");
-      return;
-    }
+    if (!invite) return setMsg("Missing invite token. Please use the link from your email.");
+    if (!username) return setMsg("Please enter your email.");
+    if (newPassword.length < 8) return setMsg("Password must be at least 8 characters.");
+    if (newPassword !== confirmNewPassword) return setMsg("Passwords do not match.");
 
     setLoading(true);
+    try {
+      const r = await fetch("/api/auth/invite/set-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        cache: "no-store",
+        body: JSON.stringify({
+          invite,
+          email: username,
+          newPassword,
+        }),
+      });
 
+      const data = await r.json().catch(() => ({}));
+
+      if (!r.ok || !data?.ok) {
+        setMsg(String(data?.error ?? "Could not set password. Please request a new invite."));
+        return;
+      }
+
+      // sign in with the password they just created
+      const res = await signIn({ username, password: newPassword });
+
+      if (res.isSignedIn) {
+        const ok = await syncServerCookiesFromSession();
+        if (!ok) {
+          setMsg("Session sync failed. Please refresh and sign in again.");
+          await signOut().catch(() => {});
+          return;
+        }
+        await routeAfterAuth();
+        return;
+      }
+
+      // rare edge
+      setMsg("Password created. Please sign in.");
+      setView("signin");
+      setPassword("");
+    } catch (e: unknown) {
+      setMsg(getErrMsg(e));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleConfirmSignUp(e: FormEvent) {
+    e.preventDefault();
+    setMsg("");
+
+    if (!username) return setMsg("Enter your email above first, then your confirmation code.");
+
+    setLoading(true);
     try {
       await confirmSignUp({ username, confirmationCode: code.trim() });
       setMsg("Confirmed! Please sign in.");
@@ -419,13 +476,9 @@ export default function SigninClient() {
   async function handleResendSignUpCode() {
     setMsg("");
 
-    if (!username) {
-      setMsg("Enter your email above first, then click resend.");
-      return;
-    }
+    if (!username) return setMsg("Enter your email above first, then click resend.");
 
     setLoading(true);
-
     try {
       await resendSignUpCode({ username });
       setMsg("A new confirmation code has been sent.");
@@ -436,7 +489,6 @@ export default function SigninClient() {
     }
   }
 
-  // optional: show a small loader while we check existing session
   if (checkingSession) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
@@ -447,18 +499,19 @@ export default function SigninClient() {
     );
   }
 
-   const title =
-    view === "signin"
-      ? invite
-        ? "Sign in to continue onboarding"
-        : "Sign in"
-      : view === "newPassword"
-        ? "Create your password"
-        : "Account access";
-
+  const title =
+    view === "setpw"
+      ? "Create your password"
+      : view === "signin"
+        ? invite
+          ? "Sign in to continue onboarding"
+          : "Sign in"
+        : view === "newPassword"
+          ? "Create your password"
+          : "Account access";
 
   return (
-   <div
+    <div
       className="min-h-screen flex items-center justify-center px-4"
       style={{
         background: `radial-gradient(1200px 700px at 15% 0%, rgba(230,42,104,0.18), transparent 60%),
@@ -469,10 +522,7 @@ export default function SigninClient() {
       <div className="w-full max-w-md rounded-3xl border border-white/10 bg-white/95 p-8 shadow-2xl backdrop-blur">
         {/* Brand header */}
         <div className="flex items-center justify-center gap-3">
-          <div
-            className="relative h-11 w-11 overflow-hidden rounded-2xl p-[2px]"
-            style={brandGradient}
-          >
+          <div className="relative h-11 w-11 overflow-hidden rounded-2xl p-[2px]" style={brandGradient}>
             <div className="relative h-full w-full rounded-[14px] bg-white">
               <Image
                 src="/swtax-favicon-pack/favicon-48x48.png"
@@ -490,10 +540,7 @@ export default function SigninClient() {
           </div>
         </div>
 
-        <h1 className="mt-6 text-2xl font-extrabold text-slate-900 text-center">
-          {title}
-        </h1>
-
+        <h1 className="mt-6 text-2xl font-extrabold text-slate-900 text-center">{title}</h1>
         <div className="mt-3 h-1 w-24 mx-auto rounded-full" style={brandGradient} />
 
         {reason === "timeout" && (
@@ -502,12 +549,98 @@ export default function SigninClient() {
           </div>
         )}
 
+        {/* ✅ SET PASSWORD (BRANDED INVITE) */}
+        {view === "setpw" && (
+          <form onSubmit={handleSetPasswordFromInvite} className="mt-6 space-y-4">
+            <div className="text-sm text-slate-700">
+              Your portal is ready. Create your password below.
+            </div>
+
+            <div>
+              <label className="mb-1 block text-xs font-semibold text-slate-700">Email</label>
+              <input
+                className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 disabled:bg-slate-50 disabled:text-slate-600"
+                placeholder="you@example.com"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                autoComplete="email"
+                disabled={emailLocked}
+                required
+              />
+              {emailLocked && (
+                <p className="mt-1 text-[11px] text-slate-500">
+                  Email is locked to the address that received this invite.
+                </p>
+              )}
+            </div>
+
+            <div>
+              <label className="mb-1 block text-xs font-semibold text-slate-700">New password</label>
+
+              <div className="relative">
+                <input
+                  className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 pr-11"
+                  type={showNewPassword ? "text" : "password"}
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  autoComplete="new-password"
+                  required
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowNewPassword((v) => !v)}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 rounded-lg p-2 text-slate-600 hover:bg-slate-100"
+                  aria-label={showNewPassword ? "Hide password" : "Show password"}
+                >
+                  {showNewPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+                </button>
+              </div>
+
+              <p className="mt-1 text-[11px] text-slate-500">
+                Use 8+ characters. Add a number or symbol for stronger security.
+              </p>
+            </div>
+
+            <div>
+              <label className="mb-1 block text-xs font-semibold text-slate-700">
+                Confirm new password
+              </label>
+              <input
+                className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5"
+                type={showNewPassword ? "text" : "password"}
+                value={confirmNewPassword}
+                onChange={(e) => setConfirmNewPassword(e.target.value)}
+                autoComplete="new-password"
+                required
+              />
+            </div>
+
+            <button
+              type="submit"
+              className="w-full rounded-xl py-2.5 text-white font-semibold shadow-sm transition disabled:opacity-60"
+              style={brandGradient}
+              disabled={loading}
+            >
+              {loading ? "Creating..." : "Create Password & Continue"}
+            </button>
+
+            <button
+              type="button"
+              className="w-full rounded-xl border border-slate-200 bg-white py-2.5 text-slate-900 hover:bg-slate-50"
+              disabled={loading}
+              onClick={backToSignIn}
+            >
+              Back to sign in
+            </button>
+          </form>
+        )}
+
+        {/* ✅ SIGN IN */}
         {view === "signin" && (
           <form onSubmit={handleSignIn} className="mt-6 space-y-4">
             <div>
-              <label className="mb-1 block text-xs font-semibold text-slate-700">
-                Email
-              </label>
+              <label className="mb-1 block text-xs font-semibold text-slate-700">Email</label>
               <input
                 className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2"
                 style={{ boxShadow: "inset 0 0 0 1px rgba(0,0,0,0.02)" }}
@@ -521,9 +654,7 @@ export default function SigninClient() {
             </div>
 
             <div>
-              <label className="mb-1 block text-xs font-semibold text-slate-700">
-                Password
-              </label>
+              <label className="mb-1 block text-xs font-semibold text-slate-700">Password</label>
 
               <div className="relative">
                 <input
@@ -542,11 +673,7 @@ export default function SigninClient() {
                   className="absolute right-2 top-1/2 -translate-y-1/2 rounded-lg p-2 text-slate-600 hover:bg-slate-100 hover:text-slate-900"
                   aria-label={showPassword ? "Hide password" : "Show password"}
                 >
-                  {showPassword ? (
-                    <EyeOff className="h-5 w-5" />
-                  ) : (
-                    <Eye className="h-5 w-5" />
-                  )}
+                  {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
                 </button>
               </div>
             </div>
@@ -562,7 +689,6 @@ export default function SigninClient() {
               {loading ? "Signing in..." : "Sign in"}
             </button>
 
-            {/* Optional switch account helper (you can remove this for production) */}
             {isDev && (
               <button
                 type="button"
@@ -595,12 +721,12 @@ export default function SigninClient() {
             <div className="pt-1 text-center text-sm text-slate-700">
               {invite ? (
                 <>
-                  Don’t have an account yet?{" "}
+                  Need to activate your invite?{" "}
                   <Link
                     href={createAccountHref}
                     className="font-semibold underline underline-offset-4 hover:text-slate-900"
                   >
-                    Create it with your invite
+                    Set your password
                   </Link>
                 </>
               ) : (
@@ -618,6 +744,7 @@ export default function SigninClient() {
           </form>
         )}
 
+        {/* CONFIRM SIGN IN */}
         {view === "confirmSignIn" && (
           <form onSubmit={handleConfirmSignIn} className="mt-6 space-y-4">
             <input
@@ -651,17 +778,13 @@ export default function SigninClient() {
           </form>
         )}
 
-        {/* ✅ NEW: New password required (force change password) */}
+        {/* NEW PASSWORD REQUIRED */}
         {view === "newPassword" && (
           <form onSubmit={handleSetNewPassword} className="mt-6 space-y-4">
-            <div className="text-sm text-slate-700">
-              Create a new password to finish signing in.
-            </div>
+            <div className="text-sm text-slate-700">Create a new password to finish signing in.</div>
 
             <div>
-              <label className="mb-1 block text-xs font-semibold text-slate-700">
-                New password
-              </label>
+              <label className="mb-1 block text-xs font-semibold text-slate-700">New password</label>
 
               <div className="relative">
                 <input
@@ -678,17 +801,9 @@ export default function SigninClient() {
                   className="absolute right-2 top-1/2 -translate-y-1/2 rounded-lg p-2 text-slate-600 hover:bg-slate-100"
                   aria-label={showNewPassword ? "Hide password" : "Show password"}
                 >
-                  {showNewPassword ? (
-                    <EyeOff className="h-5 w-5" />
-                  ) : (
-                    <Eye className="h-5 w-5" />
-                  )}
+                  {showNewPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
                 </button>
               </div>
-
-              <p className="mt-1 text-[11px] text-slate-500">
-                Use 8+ characters. Add a number or symbol for stronger security.
-              </p>
             </div>
 
             <div>
@@ -725,11 +840,11 @@ export default function SigninClient() {
           </form>
         )}
 
+        {/* CONFIRM SIGN UP */}
         {view === "confirmSignUp" && (
           <form onSubmit={handleConfirmSignUp} className="mt-6 space-y-4">
             <div className="text-sm text-slate-700">
-              Your account isn’t confirmed yet. Enter the confirmation code sent
-              to your email.
+              Your account isn’t confirmed yet. Enter the confirmation code sent to your email.
             </div>
 
             <input
@@ -772,13 +887,10 @@ export default function SigninClient() {
           </form>
         )}
 
+        {/* FORGOT */}
         {view === "forgot" && (
           <div className="mt-6">
-            <ForgotPasswordForm
-              initialEmail={email}
-              onBack={backToSignIn}
-              onDone={backToSignIn}
-            />
+            <ForgotPasswordForm initialEmail={email} onBack={backToSignIn} onDone={backToSignIn} />
           </div>
         )}
 

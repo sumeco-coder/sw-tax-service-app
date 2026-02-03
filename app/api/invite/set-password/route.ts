@@ -1,13 +1,18 @@
+// app/api/auth/invite/set-password/route.ts
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { and, eq } from "drizzle-orm";
-import outputs from "@/amplify_outputs.json";
+import crypto from "crypto";
 import { db } from "@/drizzle/db";
 import { invites } from "@/drizzle/schema";
+import { and, eq, sql } from "drizzle-orm";
+import outputs from "@/amplify_outputs.json";
 
 import {
   CognitoIdentityProviderClient,
+  AdminGetUserCommand,
+  AdminCreateUserCommand,
   AdminSetUserPasswordCommand,
+  AdminUpdateUserAttributesCommand,
 } from "@aws-sdk/client-cognito-identity-provider";
 
 export const runtime = "nodejs";
@@ -16,8 +21,12 @@ export const dynamic = "force-dynamic";
 const BodySchema = z.object({
   invite: z.string().min(10),
   email: z.string().email(),
-  password: z.string().min(8),
+  newPassword: z.string().min(8),
 });
+
+function normEmail(v: string) {
+  return v.trim().toLowerCase();
+}
 
 function getCognitoConfig() {
   const region = String(
@@ -25,96 +34,146 @@ function getCognitoConfig() {
   ).trim();
 
   const poolId = String(
-    process.env.COGNITO_USER_POOL_ID ??
-      (outputs as any)?.auth?.user_pool_id ??
-      "",
+    process.env.COGNITO_USER_POOL_ID ?? (outputs as any)?.auth?.user_pool_id ?? "",
   ).trim();
 
-  if (!region) throw new Error("Missing Cognito region");
-  if (!poolId) throw new Error("Missing Cognito user pool id");
+  if (!region) throw new Error("Missing COGNITO_REGION (or outputs.auth.aws_region)");
+  if (!poolId) throw new Error("Missing COGNITO_USER_POOL_ID (or outputs.auth.user_pool_id)");
 
   return { region, poolId };
 }
 
+function cognitoClient() {
+  const { region } = getCognitoConfig();
+  return new CognitoIdentityProviderClient({ region });
+}
+
+function randomTempPassword() {
+  // Always satisfies typical Cognito policies: upper/lower/number/special + length
+  const rand = crypto.randomBytes(8).toString("hex"); // 16 chars
+  return `TmpSW!${rand}#9a`;
+}
+
+async function safeUpdateAttrs(
+  cognito: CognitoIdentityProviderClient,
+  poolId: string,
+  email: string,
+  attrs: { Name: string; Value: string }[],
+) {
+  try {
+    await cognito.send(
+      new AdminUpdateUserAttributesCommand({
+        UserPoolId: poolId,
+        Username: email,
+        UserAttributes: attrs,
+      }),
+    );
+  } catch (e: any) {
+    // If custom attrs aren't defined in the pool, Cognito throws InvalidParameterException.
+    // We don’t want invites broken because of that.
+    const name = String(e?.name ?? "");
+    if (name === "InvalidParameterException") return;
+    throw e;
+  }
+}
+
 export async function POST(req: Request) {
   try {
-    const json = await req.json();
+    const json = await req.json().catch(() => ({}));
     const parsed = BodySchema.safeParse(json);
     if (!parsed.success) {
-      return NextResponse.json(
-        { ok: false, error: "Invalid input." },
-        { status: 400 },
-      );
+      return NextResponse.json({ ok: false, error: "Invalid request." }, { status: 400 });
     }
 
-    const { invite, email, password } = parsed.data;
+    const email = normEmail(parsed.data.email);
+    const token = parsed.data.invite.trim();
+    const newPassword = parsed.data.newPassword;
 
-    // 1) Validate invite token in DB
-    const [row] = await db
-      .select({
-        token: invites.token,
-        email: invites.email,
-        status: invites.status,
-        expiresAt: invites.expiresAt,
-      })
+    // 1) Validate invite in DB (pending + match email + not expired)
+    const [inv] = await db
+      .select()
       .from(invites)
-      .where(and(eq(invites.token, invite), eq(invites.status, "pending")))
+      .where(
+        and(
+          eq(invites.token, token),
+          eq(invites.status, "pending"),
+          sql`lower(${invites.email}) = ${email}`,
+          eq(invites.type, "taxpayer"),
+        ),
+      )
       .limit(1);
 
-    if (!row) {
+    if (!inv) {
       return NextResponse.json(
-        { ok: false, error: "Invite is invalid or already used." },
+        { ok: false, error: "This invite link is invalid or already used." },
         { status: 400 },
       );
     }
 
-    if (String(row.email).toLowerCase() !== email.toLowerCase()) {
+    if (inv.expiresAt && inv.expiresAt < new Date()) {
       return NextResponse.json(
-        { ok: false, error: "Invite/email mismatch." },
+        { ok: false, error: "This invite link has expired. Please request a new invite." },
         { status: 400 },
       );
     }
 
-    // ✅ Expire it in DB if needed
-    if (row.expiresAt && new Date(row.expiresAt as any).getTime() < Date.now()) {
-      await db
-        .update(invites)
-        .set({ status: "expired", updatedAt: new Date() })
-        .where(eq(invites.token, invite));
+    const { poolId } = getCognitoConfig();
+    const cognito = cognitoClient();
 
-      return NextResponse.json(
-        { ok: false, error: "Invite has expired." },
-        { status: 400 },
+    // 2) Ensure Cognito user exists; if not, create it (SUPPRESS Cognito email)
+    let exists = true;
+    try {
+      await cognito.send(new AdminGetUserCommand({ UserPoolId: poolId, Username: email }));
+    } catch (e: any) {
+      const name = String(e?.name ?? "");
+      if (name === "UserNotFoundException") exists = false;
+      else throw e;
+    }
+
+    if (!exists) {
+      await cognito.send(
+        new AdminCreateUserCommand({
+          UserPoolId: poolId,
+          Username: email,
+          TemporaryPassword: randomTempPassword(),
+          MessageAction: "SUPPRESS",
+          UserAttributes: [
+            { Name: "email", Value: email },
+            { Name: "email_verified", Value: "true" },
+          ],
+        }),
       );
     }
 
-    // 2) Set permanent password in Cognito (no Cognito email sent)
-    const { region, poolId } = getCognitoConfig();
-    const cognito = new CognitoIdentityProviderClient({ region });
-
+    // 3) Set PERMANENT password to user-chosen password
     await cognito.send(
       new AdminSetUserPasswordCommand({
         UserPoolId: poolId,
         Username: email,
-        Password: password,
+        Password: newPassword,
         Permanent: true,
       }),
     );
 
-    // 3) Mark invite as accepted
+    // 4) Update attributes (email_verified always; custom attrs only if pool supports them)
+    await safeUpdateAttrs(cognito, poolId, email, [
+      { Name: "email_verified", Value: "true" },
+      { Name: "custom:role", Value: "taxpayer" },
+      { Name: "custom:onboardingComplete", Value: "false" },
+    ]);
+
+    // 5) Mark invite as ACCEPTED (correct enum meaning)
     await db
       .update(invites)
       .set({ status: "accepted", updatedAt: new Date() })
-      .where(eq(invites.token, invite));
+      .where(eq(invites.token, token));
 
     return NextResponse.json({ ok: true });
   } catch (e: any) {
-    const name = String(e?.name ?? "");
-    const msg =
-      name === "UserNotFoundException"
-        ? "User was not found in the portal. Please ask us to resend your invite."
-        : e?.message ?? "Failed to set password.";
-
-    return NextResponse.json({ ok: false, error: msg }, { status: 500 });
+    console.error("invite set-password failed:", e);
+    return NextResponse.json(
+      { ok: false, error: e?.message ?? "Server error." },
+      { status: 500 },
+    );
   }
 }
