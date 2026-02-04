@@ -1,17 +1,14 @@
-// app/(admin)/admin/(protected)/clients/[userId]/documents/request/_components/WatermarkTool.tsx
+// app/(admin)/admin/(protected)/clients/[userId]/documents/requests/_components/WatermarkTool.tsx
 "use client";
 
-import { useMemo, useRef, useState, useTransition, useEffect } from "react";
+import { useMemo, useState, useTransition, useEffect } from "react";
 import Link from "next/link";
 
-import {
-  createUploadUrl,
-  finalizeUpload,
-} from "@/app/(client)/(protected)/(app)/files/actions";
+import { createUploadUrl, finalizeUpload } from "@/app/(client)/(protected)/(app)/files/actions";
 
 type Props = {
-  targetUserIdOrSub: string; // ✅ can be cognitoSub (preferred) or legacy users.id
-  clientDbUserId: string; // ✅ for linking to admin pages
+  targetUserIdOrSub: string; // can be cognitoSub (preferred) or users.id
+  clientDbUserId: string; // for linking to admin pages
 };
 
 function downloadBlob(blob: Blob, name: string) {
@@ -36,6 +33,7 @@ export default function WatermarkTool({ targetUserIdOrSub, clientDbUserId }: Pro
   const [file, setFile] = useState<File | null>(null);
   const [err, setErr] = useState("");
   const [ok, setOk] = useState("");
+
   const [wmText, setWmText] = useState("SW TAX SERVICE • CONFIDENTIAL");
   const [opacity, setOpacity] = useState(0.18);
   const [scale, setScale] = useState(1);
@@ -49,15 +47,9 @@ export default function WatermarkTool({ targetUserIdOrSub, clientDbUserId }: Pro
     return () => clearTimeout(t);
   }, [ok]);
 
-  async function buildWatermarkedImageBlob(): Promise<{
-    blob: Blob;
-    outName: string;
-    contentType: string;
-  }> {
+  async function buildWatermarkedImageBlob(): Promise<{ blob: Blob; outName: string; contentType: string }> {
     if (!file) throw new Error("Choose a file first.");
-    if (!file.type.startsWith("image/")) {
-      throw new Error("Watermark tool supports images only (PNG/JPG/WebP).");
-    }
+    if (!file.type.startsWith("image/")) throw new Error("Watermark tool supports images only.");
 
     const bmp = await fileToImageBitmap(file);
     const w = Math.floor(bmp.width * scale);
@@ -122,7 +114,6 @@ export default function WatermarkTool({ targetUserIdOrSub, clientDbUserId }: Pro
 
     const { blob, outName, contentType } = await buildWatermarkedImageBlob();
 
-    // ✅ Files module expects: targetUserIdOrSub
     const out = await createUploadUrl({
       targetUserIdOrSub,
       fileName: outName,
@@ -137,7 +128,6 @@ export default function WatermarkTool({ targetUserIdOrSub, clientDbUserId }: Pro
 
     if (!put.ok) throw new Error("Upload failed.");
 
-    // ✅ optional but recommended (verifies it exists)
     await finalizeUpload({
       targetUserIdOrSub,
       key: out.key,
@@ -258,9 +248,7 @@ export default function WatermarkTool({ targetUserIdOrSub, clientDbUserId }: Pro
           className="rounded-xl border bg-background px-4 py-2 text-sm font-semibold hover:bg-muted disabled:opacity-60"
           onClick={() =>
             startTransition(() => {
-              uploadToClientFolder().catch((e: any) =>
-                setErr(e?.message ?? "Upload failed."),
-              );
+              uploadToClientFolder().catch((e: any) => setErr(e?.message ?? "Upload failed."));
             })
           }
         >

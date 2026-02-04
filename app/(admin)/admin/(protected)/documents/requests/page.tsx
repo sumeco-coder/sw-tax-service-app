@@ -1,7 +1,8 @@
 // app/(admin)/admin/(protected)/documents/requests/page.tsx
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { sql, ilike, or, type SQL } from "drizzle-orm";
+import { ArrowRight } from "lucide-react";
+import { and, desc, eq, sql } from "drizzle-orm";
 
 import { db } from "@/drizzle/db";
 import { users } from "@/drizzle/schema";
@@ -13,6 +14,10 @@ export const revalidate = 0;
 function isAdminRole(role: unknown) {
   const r = String(role ?? "").toUpperCase();
   return ["ADMIN", "SUPERADMIN", "LMS_ADMIN", "LMS_PREPARER"].includes(r);
+}
+
+function escapeLike(s: string) {
+  return s.replace(/[%_\\]/g, "\\$&");
 }
 
 function fmtLastActive(d: Date | null) {
@@ -37,14 +42,23 @@ export default async function DocumentRequestCenterPage({
   if (!isAdminRole(auth.role)) return redirect("/admin");
 
   const q = (searchParams?.q ?? "").trim();
-  const whereParts: SQL[] = [];
 
+  const conds: any[] = [];
   if (q) {
-    const like = `%${q}%`;
-    whereParts.push(or(ilike(users.name, like), ilike(users.email, like))!);
+    const like = `%${escapeLike(q)}%`;
+    conds.push(sql`
+      (
+        lower(${users.email}) like lower(${like}) escape '\\'
+        OR lower(coalesce(${users.name}, '')) like lower(${like}) escape '\\'
+        OR lower(coalesce(${users.firstName}, '')) like lower(${like}) escape '\\'
+        OR lower(coalesce(${users.lastName}, '')) like lower(${like}) escape '\\'
+      )
+    `);
   }
 
-  const base = db
+  const where = conds.length ? and(...conds) : undefined;
+
+  const rows = await db
     .select({
       id: users.id,
       name: users.name,
@@ -52,20 +66,33 @@ export default async function DocumentRequestCenterPage({
       onboardingStep: users.onboardingStep,
       lastSeenAt: users.lastSeenAt,
     })
-    .from(users);
-
-  const rows = whereParts.length
-    ? await base.where(sql.join(whereParts, sql` and `)).orderBy(sql`${users.lastSeenAt} desc nulls last`)
-    : await base.orderBy(sql`${users.lastSeenAt} desc nulls last`);
+    .from(users)
+    .where(where)
+    .orderBy(desc(users.lastSeenAt))
+    .limit(300);
 
   return (
     <div className="space-y-5">
-      <div className="flex flex-col gap-1">
-        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Documents</p>
-        <h1 className="text-2xl font-black tracking-tight">Request center</h1>
-        <p className="text-sm text-muted-foreground">
-          Pick a client to generate a document request email + upload link.
-        </p>
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+        <div className="flex flex-col gap-1">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Documents
+          </p>
+          <h1 className="text-2xl font-black tracking-tight">Request center</h1>
+          <p className="text-sm text-muted-foreground">
+            Pick a client to generate a document request email + upload link.
+          </p>
+        </div>
+
+        {/* ✅ Tracker button lives here */}
+        <div className="flex gap-2">
+          <Link
+            href="/admin/documents/requests/tracker"
+            className="h-10 inline-flex items-center gap-2 rounded-2xl border bg-background px-4 text-sm font-semibold hover:bg-muted"
+          >
+            Tracker <ArrowRight className="h-4 w-4" />
+          </Link>
+        </div>
       </div>
 
       <div className="sticky top-0 z-20 -mx-4 px-3 sm:px-4">
@@ -103,7 +130,9 @@ export default async function DocumentRequestCenterPage({
         </div>
 
         {rows.length === 0 ? (
-          <div className="px-4 py-10 text-sm text-muted-foreground">No clients found.</div>
+          <div className="px-4 py-10 text-sm text-muted-foreground">
+            No clients found.
+          </div>
         ) : (
           <ul className="divide-y">
             {rows.map((u) => (
@@ -134,7 +163,7 @@ export default async function DocumentRequestCenterPage({
                       Docs
                     </Link>
                     <Link
-                      href={`/admin/clients/${u.id}/documents/request`}
+                      href={`/admin/clients/${u.id}/documents/requests`}
                       className="rounded-xl bg-foreground px-3 py-1.5 text-xs font-semibold text-background hover:opacity-90 transition"
                     >
                       Request

@@ -113,7 +113,7 @@ export default async function AdminClientDocumentsPage({
             </Link>
 
             <Link
-              href={`/admin/clients/${userId}/documents/request`}
+              href={`/admin/clients/${userId}/documents/requests`}
               className="inline-flex h-10 items-center gap-2 rounded-2xl bg-foreground px-4 text-sm font-semibold text-background hover:opacity-90"
             >
               <Send className="h-4 w-4" />

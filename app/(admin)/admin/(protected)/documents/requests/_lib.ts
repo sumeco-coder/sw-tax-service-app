@@ -1,12 +1,16 @@
-// app/(admin)/admin/(protected)/clients/[userId]/documents/request/_lib.ts
+// app/(admin)/admin/(protected)/documents/requests/_lib.ts
 
-export function buildUploadLink() {
+export function buildUploadLink(input?: { requestId?: string }) {
   const base =
     process.env.NEXT_PUBLIC_APP_URL ||
     process.env.NEXT_PUBLIC_SITE_URL ||
     "https://www.swtaxservice.com";
 
-  return `${base.replace(/\/$/, "")}/onboarding/documents`;
+  const url = `${base.replace(/\/$/, "")}/onboarding/documents`;
+
+  // optional: for future auto-tracking in portal
+  if (input?.requestId) return `${url}?requestId=${encodeURIComponent(input.requestId)}`;
+  return url;
 }
 
 export function buildRequestDraft(input: {
