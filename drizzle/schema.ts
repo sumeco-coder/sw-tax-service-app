@@ -928,6 +928,91 @@ export const taxReturns = pgTable(
 // ===================================================
 // DOCUMENTS, INVOICES, TASKS, MESSAGES, USER SETTINGS
 // ===================================================
+export const documentRequestStatusEnum = pgEnum("document_request_status", [
+  "open",
+  "completed",
+  "cancelled",
+]);
+
+export const documentRequestItemStatusEnum = pgEnum(
+  "document_request_item_status",
+  ["requested", "uploaded", "waived"],
+);
+
+export const documentRequests = pgTable(
+  "document_requests",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+
+    createdBy: uuid("created_by").references(() => users.id, {
+      onDelete: "set null",
+    }),
+
+    status: documentRequestStatusEnum("status").notNull().default("open"),
+
+    dueDate: timestamp("due_date", { withTimezone: true }),
+    note: text("note"),
+
+    reminderCount: integer("reminder_count").notNull().default(0),
+    lastRemindedAt: timestamp("last_reminded_at", { withTimezone: true }),
+
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+  },
+  (t) => ({
+    userIdx: index("doc_requests_user_idx").on(t.userId),
+    statusIdx: index("doc_requests_status_idx").on(t.status),
+  }),
+);
+
+export const documentRequestItems = pgTable(
+  "document_request_items",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+
+    requestId: uuid("request_id")
+      .notNull()
+      .references(() => documentRequests.id, { onDelete: "cascade" }),
+
+    label: text("label").notNull(),
+    docTypeKey: text("doc_type_key"),
+
+    sortOrder: integer("sort_order").notNull().default(0),
+    required: boolean("required").notNull().default(true),
+
+    status: documentRequestItemStatusEnum("status")
+      .notNull()
+      .default("requested"),
+
+    uploadedAt: timestamp("uploaded_at", { withTimezone: true }),
+
+    // ✅ break circular FK: store doc id without FK
+    uploadedDocumentId: uuid("uploaded_document_id"),
+
+    waivedAt: timestamp("waived_at", { withTimezone: true }),
+    staffNote: text("staff_note"),
+
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    reqIdx: index("doc_request_items_req_idx").on(t.requestId),
+    statusIdx: index("doc_request_items_status_idx").on(t.status),
+  }),
+);
+
 export const documentStatusEnum = pgEnum("document_status", [
   "new",
   "reviewed",
@@ -944,6 +1029,17 @@ export const documents = pgTable(
     taxReturnId: uuid("tax_return_id").references(() => taxReturns.id, {
       onDelete: "cascade",
     }),
+
+    requestId: uuid("request_id").references(() => documentRequests.id, {
+      onDelete: "set null",
+    }),
+    requestItemId: uuid("request_item_id").references(
+      () => documentRequestItems.id,
+      {
+        onDelete: "set null",
+      },
+    ),
+
     taxYear: integer("tax_year"),
     key: text("key").notNull(), // storage key (S3)
     fileName: text("file_name"),
