@@ -1,3 +1,4 @@
+// app/(admin)/admin/(protected)/clients/[userId]/_components/SensitiveClientInfo.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
@@ -37,6 +38,7 @@ function maskAccountLast4(last4: string, label: string) {
 }
 
 type SsnState = {
+  hasSsn: boolean;
   last4: string;
   full?: string;
 };
@@ -54,7 +56,12 @@ type DdState = {
   hasNumbersOnFile?: boolean;
 };
 
-export default function SensitiveClientInfo({ userId }: { userId: string }) {
+type Props = {
+  userId: string;
+  canReveal: boolean; // ADMIN/SUPERADMIN only
+};
+
+export default function SensitiveClientInfo({ userId, canReveal }: Props) {
   const [loading, setLoading] = useState(true);
 
   const [revealSsnLoading, setRevealSsnLoading] = useState(false);
@@ -63,7 +70,7 @@ export default function SensitiveClientInfo({ userId }: { userId: string }) {
   const [ssnErr, setSsnErr] = useState("");
   const [ddErr, setDdErr] = useState("");
 
-  const [ssn, setSsn] = useState<SsnState>({ last4: "" });
+  const [ssn, setSsn] = useState<SsnState>({ hasSsn: false, last4: "" });
 
   const [dd, setDd] = useState<DdState>({
     useDirectDeposit: false,
@@ -109,12 +116,14 @@ export default function SensitiveClientInfo({ userId }: { userId: string }) {
       setShowSsn(false);
       setShowBank(false);
 
-      try {
-        const [ssnJson, ddJson] = await Promise.all([
-          fetchJson(`/api/admin/clients/${userId}/ssn`),
-          fetchJson(`/api/admin/clients/${userId}/direct-deposit`),
-        ]);
+      const [ssnRes, ddRes] = await Promise.allSettled([
+        fetchJson(`/api/admin/clients/${userId}/ssn`),
+        fetchJson(`/api/admin/clients/${userId}/direct-deposit`),
+      ]);
 
+      if (ssnRes.status === "fulfilled") {
+        const ssnJson = ssnRes.value as any;
+        const hasSsn = Boolean(ssnJson?.hasSsn);
         const last4 = String(ssnJson?.last4 ?? ssnJson?.ssnLast4 ?? "");
         const full =
           ssnJson?.ssn ??
@@ -123,9 +132,17 @@ export default function SensitiveClientInfo({ userId }: { userId: string }) {
           undefined;
 
         setSsn({
+          hasSsn,
           last4,
           full: full ? String(full) : undefined,
         });
+      } else {
+        setSsnErr(ssnRes.reason?.message ?? "Failed to load SSN.");
+        setSsn({ hasSsn: false, last4: "" });
+      }
+
+      if (ddRes.status === "fulfilled") {
+        const ddJson = ddRes.value as any;
 
         const routingLast4 = String(ddJson?.routingLast4 ?? "");
         const accountLast4 = String(ddJson?.accountLast4 ?? "");
@@ -148,11 +165,12 @@ export default function SensitiveClientInfo({ userId }: { userId: string }) {
           updatedAt: ddJson?.updatedAt ? String(ddJson.updatedAt) : null,
           hasNumbersOnFile: Boolean(ddJson?.hasNumbersOnFile ?? fallbackHas),
         });
-      } catch (e: any) {
-        setDdErr(e?.message ?? "Failed to load sensitive info.");
-      } finally {
-        setLoading(false);
+      } else {
+        setDdErr(ddRes.reason?.message ?? "Failed to load direct deposit.");
+        setDd((prev) => ({ ...prev, hasNumbersOnFile: false }));
       }
+
+      setLoading(false);
     })();
   }, [userId]);
 
@@ -163,17 +181,20 @@ export default function SensitiveClientInfo({ userId }: { userId: string }) {
     : maskSsn(ssn.last4);
 
   const routingDisplay = showBank
-    ? dd.routingNumber || ""
+    ? dd.routingNumber
+      ? `Routing ${dd.routingNumber}`
+      : ""
     : maskAccountLast4(dd.routingLast4, "Routing");
 
   const acctDisplay = showBank
-    ? dd.accountNumber || ""
+    ? dd.accountNumber
+      ? `Account ${dd.accountNumber}`
+      : ""
     : maskAccountLast4(dd.accountLast4, "Account");
 
-  // 🔴 Button style that clearly looks clickable
   const showBtnClass =
     "inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-semibold shadow-sm " +
-    "border border-transparent text-white hover:opacity-95 active:opacity-90";
+    "border border-transparent text-white hover:opacity-95 active:opacity-90 disabled:opacity-50";
 
   async function toggleShowSsn() {
     if (revealSsnLoading) return;
@@ -186,23 +207,27 @@ export default function SensitiveClientInfo({ userId }: { userId: string }) {
       return;
     }
 
-    // ALWAYS hit network so you can see it in DevTools
+    // If this role can't reveal, don't even call the endpoint
+    if (!canReveal) {
+      setSsnErr("Reveal requires ADMIN or SUPERADMIN.");
+      setShowSsn(false);
+      return;
+    }
+
+    if (!window.confirm("Reveal full SSN? (Sensitive PII)")) return;
+
     setRevealSsnLoading(true);
     try {
-      const ssnJson = await fetchJson(
-        `/api/admin/clients/${userId}/ssn?reveal=1`,
-      );
+      const ssnJson = await fetchJson(`/api/admin/clients/${userId}/ssn?reveal=1`);
 
-      const last4 = String(
-        ssnJson?.last4 ?? ssnJson?.ssnLast4 ?? ssn.last4 ?? "",
-      );
-      const full =
-        ssnJson?.ssn ?? ssnJson?.ssnFull ?? ssnJson?.ssnFormatted ?? "";
+      const hasSsn = Boolean(ssnJson?.hasSsn);
+      const last4 = String(ssnJson?.last4 ?? ssnJson?.ssnLast4 ?? ssn.last4 ?? "");
+      const full = ssnJson?.ssn ?? ssnJson?.ssnFull ?? ssnJson?.ssnFormatted ?? "";
 
-      setSsn({ last4, full: full ? String(full) : undefined });
+      setSsn({ hasSsn, last4, full: full ? String(full) : undefined });
 
       if (!full) {
-        setSsnErr("No SSN on file to reveal.");
+        setSsnErr(hasSsn ? "SSN exists but could not be revealed." : "No SSN on file.");
         setShowSsn(false);
         return;
       }
@@ -227,25 +252,24 @@ export default function SensitiveClientInfo({ userId }: { userId: string }) {
       return;
     }
 
-    // ALWAYS hit network so you can see it in DevTools
+    if (!canReveal) {
+      setDdErr("Reveal requires ADMIN or SUPERADMIN.");
+      setShowBank(false);
+      return;
+    }
+
+    if (!window.confirm("Reveal routing + account numbers? (Sensitive data)")) return;
+
     setRevealDdLoading(true);
     try {
       const ddJson = await fetchJson(
         `/api/admin/clients/${userId}/direct-deposit?reveal=1`,
       );
 
-      const routingLast4 = String(
-        ddJson?.routingLast4 ?? dd.routingLast4 ?? "",
-      );
-      const accountLast4 = String(
-        ddJson?.accountLast4 ?? dd.accountLast4 ?? "",
-      );
-      const routingNumber = ddJson?.routingNumber
-        ? String(ddJson.routingNumber)
-        : "";
-      const accountNumber = ddJson?.accountNumber
-        ? String(ddJson.accountNumber)
-        : "";
+      const routingLast4 = String(ddJson?.routingLast4 ?? dd.routingLast4 ?? "");
+      const accountLast4 = String(ddJson?.accountLast4 ?? dd.accountLast4 ?? "");
+      const routingNumber = ddJson?.routingNumber ? String(ddJson.routingNumber) : "";
+      const accountNumber = ddJson?.accountNumber ? String(ddJson.accountNumber) : "";
 
       const fallbackHas = Boolean(
         routingNumber || accountNumber || routingLast4 || accountLast4,
@@ -263,9 +287,7 @@ export default function SensitiveClientInfo({ userId }: { userId: string }) {
         accountLast4,
         routingNumber: routingNumber || undefined,
         accountNumber: accountNumber || undefined,
-        updatedAt: ddJson?.updatedAt
-          ? String(ddJson.updatedAt)
-          : prev.updatedAt,
+        updatedAt: ddJson?.updatedAt ? String(ddJson.updatedAt) : prev.updatedAt,
         hasNumbersOnFile: Boolean(ddJson?.hasNumbersOnFile ?? fallbackHas),
       }));
 
@@ -283,6 +305,9 @@ export default function SensitiveClientInfo({ userId }: { userId: string }) {
       setRevealDdLoading(false);
     }
   }
+
+  const showSsnBtnDisabled = loading || revealSsnLoading || (!showSsn && !canReveal);
+  const showBankBtnDisabled = loading || revealDdLoading || (!showBank && !canReveal);
 
   return (
     <div className="space-y-6">
@@ -308,6 +333,7 @@ export default function SensitiveClientInfo({ userId }: { userId: string }) {
                     onClick={toggleShowSsn}
                     className={showBtnClass}
                     style={{ background: BRAND.pink }}
+                    disabled={showSsnBtnDisabled}
                     title="Show / Hide SSN"
                   >
                     {showSsn ? (
@@ -315,23 +341,29 @@ export default function SensitiveClientInfo({ userId }: { userId: string }) {
                     ) : (
                       <Eye className="h-4 w-4" />
                     )}
-                    {revealSsnLoading
-                      ? "Revealing…"
-                      : showSsn
-                        ? "Hide"
-                        : "Show"}
+                    {revealSsnLoading ? "Revealing…" : showSsn ? "Hide" : "Show"}
                   </button>
                 </span>
               </TooltipTrigger>
               <TooltipContent>
-                {showSsn ? "Hide SSN" : "Reveal SSN (ADMIN/SUPERADMIN only)"}
+                {showSsn
+                  ? "Hide SSN"
+                  : canReveal
+                    ? "Reveal SSN"
+                    : "Reveal requires ADMIN/SUPERADMIN"}
               </TooltipContent>
             </Tooltip>
           </TooltipProvider>
         </div>
 
         <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-800">
-          {ssn.last4 ? <>On file: {ssnDisplay}</> : <>No SSN on file.</>}
+          {loading ? (
+            <>Loading…</>
+          ) : ssn.hasSsn || ssn.last4 ? (
+            <>On file: {ssnDisplay || "—"}</>
+          ) : (
+            <>No SSN on file.</>
+          )}
         </div>
 
         {ssnErr ? <p className="mt-3 text-sm text-red-600">{ssnErr}</p> : null}
@@ -398,8 +430,7 @@ export default function SensitiveClientInfo({ userId }: { userId: string }) {
                 {process.env.NODE_ENV !== "production" && (
                   <div className="mt-1 text-[11px] text-slate-500">
                     debug: hasNumbersOnFile={String(dd.hasNumbersOnFile)}{" "}
-                    routingLast4=
-                    {dd.routingLast4} accountLast4={dd.accountLast4}
+                    routingLast4={dd.routingLast4} accountLast4={dd.accountLast4}
                   </div>
                 )}
               </div>
@@ -413,6 +444,7 @@ export default function SensitiveClientInfo({ userId }: { userId: string }) {
                         onClick={toggleShowBank}
                         className={showBtnClass}
                         style={{ background: BRAND.pink }}
+                        disabled={showBankBtnDisabled}
                         title="Show / Hide bank numbers"
                       >
                         {showBank ? (
@@ -420,18 +452,16 @@ export default function SensitiveClientInfo({ userId }: { userId: string }) {
                         ) : (
                           <Eye className="h-4 w-4" />
                         )}
-                        {revealDdLoading
-                          ? "Revealing…"
-                          : showBank
-                            ? "Hide"
-                            : "Show"}
+                        {revealDdLoading ? "Revealing…" : showBank ? "Hide" : "Show"}
                       </button>
                     </span>
                   </TooltipTrigger>
                   <TooltipContent>
                     {showBank
                       ? "Hide account numbers"
-                      : "Reveal account numbers (ADMIN/SUPERADMIN only)"}
+                      : canReveal
+                        ? "Reveal account numbers"
+                        : "Reveal requires ADMIN/SUPERADMIN"}
                   </TooltipContent>
                 </Tooltip>
               </TooltipProvider>
@@ -442,13 +472,14 @@ export default function SensitiveClientInfo({ userId }: { userId: string }) {
                 Updated: {new Date(dd.updatedAt).toLocaleString("en-US")}
               </div>
             ) : null}
+
+            {loading ? (
+              <div className="mt-2 text-xs text-slate-500">Loading…</div>
+            ) : null}
           </div>
         </div>
 
         {ddErr ? <p className="mt-4 text-sm text-red-600">{ddErr}</p> : null}
-        {loading ? (
-          <p className="mt-4 text-sm text-slate-600">Loading…</p>
-        ) : null}
       </div>
     </div>
   );
