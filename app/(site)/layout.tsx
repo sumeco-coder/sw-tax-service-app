@@ -3,6 +3,7 @@ import "@/app/globals.css";
 import Script from "next/script";
 import Navbar from "@/components/global/Navbar";
 import Footer from "@/components/global/Footer";
+import { LightOnlyProvider } from "@/components/themes/light-only-provider";
 
 export default function SiteLayout({ children }: { children: React.ReactNode }) {
   const clarityId = process.env.CLARITY_ID;
@@ -48,16 +49,18 @@ export default function SiteLayout({ children }: { children: React.ReactNode }) 
         </>
       ) : null}
 
-      {/* Header */}
-      <header className="border-b bg-white">
-        <Navbar />
-      </header>
+      <LightOnlyProvider>
+      <>
+        {/* scripts + navbar + footer exactly as you have */}
+        <header className="border-b bg-white">
+          <Navbar />
+        </header>
 
-      {/* Main */}
-      <main>{children}</main>
+        <main>{children}</main>
 
-      {/* Footer */}
-      <Footer />
+        <Footer />
+      </>
+    </LightOnlyProvider>
     </>
   );
 }
