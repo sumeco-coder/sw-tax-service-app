@@ -11,7 +11,6 @@ import {
   deleteDocument,
 } from "../actions";
 
-// ✅ import admin server actions (DB-backed)
 import {
   adminListDocuments,
   adminDeleteDocument,
@@ -19,7 +18,7 @@ import {
 } from "@/app/(admin)/admin/(protected)/clients/[userId]/documents/actions";
 
 type DocItem = {
-  id?: string; // admin DB rows have this
+  id?: string; 
   key: string;
   name: string;
   size: number;
@@ -90,7 +89,6 @@ export default function DocumentsClient({
         setErr(e?.message ?? "Failed to load documents.")
       );
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [targetUserId, mode]);
 
   async function onUpload(file: File) {
@@ -98,7 +96,7 @@ export default function DocumentsClient({
 
     const contentType = file.type || "application/octet-stream";
 
-    // 1) Get presigned POST (NO DB write here)
+    // 1) Get presigned PUT URL (NO DB write here)
     const out =
       mode === "admin"
         ? await createUploadUrl({
@@ -111,20 +109,16 @@ export default function DocumentsClient({
             contentType,
           });
 
-    // 2) Upload to S3 using POST + FormData (NOT PUT)
-    const form = new FormData();
-    for (const [k, v] of Object.entries(out.fields || {})) {
-      form.append(k, v as string);
-    }
-    // S3 expects the actual file field to be named "file"
-    form.append("file", file);
-
+    // 2) Upload to S3 using PUT (raw file). ✅ NOT POST, NOT FormData.
     const res = await fetch(out.url, {
-      method: "POST",
-      body: form,
+      method: "PUT",
+      headers: {
+        "Content-Type": contentType,
+      },
+      body: file,
     });
 
-    // POST success is often 204 or 201
+    // PUT success is often 200 or 204
     if (!res.ok) {
       const text = await res.text().catch(() => "");
       throw new Error(`Upload failed (${res.status}). ${text.slice(0, 200)}`);
