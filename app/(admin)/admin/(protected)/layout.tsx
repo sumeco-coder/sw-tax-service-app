@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import AdminShell from "./_components/AdminShell";
 import { getServerRole } from "@/lib/auth/roleServer";
 
+
 function isAdminLike(roleRaw: unknown) {
   const role = String(roleRaw ?? "").toLowerCase();
   return role === "admin" || role === "superadmin" || role === "support_agent";

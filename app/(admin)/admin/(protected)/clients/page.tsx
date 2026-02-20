@@ -2,9 +2,15 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { db } from "@/drizzle/db";
-import { users, documents, taxReturns, dependents } from "@/drizzle/schema";
+import {
+  users,
+  documents,
+  taxReturns,
+  dependents,
+  clientAgreements,
+} from "@/drizzle/schema";
 import { getServerRole } from "@/lib/auth/roleServer";
-import { desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import InviteEmailPreviewButton from "./_components/InviteEmailPreviewButton";
 import {
   adminCreateClientAndRedirect,
@@ -19,11 +25,20 @@ export const revalidate = 0;
 
 const fmt = new Intl.NumberFormat("en-US");
 
+// ✅ define what you consider “clients”
+const CLIENT_ROLES = ["TAXPAYER", "LMS_PREPARER"] as const;
+const clientWhere = inArray(users.role, CLIENT_ROLES as any);
+const clientRolesSql = sql.join(
+  CLIENT_ROLES.map((r) => sql`${r}`),
+  sql`, `,
+);
+
 function daysAgo(n: number) {
   return new Date(Date.now() - n * 24 * 60 * 60 * 1000);
 }
 
 function getStr(v: unknown) {
+  if (Array.isArray(v)) return typeof v[0] === "string" ? v[0] : "";
   return typeof v === "string" ? v : "";
 }
 
@@ -57,8 +72,14 @@ export default async function ClientActivityReportPage({
   const msg = getStr(sp.msg);
   const mode = getStr(sp.mode);
 
+  // ✅ Pagination
+  const page = Math.max(1, parseInt(getStr(sp.page) || "1", 10) || 1);
+  const pageSize = 25;
+  const offset = (page - 1) * pageSize;
+
   const since7 = daysAgo(7);
   const since30 = daysAgo(30);
+  const thisYear = new Date().getFullYear();
 
   const [
     totalClients,
@@ -70,56 +91,90 @@ export default async function ClientActivityReportPage({
     returnsByStatusThisYear,
     newestClients,
   ] = await Promise.all([
+    // ✅ Total clients (clients only)
     db
       .select({ c: sql<number>`count(*)`.mapWith(Number) })
       .from(users)
+      .where(clientWhere)
       .then((r) => r[0]?.c ?? 0),
 
+    // ✅ New clients last 7 days (clients only)
     db
       .select({ c: sql<number>`count(*)`.mapWith(Number) })
       .from(users)
-      .where(sql`${users.createdAt} >= ${since7}`)
+      .where(and(clientWhere, sql`${users.createdAt} >= ${since7}`))
       .then((r) => r[0]?.c ?? 0),
 
-    db
-      .select({ c: sql<number>`count(*)`.mapWith(Number) })
-      .from(users)
-      .where(
-        sql`${users.lastSeenAt} is not null and ${users.lastSeenAt} >= ${since7}`,
-      )
-      .then((r) => r[0]?.c ?? 0),
-
+    // ✅ Active last 7 days (clients only)
     db
       .select({ c: sql<number>`count(*)`.mapWith(Number) })
       .from(users)
       .where(
-        sql`${users.lastSeenAt} is not null and ${users.lastSeenAt} >= ${since30}`,
+        and(
+          clientWhere,
+          sql`${users.lastSeenAt} is not null and ${users.lastSeenAt} >= ${since7}`,
+        ),
       )
       .then((r) => r[0]?.c ?? 0),
 
+    // ✅ Active last 30 days (clients only)
+    db
+      .select({ c: sql<number>`count(*)`.mapWith(Number) })
+      .from(users)
+      .where(
+        and(
+          clientWhere,
+          sql`${users.lastSeenAt} is not null and ${users.lastSeenAt} >= ${since30}`,
+        ),
+      )
+      .then((r) => r[0]?.c ?? 0),
+
+    // ✅ Docs uploaded last 7 days (clients only)
     db
       .select({ c: sql<number>`count(*)`.mapWith(Number) })
       .from(documents)
-      .where(sql`${documents.uploadedAt} >= ${since7}`)
+      .where(
+        and(
+          sql`${documents.uploadedAt} >= ${since7}`,
+          sql`exists (
+            select 1 from ${users} u
+            where u.id = ${documents.userId}
+              and u.role in (${clientRolesSql})
+          )`,
+        ),
+      )
       .then((r) => r[0]?.c ?? 0),
 
+    // ✅ Onboarding counts (clients only)
     db
       .select({
         step: users.onboardingStep,
         c: sql<number>`count(*)`.mapWith(Number),
       })
       .from(users)
+      .where(clientWhere)
       .groupBy(users.onboardingStep),
 
+    // ✅ Returns by status (this year) (clients only)
     db
       .select({
         status: taxReturns.status,
         c: sql<number>`count(*)`.mapWith(Number),
       })
       .from(taxReturns)
-      .where(eq(taxReturns.taxYear, new Date().getFullYear()))
+      .where(
+        and(
+          eq(taxReturns.taxYear, thisYear),
+          sql`exists (
+            select 1 from ${users} u
+            where u.id = ${taxReturns.userId}
+              and u.role in (${clientRolesSql})
+          )`,
+        ),
+      )
       .groupBy(taxReturns.status),
 
+    // ✅ Paginated client list (clients only)
     db
       .select({
         id: users.id,
@@ -133,21 +188,72 @@ export default async function ClientActivityReportPage({
         lastSeenAt: users.lastSeenAt,
 
         dependentsCount: sql<number>`
-      (select count(*)
-       from ${dependents}
-       where ${dependents.userId} = ${users.id})
-    `.mapWith(Number),
+          (select count(*)
+           from ${dependents}
+           where ${dependents.userId} = ${users.id})
+        `.mapWith(Number),
 
         documentsCount: sql<number>`
-      (select count(*)
-       from ${documents}
-       where ${documents.userId} = ${users.id})
-    `.mapWith(Number),
+          (select count(*)
+           from ${documents}
+           where ${documents.userId} = ${users.id})
+        `.mapWith(Number),
       })
       .from(users)
+      .where(clientWhere)
       .orderBy(desc(users.createdAt))
-      .limit(10),
+      .limit(pageSize)
+      .offset(offset),
   ]);
+
+  // ✅ compute pages and redirect if page is out of range
+  const totalPages = Math.max(1, Math.ceil(totalClients / pageSize));
+  const safePage = Math.min(page, totalPages);
+  if (page !== safePage) redirect(`/admin/clients?page=${safePage}`);
+
+  const hasPrev = safePage > 1;
+  const hasNext = safePage < totalPages;
+
+  // ✅ Agreement lookup (AFTER newestClients exists)
+  const userIds = newestClients.map((u) => String(u.id));
+
+  const agreementsForUsers = userIds.length
+    ? await db
+        .select({
+          userId: clientAgreements.userId,
+          agreementId: clientAgreements.id,
+          taxYear: clientAgreements.taxYear,
+          kind: clientAgreements.kind,
+          signedAt: clientAgreements.taxpayerSignedAt,
+          decision: clientAgreements.decision,
+        })
+        .from(clientAgreements)
+        .where(
+          and(
+            inArray(clientAgreements.userId, userIds as any),
+            inArray(clientAgreements.decision, ["SIGNED", "GRANTED"] as any),
+          ),
+        )
+        .orderBy(desc(clientAgreements.taxpayerSignedAt))
+    : [];
+
+  const latestAgreementByUserId = new Map<
+    string,
+    { agreementId: string; taxYear: string; kind: string; decision: string }
+  >();
+
+  // ordered by signedAt DESC → first per user is latest
+  for (const a of agreementsForUsers) {
+    const uid = String(a.userId);
+    if (!latestAgreementByUserId.has(uid)) {
+      latestAgreementByUserId.set(uid, {
+        agreementId: String(a.agreementId),
+        taxYear: String(a.taxYear),
+        kind: String(a.kind),
+        decision: String(a.decision),
+      });
+    }
+  }
 
   const onboardingMap = new Map<string, number>();
   for (const r of onboardingCounts) onboardingMap.set(String(r.step), r.c ?? 0);
@@ -185,6 +291,9 @@ export default async function ClientActivityReportPage({
                     ? `Delete failed: ${msg || "Unknown error"}`
                     : "";
 
+  const fromN = totalClients === 0 ? 0 : offset + 1;
+  const toN = Math.min(offset + newestClients.length, totalClients);
+
   return (
     <div className="p-6 space-y-6">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
@@ -197,7 +306,7 @@ export default async function ClientActivityReportPage({
 
         <div className="flex gap-2">
           <Link
-            href="/admin/clients"
+            href="/admin/clients?page=1"
             className="inline-flex h-10 items-center justify-center rounded-md border px-4 text-sm font-medium"
           >
             Client List
@@ -379,8 +488,42 @@ export default async function ClientActivityReportPage({
       </div>
 
       <div className="rounded-2xl border bg-background/80 shadow-sm overflow-x-auto">
-        <div className="border-b p-4">
-          <h2 className="font-semibold">Newest clients (quick resend)</h2>
+        <div className="border-b p-4 flex items-center justify-between gap-3">
+          <div>
+            <h2 className="font-semibold">Clients (newest first)</h2>
+            <p className="text-xs text-muted-foreground mt-1">
+              Showing {fromN}–{toN} of {totalClients} • Page {safePage} of{" "}
+              {totalPages}
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {hasPrev ? (
+              <Link
+                className="h-9 rounded-md border px-3 text-xs font-medium inline-flex items-center"
+                href={`/admin/clients?page=${safePage - 1}`}
+              >
+                Prev
+              </Link>
+            ) : (
+              <span className="h-9 rounded-md border px-3 text-xs font-medium inline-flex items-center opacity-50">
+                Prev
+              </span>
+            )}
+
+            {hasNext ? (
+              <Link
+                className="h-9 rounded-md border px-3 text-xs font-medium inline-flex items-center"
+                href={`/admin/clients?page=${safePage + 1}`}
+              >
+                Next
+              </Link>
+            ) : (
+              <span className="h-9 rounded-md border px-3 text-xs font-medium inline-flex items-center opacity-50">
+                Next
+              </span>
+            )}
+          </div>
         </div>
 
         <table className="w-full text-sm">
@@ -394,6 +537,7 @@ export default async function ClientActivityReportPage({
               <th className="p-3 text-left">Docs</th>
               <th className="p-3 text-left">Files</th>
               <th className="p-3 text-left">Sensitive</th>
+              <th className="p-3 text-left">Agreement PDF</th>
               <th className="p-3 text-left">Resend invite</th>
               <th className="p-3 text-left">Reset</th>
               <th className="p-3 text-left">Delete (test)</th>
@@ -407,6 +551,8 @@ export default async function ClientActivityReportPage({
                 r === "LMS_PREPARER" ? "/agency" : "/onboarding/profile";
               const email = String(u.email ?? "");
               const canDelete = looksLikeTestEmail(email);
+
+              const latestAgreement = latestAgreementByUserId.get(String(u.id));
 
               return (
                 <tr key={u.id} className="border-b last:border-0">
@@ -451,6 +597,20 @@ export default async function ClientActivityReportPage({
                     >
                       View SSN/Bank
                     </Link>
+                  </td>
+
+                  <td className="p-3">
+                    {latestAgreement ? (
+                      <a
+                        href={`/api/client-agreements/${latestAgreement.agreementId}/pdf`}
+                        className="text-xs font-medium underline underline-offset-4"
+                        title={`${latestAgreement.taxYear} • ${latestAgreement.kind}`}
+                      >
+                        Download
+                      </a>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">—</span>
+                    )}
                   </td>
 
                   <td className="p-3">
@@ -506,7 +666,7 @@ export default async function ClientActivityReportPage({
                       <input
                         type="hidden"
                         name="returnTo"
-                        value="/admin/clients"
+                        value={`/admin/clients?page=${safePage}`}
                       />
                       <button className="h-9 rounded-md border px-3 text-xs font-medium">
                         Reset
@@ -523,7 +683,7 @@ export default async function ClientActivityReportPage({
                         <input
                           type="hidden"
                           name="returnTo"
-                          value="/admin/clients"
+                          value={`/admin/clients?page=${safePage}`}
                         />
                         <button className="h-9 rounded-md border px-3 text-xs font-medium">
                           Delete
@@ -539,7 +699,7 @@ export default async function ClientActivityReportPage({
 
             {!newestClients.length ? (
               <tr>
-                <td className="p-3 text-muted-foreground" colSpan={10}>
+                <td className="p-3 text-muted-foreground" colSpan={12}>
                   No clients yet.
                 </td>
               </tr>

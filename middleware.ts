@@ -18,11 +18,10 @@ const PUBLIC_UI_PATHS = new Set([
   "/invite",
   "/invite/consume",
   "/taxpayer/onboarding-sign-up",
-  // ✅ checkout pages public
+  "/lms",
   "/checkout",
   "/checkout/success",
   "/checkout/cancel",
-  // ❌ removed "/analytics" (it was also protected)
 ]);
 
 /* ─────────────────────────────────────────────
@@ -56,7 +55,7 @@ const CLIENT_PROTECTED_PREFIXES = [
 
 function isClientProtectedPath(pathname: string) {
   return CLIENT_PROTECTED_PREFIXES.some(
-    (p) => pathname === p || pathname.startsWith(p + "/")
+    (p) => pathname === p || pathname.startsWith(p + "/"),
   );
 }
 
@@ -64,14 +63,11 @@ function isClientProtectedPath(pathname: string) {
    Allow these even if onboarding is incomplete
    (prevents “upload → redirect → bounce” loops)
 ───────────────────────────────────────────── */
-const ALLOW_WHILE_ONBOARDING_INCOMPLETE = [
-  "/documents",
-  "/files",
-] as const;
+const ALLOW_WHILE_ONBOARDING_INCOMPLETE = ["/documents", "/files"] as const;
 
 function isAllowedWhileOnboardingIncomplete(pathname: string) {
   return ALLOW_WHILE_ONBOARDING_INCOMPLETE.some(
-    (p) => pathname === p || pathname.startsWith(p + "/")
+    (p) => pathname === p || pathname.startsWith(p + "/"),
   );
 }
 
@@ -103,16 +99,18 @@ function isAppRole(v: unknown): v is AppRole {
   return typeof v === "string" && APP_ROLES.includes(v as AppRole);
 }
 
-function resolveRole(customRoleRaw: unknown, groups: string[]): AppRole {
-  const role = String(customRoleRaw ?? "")
+function normalize(v: unknown) {
+  return String(v ?? "")
     .trim()
     .toUpperCase()
     .replace(/-/g, "_");
+}
+
+function resolveRole(customRoleRaw: unknown, groups: string[]): AppRole {
+  const role = normalize(customRoleRaw);
   if (isAppRole(role)) return role;
 
-  const g = groups.map((x) =>
-    String(x).trim().toUpperCase().replace(/-/g, "_")
-  );
+  const g = groups.map((x) => normalize(x));
   if (g.includes("SUPERADMIN")) return "SUPERADMIN";
   if (g.includes("ADMIN")) return "ADMIN";
   if (g.includes("SUPPORT_AGENT")) return "SUPPORT_AGENT";
@@ -173,7 +171,10 @@ export function middleware(req: NextRequest) {
   if (pathname.startsWith("/onboarding")) return NextResponse.next();
 
   // ✅ Tax calculator UI is public
-  if (pathname === "/tax-calculator" || pathname.startsWith("/tax-calculator/")) {
+  if (
+    pathname === "/tax-calculator" ||
+    pathname.startsWith("/tax-calculator/")
+  ) {
     return NextResponse.next();
   }
 
@@ -192,11 +193,13 @@ export function middleware(req: NextRequest) {
 
   // ✅ IMPORTANT: Cookie is immediate “truth” (prevents stale JWT loops)
   const onboardingCookie =
-    (req.cookies.get("onboardingComplete")?.value ?? "").toLowerCase() === "true";
+    (req.cookies.get("onboardingComplete")?.value ?? "").toLowerCase() ===
+    "true";
 
   const onboardingComplete =
     onboardingCookie ||
-    String(payload?.["custom:onboardingComplete"] ?? "").toLowerCase() === "true";
+    String(payload?.["custom:onboardingComplete"] ?? "").toLowerCase() ===
+      "true";
 
   const isAdmin =
     role === "ADMIN" ||
@@ -206,12 +209,67 @@ export function middleware(req: NextRequest) {
       return x === "admin" || x === "superadmin";
     });
 
+  /* ─────────────────────────────────────────────
+     ✅ LMS APP ROUTES (protect /lms/* but NOT /lms)
+     - Admin → /lms/admin/dashboard
+     - Student → /lms/learn/dashboard
+  ────────────────────────────────────────────── */
+  const isLmsAppPath = pathname.startsWith("/lms/");
+  if (isLmsAppPath) {
+    const next = pathname + (url.search || "");
+    const signInUrl = `/sign-in?next=${encodeURIComponent(next)}&from=lms`;
+
+    if (!payload) {
+      return NextResponse.redirect(new URL(signInUrl, req.url));
+    }
+
+    const gNorm = groups.map((g) => normalize(g));
+
+    const isLmsAdmin =
+      role === "SUPERADMIN" ||
+      role === "ADMIN" ||
+      role === "LMS_ADMIN" ||
+      gNorm.includes("SUPERADMIN") ||
+      gNorm.includes("ADMIN") ||
+      gNorm.includes("LMS_ADMIN");
+
+    const isLmsStudent =
+      role === "LMS_PREPARER" || gNorm.includes("LMS_PREPARER");
+
+    // Not an LMS user at all
+    if (!isLmsAdmin && !isLmsStudent) {
+      return NextResponse.redirect(new URL("/not-authorized", req.url));
+    }
+
+    // If someone hits the old dashboard route, send them to the right one
+    if (pathname === "/lms/dashboard") {
+      return NextResponse.redirect(
+        new URL(
+          isLmsAdmin ? "/lms/admin/dashboard" : "/lms/learn/dashboard",
+          req.url,
+        ),
+      );
+    }
+
+    // Block students from admin area
+    if (pathname.startsWith("/lms/admin") && !isLmsAdmin) {
+      return NextResponse.redirect(new URL("/lms/learn/dashboard", req.url));
+    }
+
+    // Allow admins to view learner area (optional). If you want to block it, remove "|| isLmsAdmin"
+    if (pathname.startsWith("/lms/learn") && !isLmsStudent && !isLmsAdmin) {
+      return NextResponse.redirect(new URL("/not-authorized", req.url));
+    }
+
+    return NextResponse.next();
+  }
+
   // ✅ Client protected pages require auth
   const clientProtected = !isApi && isClientProtectedPath(pathname);
   if (clientProtected && !payload) {
     const next = pathname + (url.search || "");
     return NextResponse.redirect(
-      new URL(`/sign-in?next=${encodeURIComponent(next)}`, req.url)
+      new URL(`/sign-in?next=${encodeURIComponent(next)}`, req.url),
     );
   }
 
@@ -226,20 +284,23 @@ export function middleware(req: NextRequest) {
   ) {
     const next = pathname + (url.search || "");
     return NextResponse.redirect(
-      new URL(`/onboarding/profile?next=${encodeURIComponent(next)}`, req.url)
+      new URL(`/onboarding/profile?next=${encodeURIComponent(next)}`, req.url),
     );
   }
 
   // ✅ Admin routes require admin
   if (pathname.startsWith("/admin")) {
-    if (!payload) return NextResponse.redirect(new URL("/admin/sign-in", req.url));
-    if (!isAdmin) return NextResponse.redirect(new URL("/not-authorized", req.url));
+    if (!payload)
+      return NextResponse.redirect(new URL("/admin/sign-in", req.url));
+    if (!isAdmin)
+      return NextResponse.redirect(new URL("/not-authorized", req.url));
     return NextResponse.next();
   }
 
   // ✅ Private APIs require auth; /api/admin requires admin
   if (isApi && !isPublicApi) {
-    if (!payload) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (!payload)
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     if (pathname.startsWith("/api/admin") && !isAdmin) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }

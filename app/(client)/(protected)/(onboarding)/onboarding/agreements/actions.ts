@@ -217,27 +217,32 @@ export async function signAgreement(input: {
   const now = new Date();
   const { ip, userAgent } = await auditTrail();
 
-  await db.insert(clientAgreements).values({
-    userId: String(user.id),
-    taxYear: getTaxYear(),
-    kind,
-    version: AGREEMENT_VERSION,
-    contentHash: sha256(text),
-    decision,
+  const [created] = await db
+    .insert(clientAgreements)
+    .values({
+      userId: String(user.id),
+      taxYear: getTaxYear(),
+      kind,
+      version: AGREEMENT_VERSION,
+      contentHash: sha256(text),
+      decision,
 
-    taxpayerName,
-    taxpayerSignedAt: now,
+      taxpayerName,
+      taxpayerSignedAt: now,
 
-    spouseRequired,
-    spouseName: spouseRequired ? spouseName : null,
-    spouseSignedAt: spouseRequired ? now : null,
+      spouseRequired,
+      spouseName: spouseRequired ? spouseName : null,
+      spouseSignedAt: spouseRequired ? now : null,
 
-    ip,
-    userAgent,
-  });
+      ip,
+      userAgent,
+    })
+    .returning({ id: clientAgreements.id });
 
   revalidatePath("/onboarding/agreements");
   revalidatePath("/onboarding");
+
+  return { agreementId: String(created?.id ?? "") };
 }
 
 /**

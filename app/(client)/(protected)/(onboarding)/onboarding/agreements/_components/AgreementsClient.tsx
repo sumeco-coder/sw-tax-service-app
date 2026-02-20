@@ -30,6 +30,7 @@ import { useFormStatus } from "react-dom";
 type Decision = "SIGNED" | "GRANTED" | "DECLINED" | "SKIPPED";
 
 type SignedRow = {
+  agreementId: string | null; // ✅ added
   decision: Decision | null;
   taxpayerSignedAt: string | null;
   spouseRequired: boolean;
@@ -121,23 +122,36 @@ export default function AgreementsClient({
   const [err, setErr] = useState<string>(() => errMessage(errorCode ?? null));
   const [signed, setSigned] = useState<Initial>(initial);
 
-  const engagementDone = useMemo(() => isRequiredDone(signed.ENGAGEMENT), [signed]);
+  const engagementDone = useMemo(
+    () => isRequiredDone(signed.ENGAGEMENT),
+    [signed],
+  );
   const consentDone = useMemo(() => isDone(signed.CONSENT_7216_USE), [signed]);
-  const paymentDone = useMemo(() => isRequiredDone(signed.CONSENT_PAYMENT), [signed]);
+  const paymentDone = useMemo(
+    () => isRequiredDone(signed.CONSENT_PAYMENT),
+    [signed],
+  );
 
   const consentDeclined = useMemo(
     () => (signed.CONSENT_7216_USE?.decision ?? consentChoice) === "DECLINED",
-    [signed, consentChoice]
+    [signed, consentChoice],
   );
 
   const canOpenConsent = engagementDone;
   const canOpenPayment = engagementDone && consentDone && !consentDeclined;
 
-  const canSubmit = engagementDone && paymentDone && consentDone && !consentDeclined;
+  const canSubmit =
+    engagementDone && paymentDone && consentDone && !consentDeclined;
 
   // keep step inside allowed range
   const effectiveStep = useMemo(() => {
-    const max = engagementDone ? (consentDone ? (canOpenPayment ? 2 : 1) : 1) : 0;
+    const max = engagementDone
+      ? consentDone
+        ? canOpenPayment
+          ? 2
+          : 1
+        : 1
+      : 0;
     return Math.min(step, max);
   }, [step, engagementDone, consentDone, canOpenPayment]);
 
@@ -157,11 +171,13 @@ export default function AgreementsClient({
     }
 
     const decision: Decision =
-      decisionOverride ?? (kind === "CONSENT_7216_USE" ? consentChoice : "SIGNED");
+      decisionOverride ??
+      (kind === "CONSENT_7216_USE" ? consentChoice : "SIGNED");
 
     startTransition(async () => {
       try {
-        await signAgreement({
+        // ✅ server action returns agreementId
+        const res = await signAgreement({
           kind,
           taxpayerName: name,
           spouseRequired,
@@ -173,6 +189,7 @@ export default function AgreementsClient({
         setSigned((prev) => ({
           ...prev,
           [kind]: {
+            agreementId: res?.agreementId ? String(res.agreementId) : null,
             decision,
             taxpayerSignedAt: nowIso,
             spouseRequired,
@@ -220,13 +237,16 @@ export default function AgreementsClient({
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <p className="text-sm font-semibold">
-              {title} {required ? <span className="text-destructive">*</span> : null}
+              {title}{" "}
+              {required ? <span className="text-destructive">*</span> : null}
             </p>
 
             {done ? (
               <p className="mt-1 text-xs text-muted-foreground">
                 Completed ✓{" "}
-                <span className="text-muted-foreground/80">({fmt(signedAt)})</span>
+                <span className="text-muted-foreground/80">
+                  ({fmt(signedAt)})
+                </span>
               </p>
             ) : (
               <p className="mt-1 text-xs text-muted-foreground">
@@ -237,7 +257,11 @@ export default function AgreementsClient({
 
           <Badge
             variant={open ? "default" : "secondary"}
-            className={open ? "bg-gradient-to-br from-[#E62A68] to-[#BB4E2B] text-white" : ""}
+            className={
+              open
+                ? "bg-gradient-to-br from-[#E62A68] to-[#BB4E2B] text-white"
+                : ""
+            }
           >
             {open ? "Open" : "Locked"}
           </Badge>
@@ -255,21 +279,26 @@ export default function AgreementsClient({
         ? `2) ${AGREEMENT_TITLES.CONSENT_7216_USE}`
         : `3) ${AGREEMENT_TITLES.CONSENT_PAYMENT}`;
 
+  // ✅ download link (client optional)
+  const activeAgreementId = signed[activeKind]?.agreementId ?? null;
+  const canDownloadActive = Boolean(activeAgreementId);
+
   return (
     <div className="space-y-6">
       <Card className="rounded-2xl">
         <CardHeader>
           <CardTitle className="text-2xl">Agreements</CardTitle>
           <p className="text-sm text-muted-foreground">
-            Tax Year: <span className="font-semibold text-foreground">{taxYear}</span>
+            Tax Year:{" "}
+            <span className="font-semibold text-foreground">{taxYear}</span>
           </p>
 
           {consentDeclined ? (
             <Alert className="mt-4" variant="destructive">
               <AlertTitle>Consent declined</AlertTitle>
               <AlertDescription>
-                You selected <b>“I do not consent”</b> for 7216. The portal cannot
-                continue. Please contact SW Tax Service for next steps.
+                You selected <b>“I do not consent”</b> for 7216. The portal
+                cannot continue. Please contact SW Tax Service for next steps.
               </AlertDescription>
             </Alert>
           ) : null}
@@ -444,6 +473,15 @@ export default function AgreementsClient({
               </Button>
             ) : null}
 
+            {/* ✅ Client-side optional download */}
+            {canDownloadActive ? (
+              <Button asChild type="button" variant="outline" className="rounded-xl">
+                <a href={`/api/client-agreements/${activeAgreementId}/pdf`}>
+                  Download PDF
+                </a>
+              </Button>
+            ) : null}
+
             {/* Final submit */}
             <form action={submitAgreementsAndFinish}>
               <FinalSubmitButton disabled={!canSubmit || pending} />
@@ -452,8 +490,7 @@ export default function AgreementsClient({
 
           {/* tiny status */}
           <div className="text-xs text-muted-foreground">
-            {engagementDone ? "Engagement: ✓ " : "Engagement: — "}
-            ·{" "}
+            {engagementDone ? "Engagement: ✓ " : "Engagement: — "}·{" "}
             {consentDone ? (
               <>
                 7216: ✓{" "}

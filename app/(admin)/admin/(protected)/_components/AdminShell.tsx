@@ -10,7 +10,7 @@ import IdleSignOut from "../../../../(client)/(protected)/_components/IdleSignOu
 const portalLinks = [
   { label: "Client Portal", href: "/dashboard" },
   { label: "Preparer Portal", href: "/preparer" },
-  { label: "LMS Portal", href: "/lms" },
+  { label: "LMS Portal", href: "/lms/dashboard" },
 ];
 
 type AdminShellProps = {

@@ -1,3 +1,4 @@
+// app/(site)/lms/page.tsx
 import type { Metadata } from "next";
 import { LmsForTaxProsClient } from "./LmsForTaxProsClient";
 

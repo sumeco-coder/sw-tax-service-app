@@ -9,7 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 
-export const runtime = "nodejs"; // ✅ ADD THIS
+export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
@@ -141,8 +141,8 @@ export default async function AgreementsPage({ searchParams }: PageProps) {
         and(
           eq(clientAgreements.userId, String(u.id)),
           eq(clientAgreements.taxYear, taxYear),
-          inArray(clientAgreements.kind, KINDS as any)
-        )
+          inArray(clientAgreements.kind, KINDS as any),
+        ),
       )
       .orderBy(desc(clientAgreements.createdAt), desc(clientAgreements.id));
   } catch (e) {
@@ -158,28 +158,37 @@ export default async function AgreementsPage({ searchParams }: PageProps) {
   const initial = {
     ENGAGEMENT: latest.ENGAGEMENT
       ? {
+          agreementId: String(latest.ENGAGEMENT.id),
           decision: latest.ENGAGEMENT.decision ?? null,
-          taxpayerSignedAt: latest.ENGAGEMENT.taxpayerSignedAt?.toISOString?.() ?? null,
+          taxpayerSignedAt:
+            latest.ENGAGEMENT.taxpayerSignedAt?.toISOString?.() ?? null,
           spouseRequired: Boolean(latest.ENGAGEMENT.spouseRequired),
-          spouseSignedAt: latest.ENGAGEMENT.spouseSignedAt?.toISOString?.() ?? null,
+          spouseSignedAt:
+            latest.ENGAGEMENT.spouseSignedAt?.toISOString?.() ?? null,
         }
       : null,
 
     CONSENT_7216_USE: latest.CONSENT_7216_USE
       ? {
+          agreementId: String(latest.CONSENT_7216_USE.id),
           decision: latest.CONSENT_7216_USE.decision ?? null,
-          taxpayerSignedAt: latest.CONSENT_7216_USE.taxpayerSignedAt?.toISOString?.() ?? null,
+          taxpayerSignedAt:
+            latest.CONSENT_7216_USE.taxpayerSignedAt?.toISOString?.() ?? null,
           spouseRequired: Boolean(latest.CONSENT_7216_USE.spouseRequired),
-          spouseSignedAt: latest.CONSENT_7216_USE.spouseSignedAt?.toISOString?.() ?? null,
+          spouseSignedAt:
+            latest.CONSENT_7216_USE.spouseSignedAt?.toISOString?.() ?? null,
         }
       : null,
 
     CONSENT_PAYMENT: latest.CONSENT_PAYMENT
       ? {
+          agreementId: String(latest.CONSENT_PAYMENT.id),
           decision: latest.CONSENT_PAYMENT.decision ?? null,
-          taxpayerSignedAt: latest.CONSENT_PAYMENT.taxpayerSignedAt?.toISOString?.() ?? null,
+          taxpayerSignedAt:
+            latest.CONSENT_PAYMENT.taxpayerSignedAt?.toISOString?.() ?? null,
           spouseRequired: Boolean(latest.CONSENT_PAYMENT.spouseRequired),
-          spouseSignedAt: latest.CONSENT_PAYMENT.spouseSignedAt?.toISOString?.() ?? null,
+          spouseSignedAt:
+            latest.CONSENT_PAYMENT.spouseSignedAt?.toISOString?.() ?? null,
         }
       : null,
   };
@@ -200,7 +209,11 @@ export default async function AgreementsPage({ searchParams }: PageProps) {
           </CardHeader>
 
           <CardContent>
-            <AgreementsClient initial={initial as any} taxYear={taxYear} errorCode={errCode} />
+            <AgreementsClient
+              initial={initial as any}
+              taxYear={taxYear}
+              errorCode={errCode}
+            />
           </CardContent>
         </Card>
       </div>
